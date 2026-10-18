@@ -31,10 +31,10 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: steps.check.outputs.ready == 'true'
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: steps.check.outputs.ready == 'true'
         with:
           node-version: 22
@@ -47,7 +47,17 @@ jobs:
       - name: Apply database migrations and deploy
         if: steps.check.outputs.ready == 'true'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER_SEND_METRICS: 'false'
-        run: npm run deploy
+        run: |
+          # Pasted secrets often carry a stray space or newline; strip them. A token is one word.
+          export CLOUDFLARE_API_TOKEN="$(printf '%s' "$TOKEN" | tr -d '[:space:]')"
+          export CLOUDFLARE_ACCOUNT_ID="$(printf '%s' "$ACCOUNT" | tr -d '[:space:]')"
+          if ! printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | grep -Eq '^[0-9a-f]{32}$'; then
+            echo "CLOUDFLARE_ACCOUNT_ID must be the 32-character Account ID from the Cloudflare dashboard."; exit 1
+          fi
+          if ! printf '%s' "$CLOUDFLARE_API_TOKEN" | grep -Eq '^[A-Za-z0-9_-]{30,60}$'; then
+            echo "CLOUDFLARE_API_TOKEN does not look like a single Cloudflare API token (paste only the token, nothing else)."; exit 1
+          fi
+          npm run deploy
