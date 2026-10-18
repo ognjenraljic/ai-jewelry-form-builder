@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="sr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Konfigurator admin</title>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root { --bg: #0e0d0c; --surface: #171512; --line: #2b2722; --ink: #f2ede4; --soft: #9f978a; --gold: #d8b46a; --red: #e58b7a; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-size: 14px; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+    h1 { font-size: 22px; margin: 0 0 4px; }
+    .muted { color: var(--soft); }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 22px 0 28px; }
+    .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+    .stat b { display: block; font-size: 26px; margin-top: 4px; }
+    .lead { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 14px; }
+    .lead header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+    .lead h2 { font-size: 16px; margin: 0; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .tag { border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--soft); }
+    .tag b { color: var(--ink); font-weight: 600; }
+    .vision { color: var(--soft); margin: 6px 0 12px; font-style: italic; }
+    .imgs { display: flex; flex-wrap: wrap; gap: 10px; }
+    figure { margin: 0; width: 180px; }
+    figure img { width: 180px; height: 180px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); display: block; background: #000; }
+    figcaption { font-size: 11px; color: var(--soft); margin-top: 4px; line-height: 1.4; }
+    .err { width: 180px; height: 180px; border-radius: 10px; border: 1px dashed var(--red); color: var(--red); font-size: 11px; padding: 10px; overflow: auto; }
+    .login { max-width: 360px; margin: 90px auto; display: flex; gap: 8px; }
+    input { flex: 1; background: var(--surface); border: 1px solid var(--line); color: var(--ink); border-radius: 10px; padding: 11px 13px; font: inherit; }
+    button { background: var(--gold); color: #17130c; border: 0; border-radius: 10px; padding: 0 16px; font-weight: 700; cursor: pointer; }
+    a { color: var(--gold); }
+  </style>
+</head>
+<body>
+  <div class="wrap" id="root"></div>
+  <script>
+    const root = document.getElementById('root');
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    let token = '';
+    try { token = localStorage.getItem('aik_admin') || ''; } catch {}
+
+    function login(msg) {
+      root.innerHTML = `<form class="login"><input type="password" placeholder="ADMIN_TOKEN iz .dev.vars" autofocus /><button>Uđi</button></form>${msg ? `<p class="muted" style="text-align:center">${esc(msg)}</p>` : ''}`;
+      root.querySelector('form').onsubmit = (e) => {
+        e.preventDefault();
+        token = root.querySelector('input').value.trim();
+        try { localStorage.setItem('aik_admin', token); } catch {}
+        load();
+      };
+    }
+
+    async function load() {
+      if (!token) return login();
+      const res = await fetch('/api/admin/leads', { headers: { 'x-admin-token': token } });
+      if (res.status === 403) return login('Pogrešan token.');
+      const data = await res.json();
+      const log = (await (await fetch('/api/admin/view-as-log', { headers: { 'x-admin-token': token } })).json()).sessions || [];
+      const t = data.totals;
+      const avg = t.renders ? t.cost / t.renders : 0;
+      root.innerHTML = `
+        <h1>Leadovi i renderi</h1>
+        <p class="muted">Lokalna baza (D1) · <a href="/builder">Builder</a></p>
+        <div class="stats">
+          <div class="stat">Leadovi<b>${t.leads}</b></div>
+          <div class="stat">Uspješni renderi<b>${t.renders}</b></div>
+          <div class="stat">Greške<b>${t.errors}</b></div>
+          <div class="stat">Trošak AI (procjena)<b>$${t.cost.toFixed(3)}</b></div>
+          <div class="stat">Prosjek po renderu<b>$${avg.toFixed(3)}</b></div>
+        </div>
+        ${log.length ? `<h2 style="font-size:17px;margin:0 0 12px">View as client (log)</h2><div class="lead" style="padding:6px 18px">${log.map((x) => `<p style="margin:8px 0"><b>${esc(x.name || x.client_id)}</b> <span class="muted">· ${new Date(x.started_at).toLocaleString('sr-Latn')} · ${x.ended_at ? 'zatvoreno ' + new Date(x.ended_at).toLocaleTimeString('sr-Latn') : x.expires_at < Date.now() ? 'isteklo' : 'aktivno'}</span></p>`).join('')}</div>` : ''}
+        <h2 style="font-size:17px;margin:0 0 12px">Zahtjevi za demo (Karatly sajt)</h2>
+        ${data.demos.length ? `<div class="lead" style="padding:6px 18px">${data.demos.map((d) => `<p style="margin:10px 0"><b>${esc(d.name)}</b> <span class="muted">· ${esc(d.email)} · ${esc(d.website)} · ${esc(d.platform)} · ${esc(d.volume)} · ${new Date(d.created_at).toLocaleString('sr-Latn')}</span></p>`).join('')}</div>` : '<p class="muted">Još nema zahtjeva.</p>'}
+        <h2 style="font-size:17px;margin:28px 0 12px">Leadovi iz widgeta</h2>
+        ${data.leads.length ? data.leads.map(lead).join('') : '<p class="muted">Još nema leadova. Prođi formu na demo sajtu.</p>'}`;
+    }
+
+    function lead(l) {
+      const a = l.answers;
+      const tags = Object.entries(a).filter(([k, v]) => v && k !== 'vision').map(([k, v]) => `<span class="tag">${esc(k)}: <b>${esc(v)}</b></span>`).join('');
+      const k = encodeURIComponent(token);
+      const ref = l.ref_key ? `<figure><img src="/media/${esc(l.ref_key)}?k=${k}" alt="" /><figcaption>Referenca kupca</figcaption></figure>` : '';
+      let extra = {};
+      try { extra = JSON.parse(l.files || '{}'); } catch {}
+      const files = Object.entries(extra).map(([f, key]) => `<figure><img src="/media/${esc(key)}?k=${k}" alt="" /><figcaption>Fajl: ${esc(f)}</figcaption></figure>`).join('');
+      const renders = l.renders.map((r) => r.status === 'ok'
+        ? `<figure><a href="/media/${esc(r.image_key)}" target="_blank"><img src="/media/${esc(r.image_key)}" alt="" /></a><figcaption>#${r.n} · ${esc(r.model)}<br />${(r.ms / 1000).toFixed(1)} s · $${(r.cost_usd || 0).toFixed(4)}${r.tweak ? `<br />dorada: ${esc(r.tweak)}` : ''}</figcaption></figure>`
+        : `<figure><div class="err">${esc(r.status)}: ${esc(r.error || '')}</div><figcaption>${esc(r.model)}</figcaption></figure>`).join('');
+      return `<article class="lead">
+        <header><h2>${esc(l.name)} <span class="muted">· ${esc(l.email)} · ${esc(l.phone)}</span></h2><span class="muted">${new Date(l.created_at).toLocaleString('sr-Latn')}</span></header>
+        <div class="tags"><span class="tag">forma: <b>${esc(l.form_id)}</b></span>${tags}</div>
+        ${a.vision ? `<p class="vision">"${esc(a.vision)}"</p>` : ''}
+        <div class="imgs">${ref}${files}${renders}</div>
+      </article>`;
+    }
+
+    load();
+  </script>
+</body>
+</html>

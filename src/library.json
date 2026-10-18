@@ -1,0 +1,167 @@
+{
+  "_opis": "Stilovi po tipu nakita. Svaki stil ima referentnu sliku public/library/<tip>/<stil>.webp (prikaz u kartici + šalje se modelu kao referenca oblika) i 'shape' tekst za prompt. 'ref' je opis za generisanje početne slike (scripts/build_library.py); zlatar kasnije može zamijeniti sliku fotografijom svog komada.",
+  "pendant": [
+    {
+      "value": "script",
+      "label": "Script name",
+      "shape": "a cursive script name-plate pendant: one connected word in flowing joined script letters, hung from the chain by a bail",
+      "ref": "a cursive script name-plate pendant spelling 'Name' in flowing joined letters, plain polished metal, hanging from a bail on a thin chain"
+    },
+    {
+      "value": "block",
+      "label": "Block letters",
+      "shape": "a bold block-letter name pendant: thick upright capital letters joined side by side into one solid plate",
+      "ref": "a bold block-letter name pendant spelling 'NAME' in thick upright capital letters joined into one plate, plain polished metal, on a chain"
+    },
+    {
+      "value": "medallion",
+      "label": "Medallion",
+      "shape": "a round medallion pendant with a raised decorative border frame around a flat circular center",
+      "ref": "a round medallion pendant with a raised decorative rope-twist border around a flat smooth circular center, plain polished metal, on a chain"
+    },
+    {
+      "value": "cross",
+      "label": "Cross",
+      "shape": "a cross pendant with straight even arms and slightly flared ends",
+      "ref": "a classic cross pendant with straight arms and slightly flared ends, plain polished metal, on a chain"
+    }
+  ],
+  "chain": [
+    {
+      "value": "cuban",
+      "label": "Miami Cuban",
+      "shape": "a Miami Cuban link chain: thick, tightly interlocking flattened oval links and a rectangular box clasp",
+      "ref": "a Miami Cuban link chain with thick tightly interlocking flattened oval links and a rectangular box clasp, plain polished metal"
+    },
+    {
+      "value": "rope",
+      "label": "Rope",
+      "shape": "a rope chain: small links twisted together so the chain looks like a twisted rope",
+      "ref": "a rope chain with small links twisted to look like a rope, plain polished metal"
+    },
+    {
+      "value": "tennis",
+      "label": "Tennis",
+      "shape": "a tennis chain: one continuous line of individual round stones, each in its own small prong setting",
+      "ref": "a tennis chain made of one continuous line of round clear stones, each in its own small four-prong setting"
+    },
+    {
+      "value": "franco",
+      "label": "Franco",
+      "shape": "a Franco chain: dense V-shaped links forming a square, braided-looking profile",
+      "ref": "a Franco chain with dense V-shaped links forming a square braided-looking profile, plain polished metal"
+    }
+  ],
+  "ring": [
+    {
+      "value": "solitaire",
+      "label": "Solitaire",
+      "shape": "a solitaire ring: one single center stone raised in a prong setting on a slim band",
+      "ref": "a solitaire engagement ring with one round center stone in a six-prong setting on a slim plain band"
+    },
+    {
+      "value": "halo",
+      "label": "Halo",
+      "shape": "a halo ring: a center stone surrounded by a tight circle of small stones",
+      "ref": "a halo engagement ring with a round center stone surrounded by a tight circle of small stones, slim band"
+    },
+    {
+      "value": "three-stone",
+      "label": "Three stone",
+      "shape": "a three-stone ring: a larger center stone flanked by two smaller side stones in a row",
+      "ref": "a three-stone ring with a larger round center stone flanked by two smaller round side stones, slim band"
+    },
+    {
+      "value": "eternity",
+      "label": "Eternity band",
+      "shape": "an eternity band: a continuous row of equal stones set all the way around the band, no center stone",
+      "ref": "an eternity band ring with a continuous row of equal round stones set all the way around, no center stone"
+    },
+    {
+      "value": "signet",
+      "label": "Signet",
+      "shape": "a signet ring: a heavy band with a flat oval top surface",
+      "ref": "a men's signet ring with a heavy band and a flat smooth oval top, plain polished metal"
+    }
+  ],
+  "grillz": [
+    {
+      "value": "top6",
+      "label": "Top 6",
+      "shape": "a single top grill covering exactly the six upper front teeth, in ONE row only, no bottom row",
+      "ref": "a single top grill covering exactly six upper front teeth in one row only, no bottom row, plain polished metal, displayed on its own"
+    },
+    {
+      "value": "top8",
+      "label": "Top 8",
+      "shape": "a single top grill covering exactly eight upper teeth, in ONE row only, no bottom row",
+      "ref": "a single top grill covering exactly eight upper teeth in one row only, no bottom row, plain polished metal, displayed on its own"
+    },
+    {
+      "value": "set",
+      "label": "Top + bottom",
+      "shape": "a matching grillz set: a top row of eight teeth and a bottom row of eight teeth",
+      "ref": "a matching grillz set with a top row of eight teeth and a bottom row of eight teeth, plain polished metal, displayed on its own"
+    },
+    {
+      "value": "fangs",
+      "label": "Fangs",
+      "shape": "two separate fang caps for the upper canine teeth, pointed and elongated",
+      "ref": "two separate pointed fang caps for the upper canine teeth, plain polished metal, displayed side by side on their own"
+    }
+  ],
+  "bracelet": [
+    {
+      "value": "cuban",
+      "label": "Cuban",
+      "shape": "a Cuban link bracelet: thick interlocking flattened oval links and a box clasp",
+      "ref": "a Cuban link bracelet with thick interlocking flattened oval links and a box clasp, plain polished metal, laid in an oval"
+    },
+    {
+      "value": "tennis",
+      "label": "Tennis",
+      "shape": "a tennis bracelet: one continuous line of individual round stones in small prong settings",
+      "ref": "a tennis bracelet with one continuous line of round clear stones in small four-prong settings, laid in an oval"
+    },
+    {
+      "value": "bangle",
+      "label": "Bangle",
+      "shape": "a rigid bangle: one solid smooth round band with a hinge clasp",
+      "ref": "a rigid solid bangle bracelet, one smooth round band with a small hinge clasp, plain polished metal"
+    }
+  ],
+  "earrings": [
+    {
+      "value": "studs",
+      "label": "Studs",
+      "shape": "stud earrings: a single stone or shape sitting directly on the earlobe, no drop",
+      "ref": "a pair of round stud earrings, one round clear stone each in a four-prong setting, no drop"
+    },
+    {
+      "value": "drops",
+      "label": "Drops",
+      "shape": "drop earrings: a small top stud with a pendant element hanging below it",
+      "ref": "a pair of drop earrings, a small round top stud with a pear-shaped stone hanging below"
+    },
+    {
+      "value": "hoops",
+      "label": "Hoops",
+      "shape": "hoop earrings: round open hoops",
+      "ref": "a pair of medium round hoop earrings, plain polished metal"
+    }
+  ],
+  "watch": [
+    {
+      "value": "iced",
+      "label": "Fully iced",
+      "shape": "a fully iced watch with a round case: stones covering the case, bezel, bracelet and the entire dial",
+      "ref": "a fully iced wristwatch with a simple ROUND case, round bezel and a classic three-link bracelet, stones covering the case, bezel, bracelet and the entire dial, generic design that does not resemble any famous watch model, no brand names or logos"
+    },
+    {
+      "value": "bezel",
+      "label": "Iced bezel",
+      "shape": "a watch with only the bezel set with stones; clean dial and plain polished link bracelet",
+      "ref": "a wristwatch with only the bezel set with stones, a clean plain dial with stick hour markers and a plain polished link bracelet, no brand names or logos"
+    }
+  ]
+}

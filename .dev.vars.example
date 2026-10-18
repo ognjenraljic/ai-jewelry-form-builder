@@ -1,0 +1,6 @@
+# Copy to .dev.vars (never commit it). ./dev.sh creates ADMIN_TOKEN and DEV_MODE for you,
+# ./set-key.sh adds the API keys without echoing them.
+ADMIN_TOKEN=change-me
+DEV_MODE=1
+GEMINI_API_KEY=
+OPENAI_API_KEY=

@@ -1,0 +1,14 @@
+{
+  "name": "ai-jewelry-form-builder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "./dev.sh",
+    "db:local": "wrangler d1 migrations apply konfigurator --local"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  },
+  "description": "AI design form builder for custom jewelers: clients, forms, embed code, AI renders (Cloudflare Workers + D1 + R2)."
+}
