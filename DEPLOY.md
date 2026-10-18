@@ -61,6 +61,25 @@ The database ID is not a secret, it is fine on GitHub.
 
 At the end you see your address, for example `https://ai-jewelry-form-builder.<your-subdomain>.workers.dev`.
 
+### Step 4 (alternative). Deploy with GitHub Actions
+
+Use this instead of step 4 if **Connect GitHub** fails (for example "Error connecting to git account"), or if the repo belongs to someone else. The repo already contains `.github/workflows/deploy.yml`; it only needs two secrets.
+
+1. **Cloudflare API token** (in the Cloudflare account that should host the Worker):
+   - Top right profile icon → **My Profile** → **API Tokens** → **Create Token**.
+   - Template **Edit Cloudflare Workers** → **Use template**.
+   - **Permissions**: add a row **Account** · **D1** · **Edit**.
+   - **Account Resources**: Include → the account that should host the Worker.
+   - **Zone Resources**: All zones (or All zones from that account).
+   - **Continue to summary** → **Create Token** → copy the token (it is shown only once).
+2. **Account ID**: **Workers & Pages** overview → right side **Account details** → **Account ID** (copy icon).
+3. On GitHub, in the repo: **Settings** → **Secrets and variables** → **Actions** → **New repository secret**, twice:
+   - `CLOUDFLARE_API_TOKEN` = the token from 1
+   - `CLOUDFLARE_ACCOUNT_ID` = the Account ID from 2
+4. **Actions** tab → **Deploy to Cloudflare** → **Run workflow** → **Run workflow**. Wait for the green check (about a minute).
+
+From now on every push to `main` deploys automatically. The token is a Cloudflare deploy key, not an OpenAI/Gemini key: those still go only into Cloudflare (step 5). If the token ever leaks, delete it in **My Profile → API Tokens** and create a new one.
+
 ## Step 5. Add your keys (secrets)
 
 1. **Workers & Pages** → open `ai-jewelry-form-builder` → **Settings** → **Variables and Secrets** → **Add**.
