@@ -12,8 +12,15 @@ const MODELS = {
   gpt2: { provider: 'openai', id: 'gpt-image-2', label: 'GPT Image 2', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high' },
 };
 
-const firstModel = (env) => (MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro');
-const tweakModel = (env) => (MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash');
+// Model mora imati svoj ključ: bez OPENAI_API_KEY renderi idu na Gemini i obrnuto, umjesto da padaju.
+function withKey(env, key, geminiFallback) {
+  const openai = MODELS[key].provider === 'openai';
+  if (openai && !env.OPENAI_API_KEY && env.GEMINI_API_KEY) return geminiFallback;
+  if (!openai && !env.GEMINI_API_KEY && env.OPENAI_API_KEY) return 'gptflare';
+  return key;
+}
+const firstModel = (env) => withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro');
+const tweakModel = (env) => withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash');
 
 const LEADS_PER_IP_HOUR = 10;
 const MAX_REF_BYTES = 8 * 1024 * 1024;

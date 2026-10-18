@@ -33,14 +33,7 @@ npm install
 ./dev.sh
 ```
 
-The first run creates `.dev.vars` with a random `ADMIN_TOKEN` (you sign in to the builder with it) and `DEV_MODE=1`. Add your image API keys without them appearing on screen:
-
-```bash
-./set-key.sh GEMINI_API_KEY
-./set-key.sh OPENAI_API_KEY
-```
-
-Then open http://127.0.0.1:8797 (builder) or http://builder.localhost:8797. `DEV_MODE=1` shows a model picker and cost under each render; never enable it in production.
+The first run creates `.dev.vars` with a random `ADMIN_TOKEN` (you sign in to the builder with it) and `DEV_MODE=1`. Add at least one image API key (see **API keys** below), then open http://127.0.0.1:8797 (builder) or http://builder.localhost:8797. `DEV_MODE=1` shows a model picker and cost under each render; never enable it in production.
 
 ## Embed a form
 
@@ -53,19 +46,75 @@ Copy the snippet from the builder's Embed tab:
 
 Works on WordPress, Shopify, Wix and plain HTML (anywhere you can paste HTML).
 
+## API keys (never in this repo)
+
+The repo contains **no API keys**. Every deployment uses its owner's own keys, stored outside the code:
+
+| where | what holds the keys | visible in GitHub? |
+| --- | --- | --- |
+| your computer | `.dev.vars` (git-ignored, created by `./dev.sh`) | no |
+| Cloudflare | Worker **secrets** (encrypted, write-only) | no |
+
+Never put an API key in `wrangler.jsonc`, in the code, in a commit, or in GitHub Secrets. The OpenAI and Gemini keys only need to exist in Cloudflare.
+
+| secret | needed for | where to get it |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | GPT Image models (default first render) | https://platform.openai.com/api-keys |
+| `GEMINI_API_KEY` | Nano Banana models (default refinements) | https://aistudio.google.com/apikey (billing must be on for image models) |
+| `ADMIN_TOKEN` | signing in to the builder and admin | any long random string, e.g. `openssl rand -hex 24` |
+
+One image key is enough: without `OPENAI_API_KEY` all renders use Gemini, without `GEMINI_API_KEY` all renders use GPT Image 2.5 Flare.
+
+### Set the keys locally
+
+```bash
+./set-key.sh OPENAI_API_KEY    # paste the key, it is not shown on screen
+./set-key.sh GEMINI_API_KEY
+```
+
+Running it again replaces the old value. Restart `./dev.sh` afterwards.
+
+### Set the keys on Cloudflare
+
+**Option A, dashboard (no terminal):**
+
+1. Cloudflare dashboard → **Workers & Pages** → open the `ai-jewelry-form-builder` Worker.
+2. **Settings** → **Variables and Secrets** → **Add**.
+3. Type: **Secret**. Name: `OPENAI_API_KEY`. Value: your key. Save and deploy.
+4. Repeat for `GEMINI_API_KEY` and `ADMIN_TOKEN`.
+
+**Option B, terminal:**
+
+```bash
+npx wrangler secret put OPENAI_API_KEY    # paste the key when asked
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put ADMIN_TOKEN
+```
+
+### Change (rotate) a key
+
+1. Create a new key with the provider (links above).
+2. Replace it: on Cloudflare run `npx wrangler secret put OPENAI_API_KEY` again, or edit the secret in **Settings → Variables and Secrets** (secret values cannot be viewed, only replaced). Locally run `./set-key.sh OPENAI_API_KEY` again.
+3. Make one test render (open a form and finish it).
+4. Delete the old key at the provider so it stops working everywhere.
+
+If a key was ever pasted into a commit, chat or screenshot, treat it as leaked: rotate it right away.
+
 ## Deploy to Cloudflare
 
 ```bash
+npx wrangler login
 npx wrangler d1 create konfigurator          # put the returned database_id into wrangler.jsonc
 npx wrangler r2 bucket create konfigurator-media
 npx wrangler d1 migrations apply konfigurator --remote
-npx wrangler secret put ADMIN_TOKEN
-npx wrangler secret put OPENAI_API_KEY
-npx wrangler secret put GEMINI_API_KEY
 npx wrangler deploy
 ```
 
-API keys only ever live in `.dev.vars` (local, git-ignored) or Worker secrets. If Gemini answers "User location is not supported", add a placement region to `wrangler.jsonc` (for example `"placement": { "region": "aws:us-east-1" }`).
+Then add the secrets (see **API keys** above). Make sure `DEV_MODE` is not set in production.
+
+To deploy automatically on every push, connect this repo in the Cloudflare dashboard (**Workers & Pages → your Worker → Settings → Builds → Connect**). The keys stay in Cloudflare secrets; nothing secret goes into GitHub.
+
+If Gemini answers "User location is not supported", add a placement region to `wrangler.jsonc` (for example `"placement": { "region": "aws:us-east-1" }`).
 
 ## Checks
 
