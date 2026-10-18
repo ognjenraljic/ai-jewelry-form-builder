@@ -4,6 +4,8 @@ A form builder for custom jewelers. The jeweler's customer goes through a step-b
 
 Runs entirely on Cloudflare: one Worker, D1 (database), R2 (images).
 
+**Want your own copy online?** Follow [DEPLOY.md](DEPLOY.md): step by step in the Cloudflare and GitHub dashboards, no terminal needed, your keys stay in Cloudflare.
+
 ## What is in here
 
 - **Builder** (`/builder`, or `builder.<your-domain>/`): clients (jewelers), forms created from templates (Custom Enquiry, Grillz, Ring, Blank), default and custom questions, an image and an AI note per option, theme colors, logo, texts, live preview and the embed code.
