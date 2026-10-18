@@ -54,7 +54,7 @@ The database ID is not a secret, it is fine on GitHub.
    - **Build command:** leave empty
    - **Deploy command:**
      ```
-     npx wrangler d1 migrations apply konfigurator --remote && npx wrangler deploy
+     npm run deploy
      ```
    - **Branch:** `main`
 5. **Save and Deploy**. Wait until the build is green (1 to 3 minutes).

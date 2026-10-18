@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "./dev.sh",
-    "db:local": "wrangler d1 migrations apply konfigurator --local"
+    "db:local": "wrangler d1 migrations apply konfigurator --local",
+    "deploy": "wrangler d1 migrations apply konfigurator --remote && wrangler deploy"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
