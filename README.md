@@ -18,11 +18,11 @@ Image models (pick per environment in `wrangler.jsonc`, keys in `src/worker.js` 
 
 | key | model | notes |
 | --- | --- | --- |
-| `gptflare` | GPT Image 2.5 Flare | default first render, ~$0.065, ~20 s |
+| `gptflare` | GPT Image 2.5 Flare | default for first render and refinements, ~$0.065, ~20 s |
 | `gptsun` | GPT Image 2.5 Sunburst | same quality, ~37 s |
 | `gpt2` | GPT Image 2 | ~$0.22, ~90 s |
 | `pro` | Nano Banana Pro (Gemini 3 Pro Image) | ~$0.16, ~25 s |
-| `flash` | Nano Banana (Gemini 2.5 Flash Image) | default for refinements, cheapest |
+| `flash` | Nano Banana (Gemini 2.5 Flash Image) | cheapest, optional for refinements (`TWEAK_MODEL`) |
 
 Costs are estimates from token usage and change with provider pricing.
 
@@ -61,8 +61,8 @@ Never put an API key in `wrangler.jsonc`, in the code, in a commit, or in GitHub
 
 | secret | needed for | where to get it |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | GPT Image models (default first render) | https://platform.openai.com/api-keys |
-| `GEMINI_API_KEY` | Nano Banana models (default refinements) | https://aistudio.google.com/apikey (billing must be on for image models) |
+| `OPENAI_API_KEY` | GPT Image models (all renders by default) | https://platform.openai.com/api-keys |
+| `GEMINI_API_KEY` | Nano Banana models (optional) | https://aistudio.google.com/apikey (billing must be on for image models) |
 | `ADMIN_TOKEN` | signing in to the builder and admin | any long random string, e.g. `openssl rand -hex 24` |
 
 One image key is enough: without `OPENAI_API_KEY` all renders use Gemini, without `GEMINI_API_KEY` all renders use GPT Image 2.5 Flare.

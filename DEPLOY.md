@@ -89,7 +89,7 @@ From now on every push to `main` deploys automatically. The token is a Cloudflar
 | --- | --- |
 | `ADMIN_TOKEN` | a long password you make up (at least 24 characters). You sign in to the builder with it. |
 | `OPENAI_API_KEY` | your OpenAI key (starts with `sk-`) |
-| `GEMINI_API_KEY` | your Gemini key |
+| `GEMINI_API_KEY` | optional, only if you switch a model to Nano Banana |
 
 One image key is enough. Without OpenAI all renders use Gemini, without Gemini all renders use GPT Image.
 

@@ -13,5 +13,7 @@
   ],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "konfigurator-media" }],
   // First render and refinement model keys (see MODELS in src/worker.js): flash, pro, gptflare, gptsun, gpt2
-  "vars": { "FIRST_MODEL": "gptflare", "TWEAK_MODEL": "flash" }
+  "vars": { "FIRST_MODEL": "gptflare", "TWEAK_MODEL": "gptflare" },
+  // Workers Logs: errors and console output in the dashboard (Worker -> Observability)
+  "observability": { "enabled": true }
 }
