@@ -44,6 +44,8 @@ export default {
       if (p.startsWith('/api/portal/')) return portalApi(request, env, p);
       if (p === '/api/admin/view-as-log' && request.method === 'GET') return viewAsLog(request, env);
       if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/view-as$/)) && request.method === 'POST') return startViewAs(request, env, m[1]);
+      if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/portal-link$/)) && (request.method === 'POST' || request.method === 'DELETE')) return clientLink(request, env, m[1]);
+      if (p === '/api/admin/overview' && request.method === 'GET') return adminOverview(request, env);
       if (p.startsWith('/api/admin/clients') && !p.endsWith('/upload')) return adminClients(request, env, p);
       if (p.startsWith('/api/admin/forms') || /^\/api\/admin\/clients\/[a-z0-9-]+\/upload$/.test(p)) return adminForms(request, env, p);
       if (p === '/api/leads' && request.method === 'POST') return createLead(request, env);
@@ -431,8 +433,40 @@ async function startViewAs(request, env, clientId) {
 
 async function viewAsLog(request, env) {
   if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
-  const rows = (await env.DB.prepare('SELECT s.client_id, c.name, s.kind, s.started_at, s.expires_at, s.ended_at FROM portal_sessions s LEFT JOIN clients c ON c.id = s.client_id ORDER BY s.started_at DESC LIMIT 50').all()).results;
+  const rows = (await env.DB.prepare("SELECT s.client_id, c.name, s.kind, s.started_at, s.expires_at, s.ended_at FROM portal_sessions s LEFT JOIN clients c ON c.id = s.client_id WHERE s.kind = 'view-as' ORDER BY s.started_at DESC LIMIT 50").all()).results;
   return json({ sessions: rows });
+}
+
+// Stalni link klijenta za njegov portal (bez lozinke). Novi link gasi stari, DELETE gasi link.
+// Čuvamo samo hash, pa se link vidi samo jednom, kad se napravi.
+const CLIENT_LINK_MS = 365 * 86400_000;
+async function clientLink(request, env, clientId) {
+  if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
+  const client = await env.DB.prepare('SELECT id, name FROM clients WHERE id = ?').bind(clientId).first();
+  if (!client) return json({ error: 'Client not found' }, 404);
+  const now = Date.now();
+  await env.DB.prepare("UPDATE portal_sessions SET ended_at = ? WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL").bind(now, client.id).run();
+  if (request.method === 'DELETE') return json({ ok: true });
+  const token = rid(40);
+  await env.DB.prepare('INSERT INTO portal_sessions (id, token_hash, client_id, kind, ip, started_at, expires_at) VALUES (?,?,?,?,?,?,?)')
+    .bind(rid(12), await sha256(token), client.id, 'client', request.headers.get('cf-connecting-ip') || 'local', now, now + CLIENT_LINK_MS).run();
+  const origin = new URL(request.url).origin.replace('//builder.', '//');
+  return json({ url: `${origin}/portal#k=${token}`, createdAt: now, expiresAt: now + CLIENT_LINK_MS });
+}
+
+// Pregled svih formi za builder: upiti, renderi, zadnji upit i trošak po formi, plus aktivni linkovi klijenata.
+async function adminOverview(request, env) {
+  if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
+  const [leads, renders, links] = await env.DB.batch([
+    env.DB.prepare('SELECT form_id, COUNT(*) AS leads, MAX(created_at) AS last_lead FROM leads GROUP BY form_id'),
+    env.DB.prepare("SELECT l.form_id, SUM(CASE WHEN r.status = 'ok' THEN 1 ELSE 0 END) AS renders, SUM(r.cost_usd) AS cost FROM renders r JOIN leads l ON l.id = r.lead_id GROUP BY l.form_id"),
+    env.DB.prepare("SELECT client_id, MAX(started_at) AS created_at FROM portal_sessions WHERE kind = 'client' AND ended_at IS NULL AND expires_at > ? GROUP BY client_id").bind(Date.now()),
+  ]);
+  const stats = {};
+  const row = (id) => (stats[id] ||= { leads: 0, renders: 0, cost: 0, lastLead: null });
+  for (const r of leads.results) Object.assign(row(r.form_id), { leads: r.leads, lastLead: r.last_lead });
+  for (const r of renders.results) Object.assign(row(r.form_id), { renders: r.renders || 0, cost: r.cost || 0 });
+  return json({ stats, links: Object.fromEntries(links.results.map((r) => [r.client_id, { createdAt: r.created_at }])) });
 }
 
 // Token iz zaglavlja (fetch) ili ?t= (slike u <img>, koje ne mogu slati zaglavlja).
@@ -466,8 +500,9 @@ async function portalApi(request, env, p) {
   const client = await env.DB.prepare('SELECT id, name, data FROM clients WHERE id = ?').bind(sess.client_id).first();
   if (!client) return json({ error: 'Client not found' }, 404);
 
+  // Admin zatvara svoj pregled. Klijentov link se ovdje ne gasi (odjava samo briše token u browseru).
   if (p === '/api/portal/exit' && request.method === 'POST') {
-    await env.DB.prepare('UPDATE portal_sessions SET ended_at = ? WHERE id = ?').bind(Date.now(), sess.id).run();
+    if (sess.kind === 'view-as') await env.DB.prepare('UPDATE portal_sessions SET ended_at = ? WHERE id = ?').bind(Date.now(), sess.id).run();
     return json({ ok: true });
   }
   const formRows = (await env.DB.prepare('SELECT id, data, template, updated_at FROM forms WHERE client_id = ? ORDER BY updated_at DESC').bind(client.id).all()).results;
@@ -475,13 +510,19 @@ async function portalApi(request, env, p) {
 
   if (p === '/api/portal/me' && request.method === 'GET') {
     const d = JSON.parse(client.data || '{}');
-    const stats = await env.DB.prepare(`SELECT COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, SUM(CASE WHEN l.created_at > ? THEN 1 ELSE 0 END) AS recent
+    const stats = await env.DB.prepare(`SELECT COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, COUNT(DISTINCT CASE WHEN l.created_at > ? THEN l.id END) AS recent
       FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ?`).bind(Date.now() - 30 * 86400_000, client.id).first();
+    // Po formi: upiti, renderi i zadnji upit. Trošak AI-ja klijent ne vidi (samo admin).
+    const per = Object.fromEntries((await env.DB.prepare(`SELECT l.form_id, COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, MAX(l.created_at) AS last_lead
+      FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? GROUP BY l.form_id`).bind(client.id).all()).results.map((r) => [r.form_id, r]));
     return json({
       session: { kind: sess.kind, expiresAt: sess.expires_at },
       client: { id: client.id, name: client.name, logo: d.logo || null, website: d.website || '' },
-      forms: formRows.map((r) => ({ id: r.id, name: forms[r.id].name, template: r.template, label: TEMPLATES[r.template]?.label || 'Custom', updated_at: r.updated_at })),
-      stats: { leads: stats?.leads || 0, renders: stats?.renders || 0 },
+      forms: formRows.map((r) => ({
+        id: r.id, name: forms[r.id].name, template: r.template, label: TEMPLATES[r.template]?.label || 'Custom', updated_at: r.updated_at,
+        leads: per[r.id]?.leads || 0, renders: per[r.id]?.renders || 0, lastLead: per[r.id]?.last_lead || null,
+      })),
+      stats: { leads: stats?.leads || 0, renders: stats?.renders || 0, recent: stats?.recent || 0 },
     });
   }
   if (p === '/api/portal/leads' && request.method === 'GET') {
@@ -499,7 +540,7 @@ async function portalApi(request, env, p) {
         let files = {};
         try { files = JSON.parse(l.files || '{}'); } catch {}
         return {
-          id: l.id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
+          id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a),
           photos: [...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []), ...Object.entries(files).map(([k, key]) => ({ label: k.replace(/__more$/, ' (extra)').replace(/_/g, ' '), key }))],
           renders: renders.filter((r) => r.lead_id === l.id).map((r) => ({ url: `/media/${r.image_key}`, tweak: r.tweak })),

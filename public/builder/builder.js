@@ -37,6 +37,7 @@ const app = document.getElementById('app');
 const B = {
   token: store.get('aik_admin') || '', clients: [], forms: [], templates: [], clientId: null, id: null, draft: null, saved: '',
   client: null, clientSaved: '', tab: store.get('aik_builder_tab') || 'client', piece: null, device: 'desktop', open: new Set([0]), status: '', kind: '',
+  view: 'hub', overview: { stats: {}, links: {} }, q: '',
 };
 
 // ---------- API ----------
@@ -89,14 +90,17 @@ function login(msg = '') {
 }
 
 async function refreshLists() {
-  const d = await api('/api/admin/forms');
+  const [d, o] = await Promise.all([api('/api/admin/forms'), api('/api/admin/overview')]);
   B.clients = d.clients;
   B.forms = d.forms;
   B.templates = d.templates;
+  B.overview = o;
 }
 
+// Start na pregledu svih formi; nova forma (formId) ili zadnji otvoren editor idu pravo u editor.
 async function loadAll(formId) {
   await refreshLists();
+  if (!formId && store.get('aik_builder_view') !== 'editor') return renderHub();
   const want = formId || store.get('aik_builder_form');
   const f = B.forms.find((x) => x.id === want) || B.forms.find((x) => x.clientId) || B.forms[0];
   await openForm(f.id, true);
@@ -110,17 +114,138 @@ function setClient(cid) {
 }
 
 async function openForm(id, force = false) {
-  if (!force && (dirty() || clientDirty()) && !confirm('You have unsaved changes. Discard them?')) { renderTop(); return; }
+  if (!force && (dirty() || clientDirty()) && !confirm('You have unsaved changes. Discard them?')) { if (B.view === 'editor') renderTop(); return; }
   const { form } = await api(`/api/admin/forms/${id}`);
   B.id = id;
   B.draft = form;
   B.saved = JSON.stringify(form);
   setClient(form.clientId);
+  B.view = 'editor';
+  store.set('aik_builder_view', 'editor');
   B.piece = typeLoc()?.field.options[0]?.value || null;
   B.open = new Set([0]);
   store.set('aik_builder_form', id);
   setStatus('');
   renderShell();
+}
+
+// ---------- Pregled svih formi (po klijentima) ----------
+const statOf = (id) => B.overview.stats[id] || { leads: 0, renders: 0, cost: 0, lastLead: null };
+const day = (t) => (t ? new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '');
+const usd = (n) => `$${(n || 0).toFixed((n || 0) < 10 ? 3 : 2)}`;
+
+function renderHub() {
+  B.view = 'hub';
+  store.set('aik_builder_view', 'hub');
+  const all = B.forms.map((f) => statOf(f.id));
+  const sum = (k) => all.reduce((t, s) => t + (s[k] || 0), 0);
+  app.innerHTML = `
+    <div class="hub">
+      <header class="top">
+        <div class="logo">${icon('gem')} JewelryLead <small>Builder</small></div>
+        <input class="in hub-q" data-hub-q type="search" placeholder="Search clients and forms" value="${esc(B.q)}" aria-label="Search" />
+        <div class="spacer"></div>
+        <button class="btn small" data-act="new-client">+ Client</button>
+        <button class="btn small" data-act="new-form">+ Form</button>
+        <a class="btn small ghost" href="/admin" target="_blank" rel="noopener">Leads</a>
+        ${B.id ? `<button class="btn small primary" data-act="back-editor">Back to editor${dirty() || clientDirty() ? ' (unsaved)' : ''}</button>` : ''}
+      </header>
+      <main class="hub-main">
+        <h2>All forms</h2>
+        <p class="lead">Every client and their forms. AI cost is visible only here and in the admin, never to the client.</p>
+        <div class="hub-stats">
+          <div><span>Clients</span><b>${B.clients.length}</b></div>
+          <div><span>Forms</span><b>${B.forms.length}</b></div>
+          <div><span>Leads</span><b>${sum('leads')}</b></div>
+          <div><span>AI renders</span><b>${sum('renders')}</b></div>
+          <div><span>AI cost</span><b>${usd(sum('cost'))}</b></div>
+        </div>
+        <div id="hub-list"></div>
+      </main>
+    </div>`;
+  renderHubList();
+}
+
+function renderHubList() {
+  const q = B.q.trim().toLowerCase();
+  const groups = [...B.clients.map((c) => ({ c, forms: clientForms(c.id) })), { c: null, forms: clientForms(null) }].filter((g) => g.c || g.forms.length);
+  const hit = (s) => String(s || '').toLowerCase().includes(q);
+  const shown = groups
+    .map((g) => ({ ...g, forms: !q || hit(g.c?.name) || hit(g.c?.website) ? g.forms : g.forms.filter((f) => hit(f.name) || hit(f.id)) }))
+    .filter((g) => !q || g.forms.length || hit(g.c?.name));
+  document.getElementById('hub-list').innerHTML = shown.map(({ c, forms }) => {
+    const link = c && B.overview.links[c.id];
+    const rows = forms.map((f) => {
+      const s = statOf(f.id);
+      return `<tr>
+        <td><button class="linkish" data-act="open-form" data-id="${esc(f.id)}">${esc(f.name || f.id)}</button><small>${esc(f.builtin ? 'Built-in demo' : tplLabel(f.template))} · ${esc(f.id)}</small></td>
+        <td class="num">${s.leads}</td><td class="num">${s.renders}</td><td class="when">${esc(day(s.lastLead)) || '<span class="faint">none</span>'}</td><td class="num">${usd(s.cost)}</td>
+        <td class="acts"><button class="btn small" data-act="open-form" data-id="${esc(f.id)}">Edit</button><a class="btn small ghost" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open ↗</a><button class="btn small ghost" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button></td>
+      </tr>`;
+    }).join('');
+    return `<section class="hub-client">
+      <div class="hub-head">
+        ${c?.logo ? `<img src="${esc(c.logo)}" alt="" />` : `<span class="hub-mono">${esc((c?.name || '?').slice(0, 1))}</span>`}
+        <div class="grow"><b>${esc(c ? c.name : 'Unassigned')}</b><small>${c ? [c.website, `${forms.length} form${forms.length === 1 ? '' : 's'}`].filter(Boolean).map(esc).join(' · ') : 'Forms without a client'}</small></div>
+        ${c ? `<span class="pill ${link ? 'pill-def' : ''}" title="${link ? `Active since ${esc(day(link.createdAt))}` : 'The client has no portal link yet'}">${link ? 'Portal link on' : 'No portal link'}</span>
+          <button class="btn small ghost" data-act="portal-link" data-cid="${esc(c.id)}">Portal link</button>
+          <button class="btn small ghost" data-act="view-as" data-cid="${esc(c.id)}">View as client ↗</button>
+          <button class="btn small" data-act="new-form" data-cid="${esc(c.id)}">+ Form</button>` : ''}
+      </div>
+      ${rows ? `<div class="table-wrap"><table class="hub-table"><colgroup><col /><col style="width:70px" /><col style="width:84px" /><col style="width:120px" /><col style="width:90px" /><col style="width:252px" /></colgroup><thead><tr><th>Form</th><th class="num">Leads</th><th class="num">Renders</th><th>Last lead</th><th class="num">AI cost</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="hint" style="margin:0">No forms yet.</p>'}
+    </section>`;
+  }).join('') || '<p class="hint">Nothing matches your search.</p>';
+}
+
+// Link za portal klijenta: vidi se samo jednom; novi link gasi stari.
+function portalLink(cid) {
+  const c = B.clients.find((x) => x.id === cid);
+  if (!c) return;
+  const d = document.createElement('dialog');
+  const body = () => {
+    const link = B.overview.links[cid];
+    return `<h2>Portal link</h2>
+      <p class="lead">${esc(c.name)} opens their own portal with this link: leads, renders, photos and their forms with embed code. No AI costs. No password, so anyone with the link sees their leads: send it only to the client.</p>
+      <p class="hint" id="pl-state">${link ? `A link is active since ${esc(day(link.createdAt))}. For safety it is shown only once. If it was lost, create a new one: the old one stops working.` : 'No active link yet.'}</p>
+      <div id="pl-out"></div>
+      <p class="err-text"></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px">
+        ${link ? '<button class="btn danger" data-pl="off">Turn off link</button>' : ''}
+        <button class="btn" data-pl="close">Close</button>
+        <button class="btn primary" data-pl="new">${link ? 'New link' : 'Create link'}</button>
+      </div>`;
+  };
+  d.innerHTML = body();
+  document.body.appendChild(d);
+  const after = () => { if (B.view === 'hub') renderHubList(); else if (B.tab === 'client') renderPane(); };
+  d.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-pl]');
+    if (!b) return;
+    const err = d.querySelector('.err-text');
+    try {
+      if (b.dataset.pl === 'close') return d.close();
+      if (b.dataset.pl === 'copy') { await navigator.clipboard.writeText(d.querySelector('#pl-url').value); b.textContent = 'Copied'; return; }
+      if (b.dataset.pl === 'off') {
+        if (!confirm(`Turn off ${c.name}'s portal link? It stops working right away.`)) return;
+        await api(`/api/admin/clients/${cid}/portal-link`, { method: 'DELETE' });
+        delete B.overview.links[cid];
+        after();
+        return d.close();
+      }
+      if (b.dataset.pl === 'new') {
+        if (B.overview.links[cid] && !confirm('Create a new link? The old link stops working right away.')) return;
+        const r = await api(`/api/admin/clients/${cid}/portal-link`, { method: 'POST' });
+        B.overview.links[cid] = { createdAt: r.createdAt };
+        d.innerHTML = body();
+        d.querySelector('#pl-state').textContent = 'New link, valid for one year. Copy it now and send it to the client: it is not shown again.';
+        d.querySelector('#pl-out').innerHTML = `<div class="pick-row" style="margin-top:10px"><input class="in" id="pl-url" readonly value="${esc(r.url)}" /><button class="btn small primary" data-pl="copy">Copy</button></div>`;
+        d.querySelector('#pl-url').select();
+        after();
+      }
+    } catch (x) { err.textContent = x.message; }
+  });
+  d.addEventListener('close', () => d.remove());
+  d.showModal();
 }
 
 // ---------- Okvir ----------
@@ -150,6 +275,7 @@ function renderTop() {
   const fOpts = clientForms(B.clientId).map((f) => `<option value="${esc(f.id)}" ${f.id === B.id ? 'selected' : ''}>${esc(f.name || f.id)}${f.builtin ? ' (built-in)' : ''}</option>`).join('');
   document.getElementById('top').innerHTML = `
     <div class="logo">${icon('gem')} JewelryLead <small>Builder</small></div>
+    <button class="btn small ghost" data-act="hub" title="All clients and forms">All forms</button>
     <select class="form-select" id="client-select" aria-label="Client">${cOpts}</select>
     <button class="btn small" data-act="new-client" title="New client">+ Client</button>
     <span class="sep">/</span>
@@ -239,6 +365,9 @@ function clientView() {
     ${area('client.notes', 'Notes (internal)')}
     <div class="pick-row"><button class="btn small ${clientDirty() ? 'primary' : ''}" data-act="save-client" ${clientDirty() ? '' : 'disabled'}>Save client</button><button class="btn small" data-act="view-as">View as client ↗</button></div>
     <p class="hint">"View as client" opens their portal (leads and forms) exactly as they see it, for one hour. Every view is logged.</p>
+    <h3>Client portal</h3>
+    <p class="hint" style="margin-bottom:10px">${B.overview.links[B.client.id] ? `Portal link active since ${esc(day(B.overview.links[B.client.id].createdAt))}.` : 'No portal link yet.'} With the link the client sees their leads, renders and forms on their own, without AI costs.</p>
+    <button class="btn small" data-act="portal-link" data-cid="${esc(B.client.id)}">Portal link…</button>
     <h3>Forms (${clientForms(B.client.id).length})</h3>
     ${forms || '<p class="hint">No forms yet.</p>'}
     <button class="btn small" data-act="new-form">+ New form for ${esc(B.client.name)}</button>`;
@@ -488,6 +617,7 @@ function updateStatus() {
 
 app.addEventListener('input', (e) => {
   const el = e.target;
+  if (el.dataset.hubQ !== undefined) { B.q = el.value; renderHubList(); return; }
   if (!el.dataset.bind || el.tagName === 'SELECT' || el.type === 'checkbox') return;
   setP(el.dataset.bind, readBind(el));
   if (el.dataset.kind === 'color' || el.dataset.kind === 'optcolor') {
@@ -548,10 +678,13 @@ app.addEventListener('click', async (e) => {
   if (act === 'tab') { B.tab = el.dataset.tab; store.set('aik_builder_tab', B.tab); renderTabs(); renderPane(); }
   if (act === 'save') save();
   if (act === 'save-client') saveClient();
-  if (act === 'new-form') newForm();
+  if (act === 'new-form') newForm(el.dataset.cid || B.client?.id);
   if (act === 'new-client') newClient();
   if (act === 'open-form') openForm(el.dataset.id);
-  if (act === 'view-as') viewAs();
+  if (act === 'view-as') viewAs(el.dataset.cid || B.client?.id);
+  if (act === 'hub') renderHub();
+  if (act === 'back-editor') { B.view = 'editor'; store.set('aik_builder_view', 'editor'); renderShell(); }
+  if (act === 'portal-link') portalLink(el.dataset.cid);
   if (act === 'device') { B.device = el.dataset.d; document.getElementById('frame').classList.toggle('mobile', B.device === 'mobile'); renderPbar(); }
   if (act === 'jump') pushPreview(i);
   if (act === 'preset') { B.draft.theme = { ...PRESETS[el.dataset.p] }; changed(true); }
@@ -631,8 +764,9 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'copy-text') {
+    const label = el.textContent;
     try { await navigator.clipboard.writeText(el.dataset.text); el.textContent = 'Copied'; } catch { el.textContent = 'Copy failed'; }
-    setTimeout(() => renderPane(), 1400);
+    setTimeout(() => { el.textContent = label; }, 1400);
   }
   if (act === 'json-apply') {
     try {
@@ -753,11 +887,11 @@ function newForm(clientId = B.client?.id) {
 
 // Portal klijenta u novom tabu: sesija od 1 sat samo za ovog klijenta, upisana u log.
 // Prozor se otvara odmah (inače ga blokator iskačućih prozora zaustavi poslije await-a), a adresu dobija kad stigne token.
-async function viewAs() {
-  if (!B.client) return;
+async function viewAs(cid) {
+  if (!cid) return;
   const w = window.open('', '_blank');
   try {
-    const r = await api(`/api/admin/clients/${B.client.id}/view-as`, { method: 'POST' });
+    const r = await api(`/api/admin/clients/${cid}/view-as`, { method: 'POST' });
     store.set('aik_view_as', JSON.stringify({ token: r.token, expiresAt: r.expiresAt }));
     if (w) w.location.href = '/portal'; else location.href = '/portal';
   } catch (err) {
@@ -789,5 +923,5 @@ window.addEventListener('message', (e) => {
   if (e.origin === location.origin && e.data?.type === 'aik:preview-ready') pushPreview();
 });
 
-window.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); if (B.tab === 'client' && clientDirty()) saveClient(); else save(); } });
+window.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); if (B.view === 'hub') return; if (B.tab === 'client' && clientDirty()) saveClient(); else save(); } });
 window.addEventListener('beforeunload', (e) => { if (dirty() || clientDirty()) { e.preventDefault(); e.returnValue = ''; } });

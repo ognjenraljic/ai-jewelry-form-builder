@@ -82,3 +82,13 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
   .powered { display: none; }
   .client h1 { font-size: 22px; }
 }
+
+/* Statistika po formi i filter upita po formi */
+.stats { grid-template-columns: repeat(4, 1fr); }
+.fstats { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; color: var(--ink-faint); font-size: 13px; margin-bottom: 12px; }
+.fstats b { color: var(--ink); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.chip { border: 1px solid var(--line-strong); background: none; color: var(--ink-soft); border-radius: 999px; padding: 6px 12px; font-weight: 600; font-size: 12px; cursor: pointer; }
+.chip span { color: var(--ink-faint); margin-left: 4px; pointer-events: none; }
+.chip.on { border-color: var(--accent); color: var(--ink); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+@media (max-width: 720px) { .stats { grid-template-columns: 1fr 1fr; } }
