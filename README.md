@@ -42,8 +42,8 @@ The first run creates `.dev.vars` with a random `ADMIN_TOKEN` (you sign in to th
 Copy the snippet from the builder's Embed tab:
 
 ```html
-<div id="karatly-demo"></div>
-<script src="https://<your-worker-domain>/embed.js" data-form="demo" data-target="karatly-demo" async></script>
+<div id="jewelrylead-demo"></div>
+<script src="https://<your-worker-domain>/embed.js" data-form="demo" data-target="jewelrylead-demo" async></script>
 ```
 
 Works on WordPress, Shopify, Wix and plain HTML (anywhere you can paste HTML).

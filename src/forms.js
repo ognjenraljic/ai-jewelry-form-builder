@@ -222,8 +222,8 @@ export function fromTemplate(template, { id, brand, name, clientId, logo }) {
   return { id, name: name || `${brand} · ${t.label}`, clientId, template, ...form };
 }
 
-// Ugrađena demo forma (demo sajt i Karatly početna). Važi dok se ne sačuva u bazi.
-export const FORMS = { demo: { ...fromTemplate('custom-enquiry', { id: 'demo', brand: 'Maison Demo', name: 'Demo (Karatly site)', clientId: null }) } };
+// Ugrađena demo forma (demo sajt i JewelryLead početna). Važi dok se ne sačuva u bazi.
+export const FORMS = { demo: { ...fromTemplate('custom-enquiry', { id: 'demo', brand: 'Maison Demo', name: 'Demo (JewelryLead site)', clientId: null }) } };
 
 export function publicForm(form) {
   // Sve što ide u browser. Opis oblika (shape) i napomene za AI (note) nisu za kupca.

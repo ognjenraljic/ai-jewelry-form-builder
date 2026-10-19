@@ -1,4 +1,4 @@
-// Karatly Builder: klijenti (zlatari) -> forme iz šablona -> uređivanje bez koda, sa živim pregledom.
+// JewelryLead Builder: klijenti (zlatari) -> forme iz šablona -> uređivanje bez koda, sa živim pregledom.
 // Čuvanje forme: PUT /api/admin/forms/:id (server provjerava validateFormDef). Klijent: PUT /api/admin/clients/:id.
 
 const ICONS = {
@@ -79,7 +79,7 @@ async function boot() {
 }
 
 function login(msg = '') {
-  app.innerHTML = `<div class="center"><form class="box" id="login"><div class="logo">${icon('gem')} Karatly <small>Builder</small></div><p class="lead" style="margin-top:14px">Sign in with the admin token.</p><input class="in" type="password" placeholder="ADMIN_TOKEN" autofocus /><p class="err-text">${esc(msg)}</p><button class="btn primary" style="width:100%">Sign in</button></form></div>`;
+  app.innerHTML = `<div class="center"><form class="box" id="login"><div class="logo">${icon('gem')} JewelryLead <small>Builder</small></div><p class="lead" style="margin-top:14px">Sign in with the admin token.</p><input class="in" type="password" placeholder="ADMIN_TOKEN" autofocus /><p class="err-text">${esc(msg)}</p><button class="btn primary" style="width:100%">Sign in</button></form></div>`;
   app.querySelector('#login').onsubmit = (e) => {
     e.preventDefault();
     B.token = app.querySelector('input').value.trim();
@@ -149,7 +149,7 @@ function renderTop() {
     + (clientForms(null).length ? `<option value="" ${!B.clientId ? 'selected' : ''}>Unassigned (${clientForms(null).length})</option>` : '');
   const fOpts = clientForms(B.clientId).map((f) => `<option value="${esc(f.id)}" ${f.id === B.id ? 'selected' : ''}>${esc(f.name || f.id)}${f.builtin ? ' (built-in)' : ''}</option>`).join('');
   document.getElementById('top').innerHTML = `
-    <div class="logo">${icon('gem')} Karatly <small>Builder</small></div>
+    <div class="logo">${icon('gem')} JewelryLead <small>Builder</small></div>
     <select class="form-select" id="client-select" aria-label="Client">${cOpts}</select>
     <button class="btn small" data-act="new-client" title="New client">+ Client</button>
     <span class="sep">/</span>
@@ -214,7 +214,7 @@ const imgPick = (path, { scope = 'forms', size = 'sm', empty = 'Image' } = {}) =
 };
 const snippetFor = (id) => {
   const o = location.origin.replace('//builder.', '//');
-  return `<div id="karatly-${id}"></div>\n<script src="${o}/embed.js" data-form="${id}" data-target="karatly-${id}" async></script>`;
+  return `<div id="jewelrylead-${id}"></div>\n<script src="${o}/embed.js" data-form="${id}" data-target="jewelrylead-${id}" async></script>`;
 };
 
 // ---------- Kartice ----------

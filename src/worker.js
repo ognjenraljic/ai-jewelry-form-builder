@@ -35,7 +35,7 @@ export default {
       if (url.hostname.startsWith('builder.') && p === '/' && request.method === 'GET') {
         return env.ASSETS.fetch(new Request(new URL('/builder', url), request));
       }
-      if (p === '/' && request.method === 'GET') return env.ASSETS.fetch(new Request(new URL('/builder', url), request));
+      if (p === '/' && request.method === 'GET') return env.ASSETS.fetch(request);
       if (p.startsWith('/f/') && request.method === 'GET') {
         return env.ASSETS.fetch(new Request(new URL('/form', url), request));
       }
@@ -278,7 +278,7 @@ async function gemini(env, modelId, prompt, images) {
   return { b64: d.data, mime: d.mimeType || d.mime_type || 'image/png', usage: data.usageMetadata || {} };
 }
 
-// Zahtjev za demo sa Karatly sajta (zlatar koji želi platformu, ne kupac nakita).
+// Zahtjev za demo sa JewelryLead sajta (zlatar koji želi platformu, ne kupac nakita).
 async function createDemoRequest(request, env) {
   const b = await request.json().catch(() => ({}));
   if (b.company) return json({ ok: true }); // honeypot: botovi popune skriveno polje

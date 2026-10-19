@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Konfigurator admin</title>
+  <title>JewelryLead admin</title>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&display=swap" rel="stylesheet" />
   <style>
     :root { --bg: #0e0d0c; --surface: #171512; --line: #2b2722; --ink: #f2ede4; --soft: #9f978a; --gold: #d8b46a; --red: #e58b7a; }
@@ -70,7 +70,7 @@
           <div class="stat">Prosjek po renderu<b>$${avg.toFixed(3)}</b></div>
         </div>
         ${log.length ? `<h2 style="font-size:17px;margin:0 0 12px">View as client (log)</h2><div class="lead" style="padding:6px 18px">${log.map((x) => `<p style="margin:8px 0"><b>${esc(x.name || x.client_id)}</b> <span class="muted">· ${new Date(x.started_at).toLocaleString('sr-Latn')} · ${x.ended_at ? 'zatvoreno ' + new Date(x.ended_at).toLocaleTimeString('sr-Latn') : x.expires_at < Date.now() ? 'isteklo' : 'aktivno'}</span></p>`).join('')}</div>` : ''}
-        <h2 style="font-size:17px;margin:0 0 12px">Zahtjevi za demo (Karatly sajt)</h2>
+        <h2 style="font-size:17px;margin:0 0 12px">Zahtjevi za demo (JewelryLead sajt)</h2>
         ${data.demos.length ? `<div class="lead" style="padding:6px 18px">${data.demos.map((d) => `<p style="margin:10px 0"><b>${esc(d.name)}</b> <span class="muted">· ${esc(d.email)} · ${esc(d.website)} · ${esc(d.platform)} · ${esc(d.volume)} · ${new Date(d.created_at).toLocaleString('sr-Latn')}</span></p>`).join('')}</div>` : '<p class="muted">Još nema zahtjeva.</p>'}
         <h2 style="font-size:17px;margin:28px 0 12px">Leadovi iz widgeta</h2>
         ${data.leads.length ? data.leads.map(lead).join('') : '<p class="muted">Još nema leadova. Prođi formu na demo sajtu.</p>'}`;

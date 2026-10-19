@@ -14,14 +14,14 @@ async function boot() {
     safe(() => localStorage.removeItem('aik_view_as'));
   }
   P.token = safe(() => JSON.parse(sessionStorage.getItem('aik_portal') || 'null'))?.token;
-  if (!P.token) return ended('No active session', 'Open this portal from the Karatly builder with "View as client".');
+  if (!P.token) return ended('No active session', 'Open this portal from the JewelryLead builder with "View as client".');
   try {
     P.me = await api('/api/portal/me');
     P.leads = (await api('/api/portal/leads')).leads;
   } catch (e) {
     return ended('Session ended', e.message);
   }
-  document.title = `${P.me.client.name} · Karatly`;
+  document.title = `${P.me.client.name} · JewelryLead`;
   render();
   setInterval(tick, 30_000);
 }
@@ -57,7 +57,7 @@ function render() {
     ${banner}
     <header class="head"><div class="wrap">
       <div class="client">${client.logo ? `<img src="${esc(client.logo)}" alt="" />` : ''}<div><h1>${esc(client.name)}</h1><small>${esc(client.website || 'Client portal')}</small></div></div>
-      <span class="powered">Powered by <b>Karatly</b></span>
+      <span class="powered">Powered by <b>JewelryLead</b></span>
     </div></header>
     <main class="wrap">
       <nav class="tabs"><button class="tab ${P.tab === 'leads' ? 'on' : ''}" data-tab="leads">Leads</button><button class="tab ${P.tab === 'forms' ? 'on' : ''}" data-tab="forms">Forms</button></nav>
@@ -67,7 +67,7 @@ function render() {
         <div class="stat">Live forms<b>${forms.length}</b></div>
       </div>
       ${P.tab === 'leads' ? leadsView() : formsView()}
-      <p class="note">Want to change a form, add styles or questions? Contact your Karatly team.</p>
+      <p class="note">Want to change a form, add styles or questions? Contact your JewelryLead team.</p>
     </main>`;
 }
 
@@ -94,7 +94,7 @@ function leadsView() {
 function formsView() {
   const o = location.origin.replace('//builder.', '//');
   return P.me.forms.map((f) => {
-    const snippet = `<div id="karatly-${f.id}"></div>\n<script src="${o}/embed.js" data-form="${f.id}" data-target="karatly-${f.id}" async></script>`;
+    const snippet = `<div id="jewelrylead-${f.id}"></div>\n<script src="${o}/embed.js" data-form="${f.id}" data-target="jewelrylead-${f.id}" async></script>`;
     return `
       <div class="form-card">
         <div class="row"><h2>${esc(f.name)}</h2><span class="pill">${esc(f.label)}</span><a class="btn" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open form ↗</a></div>
