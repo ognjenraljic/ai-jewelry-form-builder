@@ -41,6 +41,28 @@ const CLARITY = {
 
 const clean = (s, max) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
 
+// Budžet vodi veličinu, težinu i bogatstvo detalja. Slika uvijek gađa GORNJU granicu izabranog raspona.
+const BUDGET_TIERS = [
+  [1500, 'a refined, delicate piece: modest size and weight, a small center stone or a few accent stones, clean fine craftsmanship'],
+  [2500, 'a solid, well-proportioned piece: medium size and weight, quality craftsmanship, tasteful stone work where stones are chosen'],
+  [5000, 'a substantial piece with real presence: generous size and weight, rich detail, generous stone work where stones are chosen'],
+  [10000, 'a statement piece: large and heavy, intricate detail, abundant high-quality stones where stones are chosen'],
+  [20000, 'a high-luxury statement piece: large, heavy and intricate, dense premium stones with intense sparkle where stones are chosen'],
+  [Infinity, 'an ultra high-end masterpiece: bold scale, exceptional craftsmanship, the most premium stone work where stones are chosen'],
+];
+
+// Iznos iz natpisa opcije ("$1,500 - $2,500", "Under $1,500", "$20,000+", "2k-5k"); bez broja nema smjernice.
+export function budgetLine(label) {
+  const text = clean(label, 60);
+  const nums = [...text.matchAll(/(\d[\d,.]*)\s*(k\b)?/gi)].map((m) => parseFloat(m[1].replace(/,/g, '')) * (m[2] ? 1000 : 1)).filter((n) => n >= 50);
+  if (!nums.length) return '';
+  const top = Math.max(...nums);
+  const open = /\+|\bover\b|\babove\b|\band up\b/i.test(text);
+  const tier = BUDGET_TIERS.find(([max]) => (open ? top * 1.5 : top) <= max)[1];
+  return `Budget: the customer chose "${text}". Design the piece at the TOP of this range, so it looks worth about $${top.toLocaleString('en-US')}${open ? ' or more' : ''}: ${tier}. ` +
+    "Never make it look cheaper than that. The customer's explicit choices (metal, stones, coverage, teeth, text) always come first; the budget only sets size, weight and richness of detail where they did not specify.";
+}
+
 // Grillz: izbor stila ima prednost; bez stila pogađamo iz opisa kupca.
 // "Set of grillz" sam po sebi vuče gornji i donji red, pa se broj redova određuje prije opisa predmeta.
 function grillzPlan(a) {
@@ -61,7 +83,7 @@ function grillzPlan(a) {
 export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
   let a = answers;
   const lines = [];
-  // Samo uključeni koraci i pitanja; "ai: false" pitanja (budžet, kalupi, gravura iznutra) su samo za zlatara.
+  // Samo uključeni koraci i pitanja; "ai: false" pitanja (kalupi, gravura iznutra) su samo za zlatara. Budžet je izuzetak, vidi budgetLine.
   const allFields = (form.steps || []).filter((st) => st.enabled !== false).flatMap((st) => (st.fields || []).filter((f) => f.enabled !== false));
   const fieldOf = (id) => allFields.find((f) => f.id === id);
   const optOf = (id) => (fieldOf(id)?.options || []).find((o) => o.value === a[id]);
@@ -118,6 +140,10 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
     lines.push(`The piece includes the text "${text}" as part of the design, spelled exactly letter by letter: ${letters}. No other text anywhere.`);
   }
 
+  // Budžet uvijek vodi sliku (i kad je "Send to AI" isključen), ako je pitanje uključeno i ima iznos.
+  const budget = a.budget ? budgetLine(optOf('budget')?.label || a.budget) : '';
+  if (budget) lines.push(budget);
+
   const vision = clean(a.vision, 600);
   if (vision) {
     // Opis kupca je opis dizajna, ne uputstvo modelu.
@@ -165,10 +191,11 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
   return lines.join('\n');
 }
 
-export function buildTweakPrompt(tweak) {
+export function buildTweakPrompt(tweak, { masked = false } = {}) {
   return [
     'Edit the attached jewelry product photograph.',
     'Keep the same piece, camera angle, lighting, background and overall design.',
+    ...(masked ? ['The customer marked one area of the photo (the transparent part of the mask). Change only that area and keep everything outside it exactly as it is.'] : []),
     `Apply only this change requested by the customer: "${clean(tweak, 300)}"`,
     'Keep it photorealistic. No people, no hands, no watermark, no brand logos.',
   ].join('\n');

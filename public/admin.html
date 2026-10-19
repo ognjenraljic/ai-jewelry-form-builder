@@ -8,6 +8,9 @@
   <style>
     :root { --bg: #0e0d0c; --surface: #171512; --line: #2b2722; --ink: #f2ede4; --soft: #9f978a; --gold: #d8b46a; --red: #e58b7a; }
     * { box-sizing: border-box; }
+    .mini { background: none; border: 1px solid var(--line); color: var(--soft); border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+    .mini:hover { color: var(--ink); border-color: var(--gold); }
+    a { color: var(--gold); }
     body { margin: 0; background: var(--bg); color: var(--ink); font-family: Manrope, system-ui, sans-serif; font-size: 14px; }
     .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
     h1 { font-size: 22px; margin: 0 0 4px; }
@@ -67,14 +70,33 @@
           <div class="stat">Uspješni renderi<b>${t.renders}</b></div>
           <div class="stat">Greške<b>${t.errors}</b></div>
           <div class="stat">Trošak AI (procjena)<b>$${t.cost.toFixed(3)}</b></div>
+          <div class="stat">Probni renderi (builder)<b>${t.tests} · $${(t.testCost || 0).toFixed(3)}</b></div>
           <div class="stat">Prosjek po renderu<b>$${avg.toFixed(3)}</b></div>
         </div>
         ${log.length ? `<h2 style="font-size:17px;margin:0 0 12px">View as client (log)</h2><div class="lead" style="padding:6px 18px">${log.map((x) => `<p style="margin:8px 0"><b>${esc(x.name || x.client_id)}</b> <span class="muted">· ${new Date(x.started_at).toLocaleString('sr-Latn')} · ${x.ended_at ? 'zatvoreno ' + new Date(x.ended_at).toLocaleTimeString('sr-Latn') : x.expires_at < Date.now() ? 'isteklo' : 'aktivno'}</span></p>`).join('')}</div>` : ''}
         <h2 style="font-size:17px;margin:0 0 12px">Zahtjevi za demo (JewelryLead sajt)</h2>
-        ${data.demos.length ? `<div class="lead" style="padding:6px 18px">${data.demos.map((d) => `<p style="margin:10px 0"><b>${esc(d.name)}</b> <span class="muted">· ${esc(d.email)} · ${esc(d.website)} · ${esc(d.platform)} · ${esc(d.volume)} · ${new Date(d.created_at).toLocaleString('sr-Latn')}</span></p>`).join('')}</div>` : '<p class="muted">Još nema zahtjeva.</p>'}
+        ${demosView(data.demos)}
         <h2 style="font-size:17px;margin:28px 0 12px">Leadovi iz widgeta</h2>
         ${data.leads.length ? data.leads.map(lead).join('') : '<p class="muted">Još nema leadova. Prođi formu na demo sajtu.</p>'}`;
     }
+
+    // Zahtjevi za demo: neobrađeni gore sa dugmetom, obrađeni sklopljeni ispod (može se vratiti).
+    function demosView(demos) {
+      if (!demos.length) return '<p class="muted">Još nema zahtjeva.</p>';
+      const row = (d) => `<p style="margin:10px 0;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap"><span style="flex:1"><b>${esc(d.name)}</b> <span class="muted">· <a href="mailto:${esc(d.email)}">${esc(d.email)}</a> · ${esc(d.website)} · ${esc(d.platform)} · ${esc(d.volume)} · ${new Date(d.created_at).toLocaleString('sr-Latn')}${d.handled_at ? ` · obrađeno ${new Date(d.handled_at).toLocaleDateString('sr-Latn')}` : ''}</span></span><button class="mini" data-demo="${esc(d.id)}" data-handled="${d.handled_at ? 'false' : 'true'}">${d.handled_at ? 'Vrati u neobrađene' : 'Obrađeno'}</button></p>`;
+      const open = demos.filter((d) => !d.handled_at);
+      const done = demos.filter((d) => d.handled_at);
+      return `<div class="lead" style="padding:6px 18px">${open.length ? open.map(row).join('') : '<p class="muted">Sve je obrađeno.</p>'}
+        ${done.length ? `<details style="margin:6px 0 10px"><summary class="muted" style="cursor:pointer">Obrađeni (${done.length})</summary>${done.map(row).join('')}</details>` : ''}</div>`;
+    }
+
+    root.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-demo]');
+      if (!b) return;
+      b.disabled = true;
+      await fetch(`/api/admin/demo-requests/${b.dataset.demo}/handled`, { method: 'POST', headers: { 'x-admin-token': token, 'content-type': 'application/json' }, body: JSON.stringify({ handled: b.dataset.handled === 'true' }) });
+      load();
+    });
 
     function lead(l) {
       const a = l.answers;

@@ -30,7 +30,7 @@ const PRESETS = {
   Rose: { accent: '#e7a9a0', 'accent-ink': '#2a1210', bg: '#0d0a0a', surface: '#171112', 'surface-2': '#201819', line: '#302526', 'line-strong': '#4d3c3d', ink: '#f6eeec', 'ink-soft': '#b3a2a0', 'ink-faint': '#7a6967' },
   Light: { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#8d8477' },
 };
-const TABS = [['client', 'Client'], ['brand', 'Brand'], ['pieces', 'Pieces & styles'], ['questions', 'Questions'], ['texts', 'Texts'], ['embed', 'Embed'], ['json', 'JSON']];
+const TABS = [['client', 'Client'], ['brand', 'Brand'], ['pieces', 'Pieces & styles'], ['questions', 'Questions'], ['texts', 'Texts'], ['embed', 'Embed'], ['history', 'History'], ['json', 'JSON']];
 const FIELD_TYPES = [['chips', 'Choice (chips)'], ['cards', 'Choice (big cards)'], ['yesno', 'Yes / No'], ['dropdown', 'Dropdown'], ['text', 'Short text'], ['textarea', 'Long text'], ['upload', 'Photo upload'], ['teeth', 'Teeth picker (grillz)']];
 
 const app = document.getElementById('app');
@@ -69,7 +69,9 @@ function typeLoc() {
 const allFieldIds = () => new Set(B.draft.steps.flatMap((s) => s.fields.map((f) => f.id)));
 const dirty = () => B.draft && JSON.stringify(B.draft) !== B.saved;
 const clientDirty = () => B.client && JSON.stringify(B.client) !== B.clientSaved;
-const clientForms = (cid) => B.forms.filter((f) => (f.clientId || null) === (cid || null));
+// Arhivirane forme i klijenti se ne nude u editoru; pregled ih prikazuje samo na zahtjev.
+const clientForms = (cid, withArchived = false) => B.forms.filter((f) => (f.clientId || null) === (cid || null) && (withArchived || !f.archivedAt));
+const activeClients = () => B.clients.filter((c) => !c.archivedAt);
 const tplLabel = (k) => B.templates.find((t) => t.key === k)?.label || 'Custom';
 
 // ---------- Start ----------
@@ -139,6 +141,7 @@ function renderHub() {
   B.view = 'hub';
   store.set('aik_builder_view', 'hub');
   const all = B.forms.map((f) => statOf(f.id));
+  const archivedCount = B.forms.filter((f) => f.archivedAt).length + B.clients.filter((c) => c.archivedAt).length;
   const sum = (k) => all.reduce((t, s) => t + (s[k] || 0), 0);
   app.innerHTML = `
     <div class="hub">
@@ -155,13 +158,14 @@ function renderHub() {
         <h2>All forms</h2>
         <p class="lead">Every client and their forms. AI cost is visible only here and in the admin, never to the client.</p>
         <div class="hub-stats">
-          <div><span>Clients</span><b>${B.clients.length}</b></div>
-          <div><span>Forms</span><b>${B.forms.length}</b></div>
+          <div><span>Clients</span><b>${activeClients().length}</b></div>
+          <div><span>Forms</span><b>${B.forms.filter((f) => !f.archivedAt).length}</b></div>
           <div><span>Leads</span><b>${sum('leads')}</b></div>
           <div><span>AI renders</span><b>${sum('renders')}</b></div>
           <div><span>AI cost</span><b>${usd(sum('cost'))}</b></div>
         </div>
         <div id="hub-list"></div>
+        ${archivedCount ? `<button class="btn small ghost" data-act="toggle-archived">${B.showArchived ? 'Hide archived' : `Show archived (${archivedCount})`}</button>` : ''}
       </main>
     </div>`;
   renderHubList();
@@ -169,7 +173,8 @@ function renderHub() {
 
 function renderHubList() {
   const q = B.q.trim().toLowerCase();
-  const groups = [...B.clients.map((c) => ({ c, forms: clientForms(c.id) })), { c: null, forms: clientForms(null) }].filter((g) => g.c || g.forms.length);
+  const arch = !!B.showArchived;
+  const groups = [...B.clients.filter((c) => arch || !c.archivedAt).map((c) => ({ c, forms: clientForms(c.id, arch) })), { c: null, forms: clientForms(null, arch) }].filter((g) => g.c || g.forms.length);
   const hit = (s) => String(s || '').toLowerCase().includes(q);
   const shown = groups
     .map((g) => ({ ...g, forms: !q || hit(g.c?.name) || hit(g.c?.website) ? g.forms : g.forms.filter((f) => hit(f.name) || hit(f.id)) }))
@@ -178,24 +183,46 @@ function renderHubList() {
     const link = c && B.overview.links[c.id];
     const rows = forms.map((f) => {
       const s = statOf(f.id);
-      return `<tr>
-        <td><button class="linkish" data-act="open-form" data-id="${esc(f.id)}">${esc(f.name || f.id)}</button><small>${esc(f.builtin ? 'Built-in demo' : tplLabel(f.template))} · ${esc(f.id)}</small></td>
+      return `<tr class="${f.archivedAt ? 'archived' : ''}">
+        <td><button class="linkish" data-act="open-form" data-id="${esc(f.id)}">${esc(f.name || f.id)}</button><small>${f.archivedAt ? `Archived ${esc(day(f.archivedAt))} · ` : ''}${esc(f.builtin ? 'Built-in demo' : tplLabel(f.template))} · ${esc(f.id)}</small></td>
         <td class="num">${s.leads}</td><td class="num">${s.renders}</td><td class="when">${esc(day(s.lastLead)) || '<span class="faint">none</span>'}</td><td class="num">${usd(s.cost)}</td>
-        <td class="acts"><button class="btn small" data-act="open-form" data-id="${esc(f.id)}">Edit</button><a class="btn small ghost" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open ↗</a><button class="btn small ghost" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button></td>
+        <td class="acts"><button class="btn small" data-act="open-form" data-id="${esc(f.id)}">Edit</button><a class="btn small ghost" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open ↗</a><button class="btn small ghost" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button>${f.archivedAt ? `<button class="btn small" data-act="restore-form" data-id="${esc(f.id)}">Restore</button>` : f.builtin ? '' : `<button class="btn small ghost danger" data-act="archive-form" data-id="${esc(f.id)}" title="Hide it and stop new leads. Nothing is deleted.">Archive</button>`}</td>
       </tr>`;
     }).join('');
-    return `<section class="hub-client">
+    return `<section class="hub-client ${c?.archivedAt ? 'archived' : ''}">
       <div class="hub-head">
         ${c?.logo ? `<img src="${esc(c.logo)}" alt="" />` : `<span class="hub-mono">${esc((c?.name || '?').slice(0, 1))}</span>`}
         <div class="grow"><b>${esc(c ? c.name : 'Unassigned')}</b><small>${c ? [c.website, `${forms.length} form${forms.length === 1 ? '' : 's'}`].filter(Boolean).map(esc).join(' · ') : 'Forms without a client'}</small></div>
-        ${c ? `<span class="pill ${link ? 'pill-def' : ''}" title="${link ? `Active since ${esc(day(link.createdAt))}` : 'The client has no portal link yet'}">${link ? 'Portal link on' : 'No portal link'}</span>
+        ${c?.archivedAt ? `<span class="pill">Archived ${esc(day(c.archivedAt))}</span><button class="btn small" data-act="restore-client" data-cid="${esc(c.id)}">Restore client</button>` : ''}
+        ${c && !c.archivedAt ? `<span class="pill ${link ? 'pill-def' : ''}" title="${link ? `Active since ${esc(day(link.createdAt))}` : 'The client has no portal link yet'}">${link ? 'Portal link on' : 'No portal link'}</span>
           <button class="btn small ghost" data-act="portal-link" data-cid="${esc(c.id)}">Portal link</button>
           <button class="btn small ghost" data-act="view-as" data-cid="${esc(c.id)}">View as client ↗</button>
-          <button class="btn small" data-act="new-form" data-cid="${esc(c.id)}">+ Form</button>` : ''}
+          <button class="btn small" data-act="new-form" data-cid="${esc(c.id)}">+ Form</button>
+          <button class="btn small ghost danger" data-act="archive-client" data-cid="${esc(c.id)}" title="Hide the client and their forms, turn off the portal link. Nothing is deleted.">Archive</button>` : ''}
       </div>
-      ${rows ? `<div class="table-wrap"><table class="hub-table"><colgroup><col /><col style="width:70px" /><col style="width:84px" /><col style="width:120px" /><col style="width:90px" /><col style="width:252px" /></colgroup><thead><tr><th>Form</th><th class="num">Leads</th><th class="num">Renders</th><th>Last lead</th><th class="num">AI cost</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="hint" style="margin:0">No forms yet.</p>'}
+      ${rows ? `<div class="table-wrap"><table class="hub-table"><colgroup><col /><col style="width:70px" /><col style="width:84px" /><col style="width:120px" /><col style="width:90px" /><col style="width:320px" /></colgroup><thead><tr><th>Form</th><th class="num">Leads</th><th class="num">Renders</th><th>Last lead</th><th class="num">AI cost</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="hint" style="margin:0">No forms yet.</p>'}
     </section>`;
   }).join('') || '<p class="hint">Nothing matches your search.</p>';
+}
+
+async function archiveForm(id, on) {
+  const f = B.forms.find((x) => x.id === id);
+  if (on && !confirm(`Archive "${f?.name || id}"?\n\nIt disappears from the lists and stops taking new leads (the embedded form shows "not available"). Leads and renders stay. You can restore it anytime.`)) return;
+  try {
+    await api(`/api/admin/forms/${id}/archive`, { method: 'POST', body: JSON.stringify({ archived: on }) });
+    await refreshLists();
+    renderHub();
+  } catch (err) { alert(err.message); }
+}
+
+async function archiveClient(cid, on) {
+  const c = B.clients.find((x) => x.id === cid);
+  if (on && !confirm(`Archive ${c?.name || cid}?\n\nTheir forms are archived too and stop taking new leads, and their portal link is turned off. Leads and renders stay. Restore brings the client and those forms back (a new portal link is needed).`)) return;
+  try {
+    await api(`/api/admin/clients/${cid}/archive`, { method: 'POST', body: JSON.stringify({ archived: on }) });
+    await refreshLists();
+    renderHub();
+  } catch (err) { alert(err.message); }
 }
 
 // Link za portal klijenta: vidi se samo jednom; novi link gasi stari.
@@ -271,7 +298,7 @@ function renderShell() {
 }
 
 function renderTop() {
-  const cOpts = B.clients.map((c) => `<option value="${esc(c.id)}" ${c.id === B.clientId ? 'selected' : ''}>${esc(c.name)} (${clientForms(c.id).length})</option>`).join('')
+  const cOpts = activeClients().map((c) => `<option value="${esc(c.id)}" ${c.id === B.clientId ? 'selected' : ''}>${esc(c.name)} (${clientForms(c.id).length})</option>`).join('')
     + (clientForms(null).length ? `<option value="" ${!B.clientId ? 'selected' : ''}>Unassigned (${clientForms(null).length})</option>` : '');
   const fOpts = clientForms(B.clientId).map((f) => `<option value="${esc(f.id)}" ${f.id === B.id ? 'selected' : ''}>${esc(f.name || f.id)}${f.builtin ? ' (built-in)' : ''}</option>`).join('');
   document.getElementById('top').innerHTML = `
@@ -307,13 +334,14 @@ function renderPbar() {
     <button class="btn small ${B.device === 'desktop' ? 'on' : ''}" data-act="device" data-d="desktop">Desktop</button>
     <button class="btn small ${B.device === 'mobile' ? 'on' : ''}" data-act="device" data-d="mobile">Mobile</button>
     <span class="label" style="margin-left:10px">Jump to</span>${steps}
-    <button class="btn small" data-act="jump" data-i="${B.draft.steps.length}">Contact</button>`;
+    <button class="btn small" data-act="jump" data-i="${B.draft.steps.length}">Contact</button>
+    <button class="btn small primary" data-act="test-render" title="Renders this draft with the answers you clicked in the preview. Costs one render, no lead is created.">Test render</button>`;
 }
 
 function renderPane() {
   const pane = document.getElementById('pane');
   const top = pane.scrollTop;
-  const views = { client: clientView, brand: brandView, pieces: piecesView, questions: questionsView, texts: textsView, embed: embedView, json: jsonView };
+  const views = { client: clientView, brand: brandView, pieces: piecesView, questions: questionsView, texts: textsView, embed: embedView, history: historyView, json: jsonView };
   pane.innerHTML = (views[B.tab] || brandView)();
   pane.scrollTop = top;
   renderPbar();
@@ -538,7 +566,7 @@ function fieldEditor(i, j, f) {
       <div class="toggles">
         ${toggle(`${p}.enabled`, 'On', { invert: true })}
         ${toggle(`${p}.required`, 'Required')}
-        ${f.type !== 'upload' ? toggle(`${p}.ai`, 'Send to AI', { invert: true, title: 'Off for questions that only matter to the jeweler (budget, molds, timeline).' }) : ''}
+        ${f.id === 'budget' ? '<span class="hint" title="The render is designed at the top of the chosen range, so it never looks cheaper than the budget. Explicit choices (metal, stones) come first.">Guides the render (top of range)</span>' : f.type !== 'upload' ? toggle(`${p}.ai`, 'Send to AI', { invert: true, title: 'Off for questions that only matter to the jeweler (molds, timeline).' }) : ''}
       </div>
       <div class="row">${inp(`${p}.label`, 'Question')}${def ? `<label class="f"><span>Type</span><input class="in" value="${esc(FIELD_TYPES.find(([v]) => v === f.type)?.[1] || f.type)}" disabled /></label>` : `<label class="f"><span>Type</span><select class="sel" data-bind="${p}.type" data-rerender data-kind="ftype">${typeSel}</select></label>`}</div>
       ${inp(`${p}.subtitle`, 'Subtitle (optional)')}
@@ -581,6 +609,25 @@ function embedView() {
     ${others.length ? `<h3>Other forms of ${esc(B.client.name)}</h3>${others.map((f) => `<div class="card"><div class="card-head"><div class="grow"><b>${esc(f.name)}</b><p class="hint" style="margin:2px 0 0">${esc(tplLabel(f.template))}</p></div><button class="btn small" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button></div></div>`).join('')}` : ''}
     <h3>Where to paste</h3>
     <p class="hint" style="font-size:13px;line-height:1.7"><b>Shopify:</b> Online Store, Customize, add a "Custom Liquid" section.<br /><b>WordPress:</b> a "Custom HTML" block, or the HTML widget in Elementor or Divi.<br /><b>Squarespace / Webflow:</b> a Code or Embed block.<br /><b>Wix:</b> Embed code, use the plain iframe.</p>`;
+}
+
+// Istorija verzija: svaki Save čuva prethodnu verziju; učitana verzija postaje nacrt, Save je vraća.
+function historyView() {
+  const v = B.versions?.id === B.id ? B.versions.list : null;
+  if (!v) {
+    api(`/api/admin/forms/${B.id}/versions`).then((r) => { B.versions = { id: B.id, list: r.versions }; if (B.tab === 'history') renderPane(); }).catch((e) => setStatus(e.message, 'err'));
+    return '<h2>History</h2><p class="lead">Loading…</p>';
+  }
+  const rows = v.map((x) => `
+    <div class="card">
+      <div class="card-head"><div class="grow"><b>${x.savedAt ? esc(new Date(x.savedAt).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })) : 'Original built-in version'}</b>
+        <p class="hint" style="margin:2px 0 0">${esc(x.steps.join(' → '))}</p></div>
+        <button class="btn small" data-act="load-version" data-vid="${esc(x.id)}">Load</button></div>
+    </div>`).join('');
+  return `
+    <h2>History</h2>
+    <p class="lead">Every Save keeps the previous version (last 50). Load one to see it in the preview, then Save to make it live again. Nothing changes until you Save.</p>
+    ${rows || '<p class="hint">No earlier versions yet. They appear after the next Save.</p>'}`;
 }
 
 function jsonView() {
@@ -686,8 +733,21 @@ app.addEventListener('click', async (e) => {
   if (act === 'hub') renderHub();
   if (act === 'back-editor') { B.view = 'editor'; store.set('aik_builder_view', 'editor'); renderShell(); }
   if (act === 'portal-link') portalLink(el.dataset.cid);
+  if (act === 'toggle-archived') { B.showArchived = !B.showArchived; renderHub(); }
+  if (act === 'archive-form' || act === 'restore-form') archiveForm(el.dataset.id, act === 'archive-form');
+  if (act === 'archive-client' || act === 'restore-client') archiveClient(el.dataset.cid, act === 'archive-client');
+  if (act === 'load-version') {
+    if (dirty() && !confirm('Replace your unsaved changes with this version?')) return;
+    try {
+      const { form } = await api(`/api/admin/forms/${B.id}/versions/${el.dataset.vid}`);
+      B.draft = { ...form, id: B.id };
+      changed(true);
+      setStatus('Old version loaded. Save to keep it.', 'dirty');
+    } catch (err) { setStatus(err.message, 'err'); }
+  }
   if (act === 'device') { B.device = el.dataset.d; document.getElementById('frame').classList.toggle('mobile', B.device === 'mobile'); renderPbar(); }
   if (act === 'jump') pushPreview(i);
+  if (act === 'test-render') { pushPreview(); setTimeout(() => document.getElementById('frame')?.contentWindow?.postMessage({ type: 'aik:test' }, location.origin), 80); }
   if (act === 'preset') { B.draft.theme = { ...PRESETS[el.dataset.p] }; changed(true); }
   if (act === 'use-client-logo') { B.draft.brand.logo = B.client.logo; changed(true); }
   if (act === 'unset') { setP(el.dataset.path, undefined); changed(true); }
@@ -818,6 +878,7 @@ async function save() {
   try {
     await api(`/api/admin/forms/${B.id}`, { method: 'PUT', body: JSON.stringify({ form: B.draft }) });
     B.saved = JSON.stringify(B.draft);
+    B.versions = null;
     await refreshLists();
     if ((B.client?.id || null) !== (B.draft.clientId || null)) setClient(B.draft.clientId);
     renderTop();
@@ -869,7 +930,7 @@ function newClient() {
 
 function newForm(clientId = B.client?.id) {
   if (!B.clients.length) return newClient();
-  const cOpts = B.clients.map((c) => `<option value="${esc(c.id)}" ${c.id === clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  const cOpts = activeClients().map((c) => `<option value="${esc(c.id)}" ${c.id === clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   const tpls = B.templates.map((t, k) => `<label class="tpl"><input type="radio" name="tpl" value="${esc(t.key)}" ${k === 0 ? 'checked' : ''} /><span><b>${esc(t.label)}</b><small>${esc(t.description)}</small></span></label>`).join('');
   const copy = B.forms.filter((f) => !f.builtin).map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('');
   const pieceOpts = (B.pieces || []).map((p) => `<option value="${esc(p.value)}">${esc(p.label)}</option>`).join('');

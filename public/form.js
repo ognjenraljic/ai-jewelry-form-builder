@@ -22,6 +22,9 @@ const S = {
   a: {},
   contact: { name: '', email: '', phone: '', consent: false },
   files: {}, // polje (ili polje__more) -> { blob, url, name }
+  test: false, // probni render iz pregleda u builderu (admin, bez upita)
+  testInfo: null,
+  mask: { on: false, strokes: [], size: 'm' }, // označeni dio slike za doradu
   lead: null,
   renders: [],
   shown: 0,
@@ -50,7 +53,9 @@ async function boot() {
   // Živi pregled u builderu: nacrt stiže preko postMessage, samo sa istog porijekla i samo uz ?preview.
   if (new URLSearchParams(location.search).has('preview')) {
     window.addEventListener('message', (e) => {
-      if (e.origin !== location.origin || e.data?.type !== 'aik:preview' || !e.data.form) return;
+      if (e.origin !== location.origin) return;
+      if (e.data?.type === 'aik:test' && testAllowed() && !S.busy) { startTest(); return; }
+      if (e.data?.type !== 'aik:preview' || !e.data.form) return;
       S.cfg = { ...e.data.form, dev: S.cfg.dev };
       if (e.data.answers) Object.assign(S.a, e.data.answers);
       applyTheme();
@@ -114,7 +119,7 @@ function render() {
   prefillTeeth();
   const step = cur();
   const all = steps();
-  const canBack = S.i > 0 && step.id !== '_result';
+  const canBack = S.i > 0 && (step.id !== '_result' || S.test);
   // Pređeni koraci su dugmad: klik vraća na taj korak (ne poslije slanja, kad je upit već poslat).
   const progress = all
     .slice(0, -1)
@@ -152,9 +157,20 @@ function stepView(step) {
       ${fields}
       <div class="foot">
         <div class="foot-row">${backBtn()}<button class="btn" data-act="next" ${valid ? '' : 'disabled'}>Continue</button></div>
-        <p class="hint">${valid ? '' : 'Choose an option to continue'}</p>
+        <p class="hint">${footHint(step, valid)}</p>
       </div>
     </section>`;
+}
+
+// Na koraku sa zubima traka uvijek pokazuje izbor (na telefonu prekriva zbir u panelu dok se ne skroluje).
+function footHint(step, valid) {
+  const tf = step.fields.find((f) => f.type === 'teeth' && visible(f));
+  if (tf) {
+    const set = teethSet(S.a[tf.id]);
+    const top = [...set].filter((t) => t[0] === 'T').length;
+    if (set.size) return `<span class="foot-teeth"><b>${top}</b> top + <b>${set.size - top}</b> bottom = <b>${set.size}</b> teeth</span>`;
+  }
+  return valid ? '' : 'Choose an option to continue';
 }
 
 const backBtn = () => (S.i > 0 ? '<button type="button" class="btn ghost" data-act="back" aria-label="Previous step">Back</button>' : '');
@@ -377,6 +393,7 @@ function contactView() {
       <div class="foot">
         <div class="foot-row">${S.busy ? '' : backBtn()}<button class="btn gold" data-act="submit" ${valid && !S.busy ? '' : 'disabled'}>${S.busy ? 'Sending' : esc(k.button)}</button></div>
         <p class="hint">We never share your details.</p>
+        ${testAllowed() ? '<button type="button" class="btn ghost testbtn" data-act="test" title="Uses this draft and the answers above. Costs one render, no lead is created.">Test render (admin, no lead)</button>' : ''}
       </div>
     </section>`;
 }
@@ -384,21 +401,33 @@ function contactView() {
 function resultView() {
   const r = S.cfg.result;
   const shown = S.renders[S.shown];
-  const left = S.cfg.maxRenders - S.renders.length;
+  const left = S.test ? Infinity : S.cfg.maxRenders - S.renders.length;
+  const marking = S.mask.on && shown && !S.busy;
   const stage = S.busy
     ? `<div class="forge"><div class="forge-inner">${icon('gem').replace('<svg', '<svg class="gem"')}<div class="forge-msg" data-msg>${esc(r.loading[0])}</div><div class="forge-time" data-time>0s</div></div></div>`
     : shown
-      ? `<img src="${esc(shown.url)}" alt="AI preview of your custom piece" />`
+      ? `<img src="${esc(shown.url)}" alt="AI preview of your custom piece" />${marking ? '<canvas class="maskc" data-mask aria-label="Paint over the area to change"></canvas>' : ''}`
       : '';
   const strip = S.renders.length > 1
     ? `<div class="strip">${S.renders.map((x, k) => `<button class="${k === S.shown ? 'on' : ''}" data-show="${k}" aria-label="Preview ${k + 1}"><img src="${esc(x.url)}" alt="" /></button>`).join('')}</div>`
     : '';
+  // Dorada: cijela slika ili samo označeni dio (kupac preko slike oboji dio koji želi da promijeni).
+  const sizes = [['s', 'Small'], ['m', 'Medium'], ['l', 'Large']].map(([k, l]) => `<button type="button" class="chip ${S.mask.size === k ? 'on' : ''}" data-brush="${k}">${l}</button>`).join('');
+  const maskbar = `<div class="maskbar">
+      <span class="maskhint">Change:</span>
+      <button type="button" class="chip ${S.mask.on ? '' : 'on'}" data-act="mask-off" aria-pressed="${!S.mask.on}">Whole image</button>
+      <button type="button" class="chip ${S.mask.on ? 'on' : ''}" data-act="mask-toggle" aria-pressed="${S.mask.on}">Only one area</button>
+      ${S.mask.on ? `<span class="maskline"><span class="maskhint">Paint over the part to change. Brush:</span>${sizes}<button type="button" class="link" data-act="mask-clear" ${S.mask.strokes.length ? '' : 'hidden'}>Clear</button></span>` : ''}
+    </div>`;
   const tweak = !S.busy && S.renders.length && left > 0
-    ? `<div class="tweak"><input class="input" data-tweak maxlength="300" placeholder="Want a change? e.g. make the letters bigger" /><button class="btn gold" data-act="tweak">Refine (${left})</button></div>`
+    ? `${maskbar}<div class="tweak"><input class="input" data-tweak maxlength="300" value="${esc(S.tweakDraft || '')}" placeholder="${S.mask.on ? 'What should change in the marked area? e.g. make this tooth plain gold' : 'Want a change? e.g. make the letters bigger'}" /><button class="btn gold" data-act="tweak">${S.mask.on ? 'Change area' : 'Refine'}${S.test ? '' : ` (${left})`}</button></div>`
     : '';
+  const testNote = S.test && S.testInfo && !S.busy ? `<p class="fine testnote">Test render, no lead saved · ${esc(S.testInfo.model)} · ${(S.testInfo.ms / 1000).toFixed(1)} s · $${(S.testInfo.costUsd || 0).toFixed(3)}</p>` : '';
   const dev = S.cfg.dev ? devView() : '';
   const failed = !S.busy && !S.renders.length;
-  const head = S.busy
+  const head = S.test && !S.busy && !failed
+    ? ['Test render', 'Here it <em>is</em>', 'This is how customers will see it. Nothing was saved as a lead.']
+    : S.busy
     ? ['Creating your preview', 'Bringing it <em>to life</em>', 'This takes about 15 to 30 seconds.']
     : failed
       ? ['Your design', 'Almost <em>there</em>', 'Your details are saved. We hit a snag creating the preview.']
@@ -413,6 +442,7 @@ function resultView() {
       ${S.error ? `<p class="error">${esc(S.error)}</p>${!S.renders.length && !S.busy ? '<div class="foot"><button class="btn gold" data-act="retry">Try again</button></div>' : ''}` : ''}
       ${tweak}
       ${!S.busy && S.renders.length ? `<p class="fine">${esc(r.disclaimer)}</p>` : ''}
+      ${testNote}
       ${dev}
     </section>`;
 }
@@ -501,8 +531,13 @@ function bind() {
   const model = app.querySelector('[data-model]');
   if (model) model.addEventListener('change', () => { S.model = model.value; });
   const tw = app.querySelector('[data-tweak]');
-  if (tw) tw.addEventListener('keydown', (e) => e.key === 'Enter' && doTweak());
-  app.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => { S.shown = +b.dataset.show; render(); }));
+  if (tw) {
+    tw.addEventListener('keydown', (e) => e.key === 'Enter' && doTweak());
+    tw.addEventListener('input', () => { S.tweakDraft = tw.value; });
+  }
+  app.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => { S.shown = +b.dataset.show; S.mask.strokes = []; render(); }));
+  app.querySelectorAll('[data-brush]').forEach((b) => b.addEventListener('click', () => { S.mask.size = b.dataset.brush; render(); }));
+  bindMask();
   app.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.goto - S.i)));
 
   app.querySelectorAll('[data-act]').forEach((b) =>
@@ -513,6 +548,10 @@ function bind() {
       if (act === 'submit') submit();
       if (act === 'retry' || act === 'again') makeRender();
       if (act === 'tweak') doTweak();
+      if (act === 'test') startTest();
+      if (act === 'mask-toggle' && !S.mask.on) { S.mask.on = true; S.mask.strokes = []; render(); }
+      if (act === 'mask-off' && S.mask.on) { S.mask.on = false; S.mask.strokes = []; render(); }
+      if (act === 'mask-clear') { S.mask.strokes = []; render(); }
     })
   );
 }
@@ -546,6 +585,7 @@ async function takeFile(f, key) {
 
 async function submit() {
   if (S.busy || !stepValid(cur())) return;
+  S.test = false;
   S.busy = true;
   S.error = '';
   render();
@@ -594,23 +634,41 @@ function startTicker() {
   }, 250);
 }
 
-async function makeRender(tweak = '') {
-  if (S.busy || !S.lead) return;
+async function makeRender(tweak = '', mask = null) {
+  if (S.busy || (!S.lead && !S.test)) return;
+  const base = S.shown + 1; // dorada polazi od slike koju kupac gleda
+  const baseKey = S.renders[S.shown]?.key || '';
   S.busy = true;
   S.error = '';
   render();
   startTicker();
   try {
-    const res = await fetch(`/api/leads/${S.lead.leadId}/renders`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: S.lead.token, tweak, model: S.model }),
-    });
+    let res;
+    if (S.test) {
+      // Probni render: nacrt iz buildera i odgovori iz pregleda, admin token iz istog browsera.
+      const fd = new FormData();
+      const { dev, ...form } = S.cfg;
+      fd.set('form', JSON.stringify(form));
+      fd.set('answers', JSON.stringify(S.a));
+      if (S.files.reference && !tweak) fd.set('reference', S.files.reference.blob, 'reference.jpg');
+      if (tweak) { fd.set('tweak', tweak); fd.set('base', baseKey); }
+      if (mask) fd.set('mask', await (await fetch(mask)).blob(), 'mask.png');
+      res = await fetch('/api/admin/test-render', { method: 'POST', headers: { 'x-admin-token': adminToken() }, body: fd });
+    } else {
+      res = await fetch(`/api/leads/${S.lead.leadId}/renders`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: S.lead.token, tweak, model: S.model, ...(tweak ? { base } : {}), ...(mask ? { mask } : {}) }),
+      });
+    }
     const data = await res.json();
     S.dev = data.dev || null;
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-    S.renders.push({ url: data.url });
+    S.renders.push({ url: data.url, key: data.key });
     S.shown = S.renders.length - 1;
+    S.mask = { on: false, strokes: [], size: S.mask.size };
+    S.tweakDraft = '';
+    if (S.test) S.testInfo = data;
     parent.postMessage({ type: 'aik:render', form: formId, n: data.n }, '*');
   } catch (e) {
     S.error = e.message;
@@ -625,5 +683,76 @@ function doTweak() {
   const el = app.querySelector('[data-tweak]');
   const v = el?.value.trim();
   if (!v) { el?.focus(); return; }
-  makeRender(v);
+  if (S.mask.on && !S.mask.strokes.length) { alert('Paint over the part of the image you want to change first.'); return; }
+  makeRender(v, maskDataUrl());
+}
+
+// ---------- Probni render i maska ----------
+function startTest() {
+  S.test = true;
+  S.renders = [];
+  S.shown = 0;
+  S.testInfo = null;
+  S.mask.strokes = [];
+  S.i = steps().length - 1;
+  window.scrollTo({ top: 0 });
+  makeRender();
+}
+
+const adminToken = () => { try { return localStorage.getItem('aik_admin') || ''; } catch { return ''; } };
+const testAllowed = () => new URLSearchParams(location.search).has('preview') && !!adminToken();
+
+// Četka u pikselima slike od 1024 px (skalira se na stvarnu veličinu).
+const BRUSH = { s: 26, m: 52, l: 96 };
+
+function strokesTo(ctx, color, scale = 1) {
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (const st of S.mask.strokes) {
+    ctx.lineWidth = st.r * 2 * scale;
+    if (st.pts.length === 1) { ctx.beginPath(); ctx.arc(st.pts[0][0] * scale, st.pts[0][1] * scale, st.r * scale, 0, Math.PI * 2); ctx.fill(); continue; }
+    ctx.beginPath();
+    st.pts.forEach(([x, y], k) => (k ? ctx.lineTo(x * scale, y * scale) : ctx.moveTo(x * scale, y * scale)));
+    ctx.stroke();
+  }
+}
+
+function bindMask() {
+  const cv = app.querySelector('[data-mask]');
+  const img = app.querySelector('.stage img');
+  if (!cv || !img) return;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#35d0c4';
+  const draw = () => { const x = cv.getContext('2d'); x.clearRect(0, 0, cv.width, cv.height); strokesTo(x, accent); };
+  const size = () => { cv.width = img.naturalWidth || 1024; cv.height = img.naturalHeight || 1024; draw(); };
+  if (img.complete && img.naturalWidth) size(); else img.addEventListener('load', size, { once: true });
+  const pt = (e) => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * (cv.width / r.width), (e.clientY - r.top) * (cv.height / r.height)]; };
+  let cur = null;
+  cv.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    cv.setPointerCapture(e.pointerId);
+    cur = { r: BRUSH[S.mask.size] * (cv.width / 1024), pts: [pt(e)] };
+    S.mask.strokes.push(cur);
+    draw();
+  });
+  cv.addEventListener('pointermove', (e) => { if (!cur) return; cur.pts.push(pt(e)); draw(); });
+  const end = () => { if (!cur) return; cur = null; const c = app.querySelector('[data-act="mask-clear"]'); if (c) c.hidden = false; };
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointercancel', end);
+}
+
+// Maska za model: neprovidna bijela slika iste veličine, providno tamo gdje je kupac obojio (to se mijenja).
+function maskDataUrl() {
+  if (!S.mask.on || !S.mask.strokes.length) return null;
+  const img = app.querySelector('.stage img');
+  const c = document.createElement('canvas');
+  c.width = img?.naturalWidth || 1024;
+  c.height = img?.naturalHeight || 1024;
+  const x = c.getContext('2d');
+  x.fillStyle = '#fff';
+  x.fillRect(0, 0, c.width, c.height);
+  x.globalCompositeOperation = 'destination-out';
+  strokesTo(x, '#000');
+  return c.toDataURL('image/png');
 }

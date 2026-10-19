@@ -25,6 +25,7 @@ const tweakModel = (env) => withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MOD
 const LEADS_PER_IP_HOUR = 10;
 const MAX_REF_BYTES = 8 * 1024 * 1024;
 const PENDING_WINDOW_MS = 120_000;
+const MAX_VERSIONS = 50;
 
 export default {
   async fetch(request, env, ctx) {
@@ -46,12 +47,14 @@ export default {
       if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/view-as$/)) && request.method === 'POST') return startViewAs(request, env, m[1]);
       if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/portal-link$/)) && (request.method === 'POST' || request.method === 'DELETE')) return clientLink(request, env, m[1]);
       if (p === '/api/admin/overview' && request.method === 'GET') return adminOverview(request, env);
+      if (p === '/api/admin/test-render' && request.method === 'POST') return testRender(request, env);
       if (p.startsWith('/api/admin/clients') && !p.endsWith('/upload')) return adminClients(request, env, p);
       if (p.startsWith('/api/admin/forms') || /^\/api\/admin\/clients\/[a-z0-9-]+\/upload$/.test(p)) return adminForms(request, env, p);
       if (p === '/api/leads' && request.method === 'POST') return createLead(request, env);
       if ((m = p.match(/^\/api\/leads\/([\w-]+)\/renders$/)) && request.method === 'POST') return createRender(request, env, m[1]);
       if (p === '/api/demo-requests' && request.method === 'POST') return createDemoRequest(request, env);
       if (p === '/api/admin/leads' && request.method === 'GET') return adminLeads(request, env);
+      if ((m = p.match(/^\/api\/admin\/demo-requests\/([a-z0-9]+)\/handled$/)) && request.method === 'POST') return demoHandled(request, env, m[1]);
       if (p.startsWith('/media/') && request.method === 'GET') return media(request, env, p.slice(7));
       return json({ error: 'Not found' }, 404);
     } catch (err) {
@@ -61,16 +64,17 @@ export default {
   },
 };
 
-// Forma iz D1 (builder), inače ugrađena iz koda.
-async function loadForm(env, id) {
+// Forma iz D1 (builder), inače ugrađena iz koda. live: arhivirana forma se ne prikazuje kupcima i ne prima upite.
+async function loadForm(env, id, { live = false } = {}) {
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(String(id || ''))) return null;
-  const row = await env.DB.prepare('SELECT data FROM forms WHERE id = ?').bind(id).first();
+  const row = await env.DB.prepare('SELECT data, archived_at FROM forms WHERE id = ?').bind(id).first();
+  if (row && live && row.archived_at) return null;
   return row ? JSON.parse(row.data) : FORMS[id] || null;
 }
 
 async function getForm(env, id) {
-  const form = await loadForm(env, id);
-  if (!form) return json({ error: 'Form not found' }, 404);
+  const form = await loadForm(env, id, { live: true });
+  if (!form) return json({ error: 'This form is not available.' }, 404);
   const out = publicForm(form);
   if (env.DEV_MODE === '1') {
     const auto = { key: 'auto', label: `Auto (${MODELS[firstModel(env)].label} pa ${MODELS[tweakModel(env)].label})` };
@@ -81,8 +85,8 @@ async function getForm(env, id) {
 
 async function createLead(request, env) {
   const fd = await request.formData();
-  const form = await loadForm(env, fd.get('formId'));
-  if (!form) return json({ error: 'Form not found' }, 404);
+  const form = await loadForm(env, fd.get('formId'), { live: true });
+  if (!form) return json({ error: 'This form is not available.' }, 404);
 
   const name = clean(fd.get('name'), 80);
   const email = clean(fd.get('email'), 120).toLowerCase();
@@ -152,72 +156,39 @@ async function createRender(request, env, leadId) {
   }
 
   const tweak = clean(body.tweak, 300);
+  const isTweak = !!(tweak && ok.length);
+  // Označeni dio slike (maska): samo uz doradu; ako stigne a ne može se pročitati, bolje reći nego mijenjati cijelu sliku.
+  const mask = isTweak && body.mask ? maskFrom(body.mask) : null;
+  if (isTweak && body.mask && !mask) return json({ error: 'We could not read the marked area. Please mark it again.' }, 400);
   // Prvi render ide na jači model (to je trenutak kad kupac odlučuje), dorade na brži i jeftiniji.
   // U dev modu forma može izabrati model ručno radi poređenja.
-  const modelKey = env.DEV_MODE === '1' && MODELS[body.model] ? body.model : tweak && ok.length ? tweakModel(env) : firstModel(env);
+  const modelKey = env.DEV_MODE === '1' && MODELS[body.model] ? body.model : isTweak ? tweakModel(env) : firstModel(env);
   const model = MODELS[modelKey];
   const answers = JSON.parse(lead.answers);
 
-  let prompt;
-  const images = [];
-  if (tweak && ok.length) {
-    // Dorada: zadnji uspješan render je baza, mijenja se samo traženo.
-    const last = await env.MEDIA.get(ok[ok.length - 1].image_key);
-    if (last) images.push({ mime: last.httpMetadata?.contentType || 'image/png', b64: toB64(await last.arrayBuffer()) });
-    prompt = buildTweakPrompt(tweak);
-  } else {
-    // Biblioteka: slika izabranog stila ide prva, kao referenca oblika. Zatim slika kupca.
-    const style = styleOf(form, answers);
-    const refs = [];
-    // Ugrađeni grillz stilovi govore samo broj zuba; kad kupac izabere tačne zube, njihova slika bi nametnula pogrešan broj.
-    const countOnly = answers.type === 'grillz' && ['top6', 'top8', 'set', 'fangs'].includes(answers.style) && parseTeeth(answers.teeth);
-    if (style?.image && !countOnly) {
-      // Slika stila: iz biblioteke (statični fajl) ili ona koju je zlatar uploadovao u builderu (R2).
-      let buf = null;
-      let mime = 'image/webp';
-      if (style.image.startsWith('/media/forms/')) {
-        const obj = await env.MEDIA.get(style.image.slice(7));
-        if (obj) { buf = await obj.arrayBuffer(); mime = obj.httpMetadata?.contentType || mime; }
-      } else {
-        const res = await env.ASSETS.fetch(new Request(new URL(style.image, request.url)));
-        if (res.ok) buf = await res.arrayBuffer();
-      }
-      if (buf) {
-        images.push({ mime, b64: toB64(buf) });
-        refs.push('style');
-      }
-    }
-    if (lead.ref_key) {
-      const ref = await env.MEDIA.get(lead.ref_key);
-      if (ref) {
-        images.push({ mime: ref.httpMetadata?.contentType || 'image/jpeg', b64: toB64(await ref.arrayBuffer()) });
-        refs.push('customer');
-      }
-    }
-    prompt = buildPrompt(form, answers, { refs, style });
-  }
+  // Dorada polazi od rendera koji kupac gleda (base = njegov redni broj), inače od zadnjeg.
+  const pick = isTweak ? ok[Number.isInteger(body.base) && body.base >= 1 && body.base <= ok.length ? body.base - 1 : ok.length - 1] : null;
+  const base = pick ? await r2Image(env, pick.image_key) : null;
+  const ref = !isTweak && lead.ref_key ? await r2Image(env, lead.ref_key) : null;
+  const { images, prompt } = await renderInputs(env, request, form, answers, { ref, tweak: isTweak ? tweak : '', base, masked: !!(mask && base) });
 
   const renderId = rid(12);
   const n = ok.length + 1;
+  const tweakNote = tweak ? (mask ? `Marked area: ${tweak}` : tweak) : null;
   await env.DB.prepare('INSERT INTO renders (id, lead_id, n, model, prompt, tweak, status, created_at) VALUES (?,?,?,?,?,?,?,?)')
-    .bind(renderId, leadId, n, model.id, prompt, tweak || null, 'pending', Date.now()).run();
+    .bind(renderId, leadId, n, model.id, prompt, tweakNote, 'pending', Date.now()).run();
 
   const t0 = Date.now();
   try {
-    const out = model.provider === 'openai' ? await openaiImage(env, model, prompt, images) : await gemini(env, model.id, prompt, images);
-    const ms = Date.now() - t0;
+    const out = await runModel(env, model, prompt, images, base ? mask : null);
     const ext = out.mime.split('/')[1] || 'png';
     const key = `renders/${leadId}/${n}-${rid(8)}.${ext}`;
     await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
-    const inT = out.usage.promptTokenCount ?? out.usage.input_tokens ?? 0;
-    const outT = out.usage.candidatesTokenCount ?? out.usage.output_tokens ?? 0;
-    const imgIn = out.usage.input_tokens_details?.image_tokens || 0;
-    const cost = ((inT - imgIn) * model.inPerM + imgIn * (model.imgInPerM || model.inPerM) + outT * model.outPerM) / 1e6;
     await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ? WHERE id = ?')
-      .bind('ok', key, ms, inT, outT, cost, renderId).run();
+      .bind('ok', key, out.ms, out.inT, out.outT, out.cost, renderId).run();
     return json({
       url: `/media/${key}`, n, remaining: form.maxRenders - n,
-      ...(env.DEV_MODE === '1' ? { dev: { model: model.label, ms, inTokens: inT, outTokens: outT, costUsd: cost, prompt } } : {}),
+      ...(env.DEV_MODE === '1' ? { dev: { model: model.label, ms: out.ms, inTokens: out.inT, outTokens: out.outT, costUsd: out.cost, prompt } } : {}),
     });
   } catch (err) {
     const ms = Date.now() - t0;
@@ -227,10 +198,114 @@ async function createRender(request, env, leadId) {
   }
 }
 
+// Ulaz za model: prvi render (slika stila iz biblioteke ili buildera, pa slika kupca) ili dorada (baza + izmjena).
+async function renderInputs(env, request, form, answers, { ref = null, tweak = '', base = null, masked = false } = {}) {
+  if (tweak && base) return { images: [base], prompt: buildTweakPrompt(tweak, { masked }) };
+  const images = [];
+  const refs = [];
+  const style = styleOf(form, answers);
+  // Ugrađeni grillz stilovi govore samo broj zuba; kad kupac izabere tačne zube, njihova slika bi nametnula pogrešan broj.
+  const countOnly = answers.type === 'grillz' && ['top6', 'top8', 'set', 'fangs'].includes(answers.style) && parseTeeth(answers.teeth);
+  if (style?.image && !countOnly) {
+    let img = null;
+    if (style.image.startsWith('/media/forms/')) img = await r2Image(env, style.image.slice(7));
+    else {
+      const res = await env.ASSETS.fetch(new Request(new URL(style.image, request.url)));
+      if (res.ok) img = { mime: 'image/webp', b64: toB64(await res.arrayBuffer()) };
+    }
+    if (img) { images.push(img); refs.push('style'); }
+  }
+  if (ref) { images.push(ref); refs.push('customer'); }
+  return { images, prompt: buildPrompt(form, answers, { refs, style }) };
+}
+
+async function r2Image(env, key) {
+  const obj = await env.MEDIA.get(key);
+  return obj ? { mime: obj.httpMetadata?.contentType || 'image/png', b64: toB64(await obj.arrayBuffer()) } : null;
+}
+
+// Maska iz forme: PNG (data URL ili fajl), providno = dio koji se mijenja. Do 2 MB.
+function maskFrom(v) {
+  let bytes;
+  try {
+    if (typeof v === 'string') {
+      const m = v.match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/);
+      if (!m || m[1].length > 2_800_000) return null;
+      bytes = fromB64(m[1]);
+    } else if (v instanceof Uint8Array) bytes = v;
+    else return null;
+  } catch { return null; }
+  const png = bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+  return png && bytes.length <= 2 * 1024 * 1024 ? bytes : null;
+}
+
+// Poziv modela + trošak iz potrošnje tokena (cijene u MODELS).
+async function runModel(env, model, prompt, images, mask = null) {
+  const t0 = Date.now();
+  const out = model.provider === 'openai' ? await openaiImage(env, model, prompt, images, mask) : await gemini(env, model.id, prompt, images);
+  const inT = out.usage.promptTokenCount ?? out.usage.input_tokens ?? 0;
+  const outT = out.usage.candidatesTokenCount ?? out.usage.output_tokens ?? 0;
+  const imgIn = out.usage.input_tokens_details?.image_tokens || 0;
+  const cost = ((inT - imgIn) * model.inPerM + imgIn * (model.imgInPerM || model.inPerM) + outT * model.outPerM) / 1e6;
+  return { ...out, ms: Date.now() - t0, inT, outT, cost };
+}
+
+// Probni render iz buildera: nacrt forme i odgovori iz pregleda, bez upita (lead). Trošak se bilježi u test_renders.
+async function testRender(request, env) {
+  if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
+  const fd = await request.formData();
+  let form;
+  let answers;
+  try { form = JSON.parse(fd.get('form')); answers = JSON.parse(fd.get('answers') || '{}'); } catch { return json({ error: 'Invalid form.' }, 400); }
+  try { validateFormDef(form, form?.id); } catch (e) { return json({ error: e.message }, 400); }
+  const problem = validateAnswers(form, answers);
+  if (problem) return json({ error: `${problem} Go through the steps in the preview first.` }, 400);
+
+  const tweak = clean(fd.get('tweak'), 300);
+  let base = null;
+  if (tweak) {
+    const key = String(fd.get('base') || '');
+    if (!/^tests\/[\w./-]+$/.test(key) || key.includes('..')) return json({ error: 'Make a test render first.' }, 400);
+    base = await r2Image(env, key);
+    if (!base) return json({ error: 'Test render not found.' }, 404);
+  }
+  const maskFile = fd.get('mask');
+  const mask = base && maskFile && typeof maskFile === 'object' ? maskFrom(new Uint8Array(await maskFile.arrayBuffer())) : null;
+  if (base && maskFile && !mask) return json({ error: 'The marked area could not be read.' }, 400);
+  const refFile = fd.get('reference');
+  let ref = null;
+  if (!tweak && refFile && typeof refFile === 'object' && refFile.size) {
+    if (!/^image\/(jpeg|png|webp)$/.test(refFile.type) || refFile.size > MAX_REF_BYTES) return json({ error: 'Photo must be JPG, PNG or WebP, max 8 MB.' }, 400);
+    ref = { mime: refFile.type, b64: toB64(await refFile.arrayBuffer()) };
+  }
+
+  const model = MODELS[tweak ? tweakModel(env) : firstModel(env)];
+  const { images, prompt } = await renderInputs(env, request, form, answers, { ref, tweak, base, masked: !!mask });
+  const id = rid(12);
+  const now = Date.now();
+  const note = tweak ? (mask ? `Marked area: ${tweak}` : tweak) : null;
+  try {
+    const out = await runModel(env, model, prompt, images, mask);
+    const key = `tests/${form.id}/${rid(10)}.${out.mime.split('/')[1] || 'png'}`;
+    await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
+    await env.DB.prepare('INSERT INTO test_renders (id, form_id, model, prompt, tweak, image_key, status, ms, in_tokens, out_tokens, cost_usd, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(id, form.id, model.id, prompt, note, key, 'ok', out.ms, out.inT, out.outT, out.cost, now).run();
+    return json({ url: `/media/${key}`, key, model: model.label, ms: out.ms, costUsd: out.cost, prompt });
+  } catch (err) {
+    console.error('test render failed', model.id, err.message);
+    await env.DB.prepare('INSERT INTO test_renders (id, form_id, model, prompt, tweak, status, error, ms, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+      .bind(id, form.id, model.id, prompt, note, 'error', String(err.message).slice(0, 500), Date.now() - now, now).run();
+    return json({ error: `Render failed: ${err.message}` }, 502);
+  }
+}
+
 // OpenAI Image API: sa referencama /v1/images/edits (multipart, redom kao u promptu), bez njih /v1/images/generations.
-async function openaiImage(env, model, prompt, images) {
+// Maska ide uz prvu sliku (bazu): providni pikseli su dio koji model smije mijenjati.
+async function openaiImage(env, model, prompt, images, mask = null) {
   if (!env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY nije postavljen');
   const headers = { authorization: `Bearer ${env.OPENAI_API_KEY}` };
+  // Samo lokalno: lažni OpenAI server za provjere bez troška (scripts/mask-check.mjs).
+  const api = env.DEV_MODE === '1' && env.OPENAI_BASE ? env.OPENAI_BASE : 'https://api.openai.com';
   let res;
   if (images.length) {
     const fd = new FormData();
@@ -240,9 +315,10 @@ async function openaiImage(env, model, prompt, images) {
     fd.set('quality', model.quality || 'high');
     fd.set('output_format', 'jpeg');
     images.forEach((img, i) => fd.append('image[]', new Blob([fromB64(img.b64)], { type: img.mime }), `ref-${i + 1}.${img.mime.split('/')[1] || 'png'}`));
-    res = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers, body: fd });
+    if (mask) fd.set('mask', new Blob([mask], { type: 'image/png' }), 'mask.png');
+    res = await fetch(`${api}/v1/images/edits`, { method: 'POST', headers, body: fd });
   } else {
-    res = await fetch('https://api.openai.com/v1/images/generations', {
+    res = await fetch(`${api}/v1/images/generations`, {
       method: 'POST',
       headers: { ...headers, 'content-type': 'application/json' },
       body: JSON.stringify({ model: model.id, prompt, size: '1024x1024', quality: model.quality || 'high', output_format: 'jpeg' }),
@@ -315,9 +391,9 @@ async function adminForms(request, env, p) {
 
   // Sve odjednom za builder: klijenti, forme (grupisane po client_id) i šabloni.
   if (p === '/api/admin/forms' && method === 'GET') {
-    const clients = (await env.DB.prepare('SELECT id, name, data, created_at FROM clients ORDER BY name').all()).results.map((c) => ({ id: c.id, name: c.name, ...JSON.parse(c.data || '{}') }));
-    const rows = (await env.DB.prepare('SELECT id, data, client_id, template, updated_at FROM forms ORDER BY updated_at DESC').all()).results;
-    const forms = rows.map((r) => { const d = JSON.parse(r.data); return { id: r.id, name: d.name || d.brand?.name || r.id, clientId: r.client_id || d.clientId || null, template: r.template || d.template || null, updated_at: r.updated_at }; });
+    const clients = (await env.DB.prepare('SELECT id, name, data, created_at, archived_at FROM clients ORDER BY name').all()).results.map((c) => ({ id: c.id, name: c.name, ...JSON.parse(c.data || '{}'), archivedAt: c.archived_at || null }));
+    const rows = (await env.DB.prepare('SELECT id, data, client_id, template, updated_at, archived_at FROM forms ORDER BY updated_at DESC').all()).results;
+    const forms = rows.map((r) => { const d = JSON.parse(r.data); return { id: r.id, name: d.name || d.brand?.name || r.id, clientId: r.client_id || d.clientId || null, template: r.template || d.template || null, updated_at: r.updated_at, archivedAt: r.archived_at || null }; });
     for (const [id, f] of Object.entries(FORMS)) if (!forms.some((x) => x.id === id)) forms.push({ id, name: f.name, clientId: null, template: f.template, builtin: true });
     const templates = Object.entries(TEMPLATES).map(([key, t]) => ({ key, label: t.label, description: t.description }));
     return json({ clients, forms, templates, pieces: PIECE_OPTIONS });
@@ -361,10 +437,44 @@ async function adminForms(request, env, p) {
       try { form = JSON.parse(raw).form; } catch { return json({ error: 'Invalid JSON' }, 400); }
       try { validateFormDef(form, id); } catch (e) { return json({ error: e.message }, 400); }
       if (form.clientId && !(await env.DB.prepare('SELECT 1 FROM clients WHERE id = ?').bind(form.clientId).first())) return json({ error: 'Client not found' }, 400);
-      await env.DB.prepare('INSERT INTO forms (id, data, client_id, template, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, client_id = excluded.client_id, template = excluded.template, updated_at = excluded.updated_at')
-        .bind(id, JSON.stringify(form), form.clientId || null, form.template || null, Date.now()).run();
-      return json({ ok: true, updated_at: Date.now() });
+      const data = JSON.stringify(form);
+      const now = Date.now();
+      // Istorija: verzija prije ovog čuvanja (prvo čuvanje ugrađene forme čuva verziju iz koda).
+      const prev = await env.DB.prepare('SELECT data, updated_at FROM forms WHERE id = ?').bind(id).first();
+      const old = prev ? prev.data : FORMS[id] ? JSON.stringify(FORMS[id]) : null;
+      const batch = [];
+      if (old && old !== data) {
+        batch.push(env.DB.prepare('INSERT INTO form_versions (id, form_id, data, saved_at) VALUES (?,?,?,?)').bind(rid(12), id, old, prev?.updated_at || 0));
+        batch.push(env.DB.prepare('DELETE FROM form_versions WHERE form_id = ? AND id NOT IN (SELECT id FROM form_versions WHERE form_id = ? ORDER BY saved_at DESC LIMIT ?)').bind(id, id, MAX_VERSIONS));
+      }
+      batch.push(env.DB.prepare('INSERT INTO forms (id, data, client_id, template, updated_at) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, client_id = excluded.client_id, template = excluded.template, updated_at = excluded.updated_at')
+        .bind(id, data, form.clientId || null, form.template || null, now));
+      await env.DB.batch(batch);
+      return json({ ok: true, updated_at: now });
     }
+  }
+
+  // Istorija verzija: lista (sa redom koraka, da se vidi šta se mijenjalo) i jedna verzija za vraćanje u builder.
+  if ((m = p.match(/^\/api\/admin\/forms\/([a-z0-9-]+)\/versions$/)) && method === 'GET') {
+    const rows = (await env.DB.prepare('SELECT id, data, saved_at FROM form_versions WHERE form_id = ? ORDER BY saved_at DESC').bind(m[1]).all()).results;
+    return json({
+      versions: rows.map((r) => {
+        const d = JSON.parse(r.data);
+        return { id: r.id, savedAt: r.saved_at, name: d.name, steps: (d.steps || []).map((s) => `${s.label || s.title || s.id}${s.enabled === false ? ' (off)' : ''}`) };
+      }),
+    });
+  }
+  if ((m = p.match(/^\/api\/admin\/forms\/([a-z0-9-]+)\/versions\/([a-z0-9]+)$/)) && method === 'GET') {
+    const r = await env.DB.prepare('SELECT data FROM form_versions WHERE form_id = ? AND id = ?').bind(m[1], m[2]).first();
+    return r ? json({ form: JSON.parse(r.data) }) : json({ error: 'Version not found' }, 404);
+  }
+
+  // Arhiva forme: sakrivena iz pregleda i ne prima nove upite. Vraća se istim putem.
+  if ((m = p.match(/^\/api\/admin\/forms\/([a-z0-9-]+)\/archive$/)) && method === 'POST') {
+    const b = await request.json().catch(() => ({}));
+    const r = await env.DB.prepare('UPDATE forms SET archived_at = ? WHERE id = ?').bind(b.archived === false ? null : Date.now(), m[1]).run();
+    if (!r.meta.changes) return json({ error: FORMS[m[1]] ? 'Save the built-in demo once before archiving it.' : 'Form not found' }, 404);
+    return json({ ok: true });
   }
 
   // Slika stila, opcije ili logo forme. Browser je već smanji; ovdje samo tip i veličina.
@@ -399,6 +509,26 @@ async function adminClients(request, env, p) {
       const id = await uniqueId(env, 'clients', slugify(body.id || name) || 'client');
       await env.DB.prepare('INSERT INTO clients (id, name, data, created_at) VALUES (?,?,?,?)').bind(id, name, JSON.stringify(data()), Date.now()).run();
       return json({ client: { id, name, ...data() } });
+    }
+    // Arhiva klijenta: arhivira i njegove aktivne forme (isto vrijeme) i gasi portal link. Vraćanje vraća te forme.
+    const a = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/archive$/);
+    if (a && method === 'POST') {
+      const c = await env.DB.prepare('SELECT id, archived_at FROM clients WHERE id = ?').bind(a[1]).first();
+      if (!c) return json({ error: 'Client not found' }, 404);
+      if (body.archived === false) {
+        await env.DB.batch([
+          env.DB.prepare('UPDATE clients SET archived_at = NULL WHERE id = ?').bind(c.id),
+          env.DB.prepare('UPDATE forms SET archived_at = NULL WHERE client_id = ? AND archived_at = ?').bind(c.id, c.archived_at || -1),
+        ]);
+      } else if (!c.archived_at) {
+        const now = Date.now();
+        await env.DB.batch([
+          env.DB.prepare('UPDATE clients SET archived_at = ? WHERE id = ?').bind(now, c.id),
+          env.DB.prepare('UPDATE forms SET archived_at = ? WHERE client_id = ? AND archived_at IS NULL').bind(now, c.id),
+          env.DB.prepare("UPDATE portal_sessions SET ended_at = ? WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL").bind(now, c.id),
+        ]);
+      }
+      return json({ ok: true });
     }
     const m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)$/);
     if (m && method === 'PUT') {
@@ -459,15 +589,18 @@ async function clientLink(request, env, clientId) {
 // Pregled svih formi za builder: upiti, renderi, zadnji upit i trošak po formi, plus aktivni linkovi klijenata.
 async function adminOverview(request, env) {
   if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
-  const [leads, renders, links] = await env.DB.batch([
+  const [leads, renders, links, tests] = await env.DB.batch([
     env.DB.prepare('SELECT form_id, COUNT(*) AS leads, MAX(created_at) AS last_lead FROM leads GROUP BY form_id'),
     env.DB.prepare("SELECT l.form_id, SUM(CASE WHEN r.status = 'ok' THEN 1 ELSE 0 END) AS renders, SUM(r.cost_usd) AS cost FROM renders r JOIN leads l ON l.id = r.lead_id GROUP BY l.form_id"),
     env.DB.prepare("SELECT client_id, MAX(started_at) AS created_at FROM portal_sessions WHERE kind = 'client' AND ended_at IS NULL AND expires_at > ? GROUP BY client_id").bind(Date.now()),
+    env.DB.prepare("SELECT form_id, COUNT(*) AS tests, SUM(cost_usd) AS cost FROM test_renders WHERE status = 'ok' GROUP BY form_id"),
   ]);
   const stats = {};
-  const row = (id) => (stats[id] ||= { leads: 0, renders: 0, cost: 0, lastLead: null });
+  const row = (id) => (stats[id] ||= { leads: 0, renders: 0, cost: 0, lastLead: null, tests: 0, testCost: 0 });
   for (const r of leads.results) Object.assign(row(r.form_id), { leads: r.leads, lastLead: r.last_lead });
   for (const r of renders.results) Object.assign(row(r.form_id), { renders: r.renders || 0, cost: r.cost || 0 });
+  // Probni renderi iz buildera su pravi trošak: ulaze u ukupno, a posebno se vidi koliko je na njih otišlo.
+  for (const r of tests.results) { const x = row(r.form_id); x.tests = r.tests; x.testCost = r.cost || 0; x.cost += r.cost || 0; }
   return json({ stats, links: Object.fromEntries(links.results.map((r) => [r.client_id, { createdAt: r.created_at }])) });
 }
 
@@ -507,7 +640,7 @@ async function portalApi(request, env, p) {
     if (sess.kind === 'view-as') await env.DB.prepare('UPDATE portal_sessions SET ended_at = ? WHERE id = ?').bind(Date.now(), sess.id).run();
     return json({ ok: true });
   }
-  const formRows = (await env.DB.prepare('SELECT id, data, template, updated_at FROM forms WHERE client_id = ? ORDER BY updated_at DESC').bind(client.id).all()).results;
+  const formRows = (await env.DB.prepare('SELECT id, data, template, updated_at, archived_at FROM forms WHERE client_id = ? ORDER BY updated_at DESC').bind(client.id).all()).results;
   const forms = Object.fromEntries(formRows.map((r) => [r.id, JSON.parse(r.data)]));
 
   if (p === '/api/portal/me' && request.method === 'GET') {
@@ -520,7 +653,7 @@ async function portalApi(request, env, p) {
     return json({
       session: { kind: sess.kind, expiresAt: sess.expires_at },
       client: { id: client.id, name: client.name, logo: d.logo || null, website: d.website || '' },
-      forms: formRows.map((r) => ({
+      forms: formRows.filter((r) => !r.archived_at).map((r) => ({
         id: r.id, name: forms[r.id].name, template: r.template, label: TEMPLATES[r.template]?.label || 'Custom', updated_at: r.updated_at,
         leads: per[r.id]?.leads || 0, renders: per[r.id]?.renders || 0, lastLead: per[r.id]?.last_lead || null,
       })),
@@ -553,6 +686,13 @@ async function portalApi(request, env, p) {
   return json({ error: 'Not found' }, 404);
 }
 
+async function demoHandled(request, env, id) {
+  if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
+  const b = await request.json().catch(() => ({}));
+  const r = await env.DB.prepare('UPDATE demo_requests SET handled_at = ? WHERE id = ?').bind(b.handled === false ? null : Date.now(), id).run();
+  return r.meta.changes ? json({ ok: true }) : json({ error: 'Not found' }, 404);
+}
+
 async function adminLeads(request, env) {
   if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
   const leads = (await env.DB.prepare('SELECT id, form_id, name, email, phone, answers, ref_key, files, created_at FROM leads ORDER BY created_at DESC LIMIT 200').all()).results;
@@ -563,16 +703,17 @@ async function adminLeads(request, env) {
     (t, r) => ({ renders: t.renders + (r.status === 'ok' ? 1 : 0), errors: t.errors + (r.status === 'error' ? 1 : 0), cost: t.cost + (r.cost_usd || 0) }),
     { renders: 0, errors: 0, cost: 0 }
   );
-  const demos = (await env.DB.prepare('SELECT name, email, website, platform, volume, created_at FROM demo_requests ORDER BY created_at DESC LIMIT 200').all()).results;
+  const demos = (await env.DB.prepare('SELECT id, name, email, website, platform, volume, created_at, handled_at FROM demo_requests ORDER BY created_at DESC LIMIT 200').all()).results;
+  const tests = await env.DB.prepare("SELECT COUNT(*) AS n, SUM(cost_usd) AS cost FROM test_renders WHERE status = 'ok'").first();
   return json({
     demos,
-    totals: { leads: leads.length, ...totals },
+    totals: { leads: leads.length, ...totals, tests: tests?.n || 0, testCost: tests?.cost || 0 },
     leads: leads.map((l) => ({ ...l, answers: JSON.parse(l.answers), renders: byLead[l.id] || [] })),
   });
 }
 
 async function media(request, env, key) {
-  if (!/^(renders|refs|forms|clients)\/[\w./-]+$/.test(key) || key.includes('..')) return json({ error: 'Not found' }, 404);
+  if (!/^(renders|refs|forms|clients|tests)\/[\w./-]+$/.test(key) || key.includes('..')) return json({ error: 'Not found' }, 404);
   // Renderi su javni preko nepogodivog ključa; referentne slike kupaca vidi samo admin.
   if (key.startsWith('refs/') && !isAdmin(request, env)) {
     const sess = await portalSession(request, env);

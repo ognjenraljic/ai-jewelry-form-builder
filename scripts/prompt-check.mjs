@@ -7,7 +7,8 @@ const g = fromTemplate('grillz', { id: 'g', brand: 'Northstar', clientId: 'n' })
 g.steps.find((s) => s.id === 'fit').fields.push({ id: 'occasion', type: 'chips', label: 'Occasion', options: [{ value: 'party', label: 'Party' }], followup: 'text' });
 let p = buildPrompt(g, { type: 'grillz', style: 'top8', metal: 'yellow-gold', karat: '14K', stones: 'moissanite', coverage: 'full', grill_cut: 'open-face', mold: 'yes', budget: '$2,500 - $5,000', occasion: 'party', occasion__more: 'my birthday' }, { style: { shape: 'top 8' } });
 ok(p.includes('open face grill'), 'napomena opcije (open face) u promptu');
-ok(!p.includes('molds') && !p.includes('2,500'), 'kalupi i budžet (ai:false) nisu u promptu');
+ok(!p.includes('molds'), 'kalupi (ai:false) nisu u promptu');
+ok(p.includes('Budget: the customer chose "$2,500 - $5,000"') && p.includes('worth about $5,000') && p.includes('substantial piece'), 'budžet vodi sliku i kad je ai:false, gornja granica raspona');
 ok(p.includes('Occasion: Party (customer adds: "my birthday")'), 'custom pitanje sa dodatnim tekstom');
 ok(p.includes('ONE row'), 'grillz top 8 = jedan red');
 
@@ -38,3 +39,13 @@ p = buildPrompt(g, { type: 'grillz', style: 'top6', teeth: 'T3,T8', metal: 'yell
 ok(p.includes("upper canine (viewer's left), upper canine (viewer's right)"), 'zubi: dva očnjaka po imenu');
 p = buildPrompt(c, { type: 'grillz', style: 'top6', teeth: 'B5,B6', metal: 'yellow-gold', karat: '14K', stones: 'none' }, {});
 ok(p.includes('bottom (lower) row') && p.includes('both central incisors'), 'zubi u opštoj formi: donja dva');
+
+// Budžet: gornja granica raspona; bez iznosa nema smjernice; isključen korak budžeta ne ide u prompt.
+p = buildPrompt(c, { type: 'pendant', style: 'script', metal: 'yellow-gold', karat: '14K', stones: 'none', budget: 'Under $1,500' }, {});
+ok(p.includes('worth about $1,500') && p.includes('delicate'), 'budžet: Under $1,500 = fin, manji komad');
+p = buildPrompt(c, { type: 'pendant', style: 'script', metal: 'yellow-gold', karat: '14K', stones: 'none', budget: '$20,000+' }, {});
+ok(p.includes('or more') && p.includes('masterpiece'), 'budžet: $20,000+ = najviši nivo');
+const noBudget = structuredClone(c);
+noBudget.steps.find((s) => s.id === 'budget').enabled = false;
+p = buildPrompt(noBudget, { type: 'pendant', style: 'script', metal: 'yellow-gold', karat: '14K', stones: 'none', budget: '$20,000+' }, {});
+ok(!p.includes('Budget:'), 'budžet: isključen korak ne ide u prompt');

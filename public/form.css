@@ -194,3 +194,21 @@ button.seg, button.seg.done { padding: 0; border: 0; border-top: 8px solid trans
 .progress { align-items: center; }
 button.seg:hover { filter: brightness(1.35); }
 @media (max-width: 560px) { .btn.ghost { padding-left: 18px; padding-right: 18px; } }
+.foot-teeth { color: var(--ink-soft); letter-spacing: 0.02em; font-size: 13px; }
+.foot-teeth b { color: var(--ink); }
+@media (max-width: 560px) {
+  .foot { padding-top: 12px; }
+  .foot-row .btn { padding-top: 15px; padding-bottom: 15px; }
+  .hint { margin-top: 8px; }
+}
+
+/* Dorada samo označenog dijela slike */
+.maskc { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.5; cursor: crosshair; touch-action: none; }
+.maskbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 18px; }
+.maskbar .chip { padding: 7px 13px; font-size: 13px; }
+.maskhint { font-size: 12px; color: var(--ink-faint); }
+.maskbar + .tweak { margin-top: 12px; }
+/* Probni render iz buildera (samo admin u pregledu) */
+.testbtn { width: 100%; margin-top: 10px; font-size: 11px; padding-top: 11px; padding-bottom: 11px; border-style: dashed; }
+.testnote { color: var(--accent); }
+.maskline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; flex-basis: 100%; }

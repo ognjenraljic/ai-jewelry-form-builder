@@ -214,3 +214,11 @@ dialog { width: min(480px, 92vw); }
 a.btn { display: inline-block; text-decoration: none; color: var(--ink); }
 .hub-table { table-layout: fixed; min-width: 760px; }
 .hub-table td:first-child { overflow: hidden; text-overflow: ellipsis; }
+.hub-table tr.archived td { opacity: 0.55; }
+.hub-table tr.archived td.acts { opacity: 1; }
+.hub-client.archived { border-style: dashed; opacity: 0.8; }
+.hub-table { min-width: 830px; }
+.top .status { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.top { min-width: 0; }
+.top .form-select { max-width: 230px; min-width: 0; text-overflow: ellipsis; }
+@media (max-width: 1400px) { .top .form-select { max-width: 180px; } .top { gap: 8px; } .logo small { display: none; } }

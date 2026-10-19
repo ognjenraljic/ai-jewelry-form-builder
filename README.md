@@ -8,10 +8,11 @@ Runs entirely on Cloudflare: one Worker, D1 (database), R2 (images).
 
 ## What is in here
 
-- **Builder** (`/builder`, or `builder.<your-domain>/`): clients (jewelers), forms created from templates (Custom Enquiry, Grillz, Ring, Blank), default and custom questions, an image and an AI note per option, theme colors, logo, texts, live preview and the embed code.
-- **Customer form** (`/f/<form-id>`): the widget the builder embeds on a jeweler's site with one `<script>` tag. Includes a tooth picker for grillz (tap teeth, counters, popular sets) that sends the exact teeth to the image model.
-- **Client portal** (`/portal`): "View as client" from the builder shows the jeweler's leads and forms exactly as they see them (one-hour session).
-- **Leads admin** (`/admin`).
+- **Builder** (`/builder`, or `builder.<your-domain>/`): opens on **All forms** (every client and their forms with leads, renders, last lead and AI cost, search, archive and restore). Forms are created from templates (Custom Enquiry, Grillz, Ring, Blank, or one piece only), with default and custom questions, an image and an AI note per option, theme colors, logo, texts, live preview, embed code and a **History** tab (every Save keeps the previous version, last 50). **Test render** in the preview renders the current draft without creating a lead (cost is tracked).
+- **Customer form** (`/f/<form-id>`): the widget the builder embeds on a jeweler's site with one `<script>` tag. Back button and clickable finished steps. Includes a tooth picker for grillz (tap teeth, counters, popular sets) that sends the exact teeth to the image model. After the render the customer can refine the whole image or **paint over one area** and change only that (sent to the model as a mask). The budget guides the render: the piece is designed at the top of the chosen range.
+- **Client portal** (`/portal`): each client gets a **portal link** (one year, shown once, new link revokes the old one) to see their leads, renders and forms on their own, without AI costs. "View as client" opens the same portal for an admin (one hour, logged).
+- **Leads admin** (`/admin`): leads with every render and its cost, test renders, and demo requests you can mark as handled.
+- **Archive**: archived forms and clients disappear from the lists and stop taking new leads; nothing is deleted.
 - **Style library** (`public/library/`): reference images per style, sent to the model with the prompt so the shape comes out right.
 
 Image models (pick per environment in `wrangler.jsonc`, keys in `src/worker.js` `MODELS`):
@@ -126,7 +127,10 @@ node scripts/prompt-check.mjs        # prompt building (notes, hidden questions,
 node scripts/platform-check.mjs      # clients, forms, uploads (server must run)
 node scripts/viewas-check.mjs        # client portal sessions (server must run)
 RENDER=1 node scripts/teeth-check.mjs  # tooth picker through the server + one render
+node scripts/versions-archive-check.mjs  # form history, archive, demo requests handled (server must run)
 ```
+
+Renders without spending credit: start the fake OpenAI with `node scripts/mock-openai.mjs 8899 out.json`, then `npx wrangler dev --var OPENAI_API_KEY:mock --var OPENAI_BASE:http://127.0.0.1:8899` (only works with `DEV_MODE=1`). It returns gallery images and logs what the model received (images, mask, prompt).
 
 `scripts/build_library.py` regenerates the style library images with Gemini (reads the key from `.dev.vars`).
 
