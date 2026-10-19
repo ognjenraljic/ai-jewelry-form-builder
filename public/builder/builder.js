@@ -11,6 +11,20 @@ const ICONS = {
   watch: '<rect x="14" y="14" width="20" height="20" rx="6"/><path d="M18 14l2-9h8l2 9M18 34l2 9h8l2-9"/><path d="M24 19v5l4 3"/>',
   gem: '<path d="M14 8h20l8 11-18 22L6 19z"/><path d="M6 19h36M18 8l-4 11 10 22 10-22-4-11"/>',
 };
+// Male ikonice za dugmad u zaglavlju (24x24, linija).
+const NAV = {
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
+  open: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+};
+const nav = (n) => `<svg class="nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${NAV[n]}</svg>`;
+// Logo vodi na početnu stranicu sajta (landing), u istom tabu.
+const homeLogo = () => `<a class="logo" href="/" title="Go to the JewelryLead homepage">${icon('gem')} JewelryLead <small>Builder</small></a>`;
+// Padajući meni sa natpisom iznad vrijednosti i strelicom.
+const pick = (label, id, opts) => `<label class="dd"><span>${label}</span><select class="form-select" id="${id}" aria-label="${label}">${opts}</select></label>`;
+
 const icon = (n) => `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[n] || ICONS.gem}</svg>`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const slug = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36) || 'item';
@@ -135,7 +149,7 @@ async function openForm(id, force = false) {
 // ---------- Pregled svih formi (po klijentima) ----------
 const statOf = (id) => B.overview.stats[id] || { leads: 0, renders: 0, cost: 0, lastLead: null };
 const day = (t) => (t ? new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '');
-const usd = (n) => `$${(n || 0).toFixed((n || 0) < 10 ? 3 : 2)}`;
+const usd = (n) => `$${(n || 0).toFixed((n || 0) < 1 ? 3 : 2)}`;
 
 function renderHub() {
   B.view = 'hub';
@@ -146,19 +160,19 @@ function renderHub() {
   app.innerHTML = `
     <div class="hub">
       <header class="top">
-        <div class="logo">${icon('gem')} JewelryLead <small>Builder</small></div>
+        ${homeLogo()}
         <input class="in hub-q" data-hub-q type="search" placeholder="Search clients and forms" value="${esc(B.q)}" aria-label="Search" />
         <div class="spacer"></div>
-        <button class="btn small" data-act="new-client">+ Client</button>
-        <button class="btn small" data-act="new-form">+ Form</button>
-        <a class="btn small ghost" href="/admin" target="_blank" rel="noopener">Leads</a>
-        ${B.id ? `<button class="btn small primary" data-act="back-editor">Back to editor${dirty() || clientDirty() ? ' (unsaved)' : ''}</button>` : ''}
+        <button class="nav-btn" data-act="new-client">${nav('plus')}New project</button>
+        <button class="nav-btn" data-act="new-form">${nav('plus')}New form</button>
+        <a class="nav-btn hi" href="/admin" target="_blank" rel="noopener">${nav('list')}<span>Leads</span></a>
+        ${B.id ? `<button class="btn primary save" data-act="back-editor">Back to editor${dirty() || clientDirty() ? ' (unsaved)' : ''}</button>` : ''}
       </header>
       <main class="hub-main">
-        <h2>All forms</h2>
-        <p class="lead">Every client and their forms. AI cost is visible only here and in the admin, never to the client.</p>
+        <h2>All projects</h2>
+        <p class="lead">Every project (client) and their forms. AI cost is visible only here and in the admin, never to the client.</p>
         <div class="hub-stats">
-          <div><span>Clients</span><b>${activeClients().length}</b></div>
+          <div><span>Projects</span><b>${activeClients().length}</b></div>
           <div><span>Forms</span><b>${B.forms.filter((f) => !f.archivedAt).length}</b></div>
           <div><span>Leads</span><b>${sum('leads')}</b></div>
           <div><span>AI renders</span><b>${sum('renders')}</b></div>
@@ -302,19 +316,18 @@ function renderTop() {
     + (clientForms(null).length ? `<option value="" ${!B.clientId ? 'selected' : ''}>Unassigned (${clientForms(null).length})</option>` : '');
   const fOpts = clientForms(B.clientId).map((f) => `<option value="${esc(f.id)}" ${f.id === B.id ? 'selected' : ''}>${esc(f.name || f.id)}${f.builtin ? ' (built-in)' : ''}</option>`).join('');
   document.getElementById('top').innerHTML = `
-    <div class="logo">${icon('gem')} JewelryLead <small>Builder</small></div>
-    <button class="btn small ghost" data-act="hub" title="All clients and forms">All forms</button>
-    <select class="form-select" id="client-select" aria-label="Client">${cOpts}</select>
-    <button class="btn small" data-act="new-client" title="New client">+ Client</button>
-    <span class="sep">/</span>
-    <select class="form-select" id="form-select" aria-label="Form">${fOpts}</select>
-    <button class="btn small" data-act="new-form" title="New form for this client">+ Form</button>
+    ${homeLogo()}
+    <button class="nav-btn" data-act="hub" title="All projects and their forms">${nav('grid')}All projects</button>
+    ${pick('Project', 'client-select', cOpts)}
+    <button class="nav-add" data-act="new-client" title="New project (client)" aria-label="New project">${nav('plus')}</button>
+    ${pick('Form', 'form-select', fOpts)}
+    <button class="nav-add" data-act="new-form" title="New form for this project" aria-label="New form">${nav('plus')}</button>
     <div class="spacer"></div>
     <span class="status ${B.kind}" id="status">${esc(B.status)}</span>
-    ${B.client ? `<button class="btn small ghost" data-act="view-as" title="Open ${esc(B.client.name)}'s portal as they see it (logged, 1 hour)">View as client</button>` : ''}
-    <a class="btn small ghost" href="/admin" target="_blank" rel="noopener">Leads</a>
-    <a class="btn small ghost" href="/f/${esc(B.id)}" target="_blank" rel="noopener">Open form ↗</a>
-    <button class="btn primary" data-act="save" id="save-btn" ${dirty() ? '' : 'disabled'}>Save</button>`;
+    ${B.client ? `<button class="nav-btn hi" data-act="view-as" title="Open ${esc(B.client.name)}'s portal as they see it (logged, 1 hour)">${nav('eye')}<span>View as client</span></button>` : ''}
+    <a class="nav-btn hi" href="/admin" target="_blank" rel="noopener" title="All leads and renders">${nav('list')}<span>Leads</span></a>
+    <a class="nav-btn hi" href="/f/${esc(B.id)}" target="_blank" rel="noopener" title="Open this form as customers see it">${nav('open')}<span>Open form</span></a>
+    <button class="btn primary save" data-act="save" id="save-btn" ${dirty() ? '' : 'disabled'}>Save</button>`;
   document.getElementById('form-select').onchange = (e) => openForm(e.target.value);
   document.getElementById('client-select').onchange = (e) => {
     const first = clientForms(e.target.value || null)[0];
@@ -993,4 +1006,7 @@ window.addEventListener('message', (e) => {
 });
 
 window.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); if (B.view === 'hub') return; if (B.tab === 'client' && clientDirty()) saveClient(); else save(); } });
+window.addEventListener('beforeunload', (e) => { if (dirty() || clientDirty()) { e.preventDefault(); e.returnValue = ''; } });
+
+// Logo vodi na početnu: ne izgubi nesačuvane izmjene bez pitanja.
 window.addEventListener('beforeunload', (e) => { if (dirty() || clientDirty()) { e.preventDefault(); e.returnValue = ''; } });

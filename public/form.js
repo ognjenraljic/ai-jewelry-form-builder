@@ -135,11 +135,14 @@ function render() {
   else if (step.id === '_result') body = resultView();
   else body = stepView(step);
 
+  // Logo zlatara: veći i centriran iznad trake koraka. Bez logoa ime brenda ostaje desno, kao do sada.
+  const logo = S.cfg.brand?.logo;
   app.innerHTML = `
+    ${logo ? `<div class="brand-head"><img class="brand-logo" src="${esc(logo)}" alt="${esc(S.cfg.brand?.name || '')}" /></div>` : ''}
     <header class="top">
       <button class="back" data-act="back" ${canBack ? '' : 'hidden'} aria-label="Back">&larr; Back</button>
       <div class="progress ${enter}" aria-hidden="true">${progress}</div>
-      ${S.cfg.brand?.logo ? `<img class="brand-logo" src="${esc(S.cfg.brand.logo)}" alt="${esc(S.cfg.brand?.name || '')}" />` : `<span class="brand">${esc(S.cfg.brand?.name || '')}</span>`}
+      ${logo ? '<span class="top-pad" aria-hidden="true"></span>' : `<span class="brand">${esc(S.cfg.brand?.name || '')}</span>`}
     </header>
     ${body}`;
   if (enter) app.querySelector('.step')?.classList.add('enter');
