@@ -263,3 +263,5 @@ details.step > summary .grow small { font-weight: 500; font-size: 12px; color: v
 /* Sinhronizacija sa pregledom: kratko istakni korak ili pitanje */
 .flash { animation: q-flash 1.4s ease-out; }
 @keyframes q-flash { 0%, 35% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 8px color-mix(in srgb, var(--accent) 18%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+/* Korak koji se vidi u pregledu */
+#pbar .btn.on[data-act="jump"] { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); border-color: var(--accent); color: var(--ink); }

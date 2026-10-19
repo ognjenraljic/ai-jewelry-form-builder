@@ -72,6 +72,8 @@ async function boot() {
       S.rendered = -1;
       render();
       if (e.data.focus) focusField(e.data.focus);
+      // Javi builderu na kom je koraku pregled stvarno (skok na korak koji se trenutno ne vidi ostaje na mjestu).
+      parent.postMessage({ type: 'aik:at', step: cur().id }, location.origin);
     });
     parent.postMessage({ type: 'aik:preview-ready' }, location.origin);
     // Klik na pitanje u pregledu: builder otvori i pokaže to pitanje u Questions.

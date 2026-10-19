@@ -141,6 +141,7 @@ async function openForm(id, force = false) {
   store.set('aik_builder_view', 'editor');
   B.piece = typeLoc()?.field.options[0]?.value || null;
   B.open = new Set([0]);
+  B.pv = Math.max(0, form.steps.findIndex((st) => st.enabled !== false && st.fields.some((f) => f.enabled !== false)));
   store.set('aik_builder_form', id);
   setStatus('');
   renderShell();
@@ -341,13 +342,13 @@ function renderTabs() {
 }
 
 function renderPbar() {
-  const steps = B.draft.steps.map((s, i) => `<button class="btn small ${s.enabled === false ? 'off' : ''}" data-act="jump" data-i="${i}" ${s.enabled === false ? 'disabled title="Step is off"' : ''}>${i + 1}. ${esc(s.label || s.title)}</button>`).join('');
+  const steps = B.draft.steps.map((s, i) => `<button class="btn small ${s.enabled === false ? 'off' : ''} ${B.pv === i ? 'on' : ''}" data-act="jump" data-i="${i}" ${s.enabled === false ? 'disabled title="Step is off"' : ''}>${i + 1}. ${esc(s.label || s.title)}</button>`).join('');
   document.getElementById('pbar').innerHTML = `
     <span class="label">Preview</span>
     <button class="btn small ${B.device === 'desktop' ? 'on' : ''}" data-act="device" data-d="desktop">Desktop</button>
     <button class="btn small ${B.device === 'mobile' ? 'on' : ''}" data-act="device" data-d="mobile">Mobile</button>
     <span class="label" style="margin-left:10px">Jump to</span>${steps}
-    <button class="btn small" data-act="jump" data-i="${B.draft.steps.length}">Contact</button>
+    <button class="btn small ${B.pv === B.draft.steps.length ? 'on' : ''}" data-act="jump" data-i="${B.draft.steps.length}">Contact</button>
     <button class="btn small primary" data-act="test-render" title="Renders this draft with the answers you clicked in the preview. Costs one render, no lead is created.">Test render</button>`;
 }
 
@@ -770,7 +771,7 @@ app.addEventListener('click', async (e) => {
     } catch (err) { setStatus(err.message, 'err'); }
   }
   if (act === 'device') { B.device = el.dataset.d; document.getElementById('frame').classList.toggle('mobile', B.device === 'mobile'); renderPbar(); }
-  if (act === 'jump') { pushPreview(i); revealLeft(i); }
+  if (act === 'jump') { pushPreview(i); setPv(i); revealLeft(i); }
   if (act === 'test-render') { pushPreview(); setTimeout(() => document.getElementById('frame')?.contentWindow?.postMessage({ type: 'aik:test' }, location.origin), 80); }
   if (act === 'preset') { B.draft.theme = { ...PRESETS[el.dataset.p] }; changed(true); }
   if (act === 'use-client-logo') { B.draft.brand.logo = B.client.logo; changed(true); }
@@ -1013,6 +1014,12 @@ function pushPreview(step, { soft = false, focus = null } = {}) {
   frame?.contentWindow?.postMessage({ type: 'aik:preview', form: B.draft, ...jump }, location.origin);
 }
 
+// Korak koji pregled trenutno pokazuje: isto dugme u "Jump to" je označeno (null = rezultat ili nepoznato).
+function setPv(i) {
+  B.pv = i;
+  document.querySelectorAll('#pbar [data-act="jump"]').forEach((b) => b.classList.toggle('on', +b.dataset.i === i));
+}
+
 // ---------- Questions <-> pregled ----------
 // Lijevo otvoren korak ili kliknuto pitanje pokaže se desno; korak ili izbor u pregledu otvori i pokaže to pitanje lijevo.
 let lastFocus = '';
@@ -1021,6 +1028,7 @@ function previewTo(i, focus = null) {
   const key = `${i}:${focus || ''}`;
   if (key === lastFocus) return;
   lastFocus = key;
+  setPv(i);
   pushPreview(i, { soft: true, focus });
 }
 function revealLeft(i, fid = null) {
@@ -1048,7 +1056,15 @@ app.addEventListener('pointerdown', (e) => {
 window.addEventListener('message', (e) => {
   const frame = document.getElementById('frame');
   if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow) return;
-  if (e.data?.type === 'aik:step') revealLeft(B.draft.steps.findIndex((s) => s.id === e.data.step));
+  if (e.data?.type === 'aik:at') {
+    const i = e.data.step === '_contact' ? B.draft.steps.length : B.draft.steps.findIndex((s) => s.id === e.data.step);
+    setPv(i >= 0 ? i : null);
+  }
+  if (e.data?.type === 'aik:step') {
+    const i = e.data.step === '_contact' ? B.draft.steps.length : B.draft.steps.findIndex((s) => s.id === e.data.step);
+    setPv(i >= 0 ? i : null);
+    if (i < B.draft.steps.length) revealLeft(i);
+  }
   if (e.data?.type === 'aik:field') revealLeft(B.draft.steps.findIndex((s) => s.fields.some((f) => f.id === e.data.field)), e.data.field);
 });
 const styleStepIndex = () => B.draft.steps.findIndex((s) => s.fields.some((f) => f.optionsFrom?.styles));
