@@ -94,6 +94,7 @@ async function refreshLists() {
   B.clients = d.clients;
   B.forms = d.forms;
   B.templates = d.templates;
+  B.pieces = d.pieces || [];
   B.overview = o;
 }
 
@@ -871,14 +872,21 @@ function newForm(clientId = B.client?.id) {
   const cOpts = B.clients.map((c) => `<option value="${esc(c.id)}" ${c.id === clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   const tpls = B.templates.map((t, k) => `<label class="tpl"><input type="radio" name="tpl" value="${esc(t.key)}" ${k === 0 ? 'checked' : ''} /><span><b>${esc(t.label)}</b><small>${esc(t.description)}</small></span></label>`).join('');
   const copy = B.forms.filter((f) => !f.builtin).map((f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`).join('');
+  const pieceOpts = (B.pieces || []).map((p) => `<option value="${esc(p.value)}">${esc(p.label)}</option>`).join('');
   dialog(`<h2>New form</h2>
     <label class="f"><span>Client</span><select class="sel" name="client">${cOpts}</select></label>
     <div class="f"><span>Start from a template</span><div class="tpls">${tpls}
+      ${pieceOpts ? `<label class="tpl"><input type="radio" name="tpl" value="__piece" /><span><b>One piece only</b><small>Customers skip the piece question and go straight to styles. Grillz and Ring use their dedicated builders.<select class="sel" name="piece">${pieceOpts}</select></small></span></label>` : ''}
       ${copy ? `<label class="tpl"><input type="radio" name="tpl" value="__copy" /><span><b>Copy an existing form</b><small><select class="sel" name="copy">${copy}</select></small></span></label>` : ''}</div></div>
     <label class="f"><span>Form name (optional)</span><input class="in" name="name" placeholder="e.g. Grillz page" /></label>`, async (d) => {
     const tpl = d.querySelector('[name=tpl]:checked').value;
     const body = { clientId: d.querySelector('[name=client]').value, name: d.querySelector('[name=name]').value };
-    if (tpl === '__copy') body.copyFrom = d.querySelector('[name=copy]').value; else body.template = tpl;
+    if (tpl === '__copy') body.copyFrom = d.querySelector('[name=copy]').value;
+    else if (tpl === '__piece') {
+      // Grillz i prsten imaju svoje šablone sa posebnim pitanjima; ostali komadi su Custom Enquiry sužen na jedan komad.
+      const piece = d.querySelector('[name=piece]').value;
+      if (B.templates.some((t) => t.key === piece)) body.template = piece; else { body.template = 'custom-enquiry'; body.piece = piece; }
+    } else body.template = tpl;
     const { form } = await api('/api/admin/forms', { method: 'POST', body: JSON.stringify(body) });
     if ((dirty() || clientDirty()) && !confirm('Discard unsaved changes in the current form?')) return;
     await loadAll(form.id);

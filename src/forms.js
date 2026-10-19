@@ -214,12 +214,29 @@ export const TEMPLATES = {
   },
 };
 
-export function fromTemplate(template, { id, brand, name, clientId, logo }) {
+// Komadi za formu samo za jedan komad (Custom Enquiry suženo na taj komad).
+export const PIECE_OPTIONS = PIECES.map(({ value, label }) => ({ value, label }));
+
+export function fromTemplate(template, { id, brand, name, clientId, logo, piece }) {
   const t = TEMPLATES[template];
   if (!t) throw new Error('Unknown template');
   const form = t.build(brand);
   if (logo) form.brand.logo = logo;
-  return { id, name: name || `${brand} · ${t.label}`, clientId, template, ...form };
+  let label = t.label;
+  // Samo jedan komad: korak izbora komada se isključuje, ostaju samo stilovi tog komada, zubi samo za grillz.
+  if (piece) {
+    const step = form.steps.find((s) => s.id === 'type');
+    const field = step?.fields.find((f) => f.id === 'type');
+    const o = field?.options.find((x) => x.value === piece);
+    if (!o) throw new Error('Unknown piece');
+    field.options = [o];
+    field.default = piece;
+    step.enabled = false;
+    form.styles = { [piece]: form.styles?.[piece] || [] };
+    if (piece !== 'grillz') form.steps = form.steps.filter((s) => s.id !== 'teeth');
+    label = o.label;
+  }
+  return { id, name: name || `${brand} · ${label}`, clientId, template, ...form };
 }
 
 // Ugrađena demo forma (demo sajt i JewelryLead početna). Važi dok se ne sačuva u bazi.

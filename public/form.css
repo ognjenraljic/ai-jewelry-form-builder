@@ -184,3 +184,13 @@ h1 em { font-style: italic; color: var(--accent); }
 .tsum i { font-style: normal; color: var(--ink-faint); }
 .tsum .ttotal { border-left: 1px solid var(--line); padding-left: 16px; margin-left: 4px; }
 @media (max-width: 620px) { .teeth { grid-template-columns: 1fr; } }
+
+/* Nazad: dugme pored Continue i klik na pređene korake u traci */
+.foot-row { display: flex; gap: 10px; }
+.foot-row .btn { flex: 1; }
+.btn.ghost { flex: 0 0 auto; width: auto; background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); padding-left: 26px; padding-right: 26px; }
+.btn.ghost:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-soft); }
+button.seg, button.seg.done { padding: 0; border: 0; border-top: 8px solid transparent; border-bottom: 8px solid transparent; height: 19px; box-sizing: border-box; background-clip: padding-box; cursor: pointer; }
+.progress { align-items: center; }
+button.seg:hover { filter: brightness(1.35); }
+@media (max-width: 560px) { .btn.ghost { padding-left: 18px; padding-right: 18px; } }

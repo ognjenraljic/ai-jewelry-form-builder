@@ -114,11 +114,14 @@ function render() {
   prefillTeeth();
   const step = cur();
   const all = steps();
+  const canBack = S.i > 0 && step.id !== '_result';
+  // Pređeni koraci su dugmad: klik vraća na taj korak (ne poslije slanja, kad je upit već poslat).
   const progress = all
     .slice(0, -1)
-    .map((s, k) => `<span class="seg ${k < S.i ? 'done' : k === S.i ? 'now' : ''}" title="${esc(s.label)}"></span>`)
+    .map((s, k) => (canBack && k < S.i
+      ? `<button type="button" class="seg done" data-goto="${k}" title="Back to ${esc(s.label)}" aria-label="Back to ${esc(s.label)}"></button>`
+      : `<span class="seg ${k < S.i ? 'done' : k === S.i ? 'now' : ''}" title="${esc(s.label)}"></span>`))
     .join('');
-  const canBack = S.i > 0 && step.id !== '_result';
   const enter = S.i !== S.rendered ? 'enter' : '';
   S.rendered = S.i;
 
@@ -148,11 +151,13 @@ function stepView(step) {
       <p class="sub">${esc(step.subtitle || '')}</p>
       ${fields}
       <div class="foot">
-        <button class="btn" data-act="next" ${valid ? '' : 'disabled'}>Continue</button>
+        <div class="foot-row">${backBtn()}<button class="btn" data-act="next" ${valid ? '' : 'disabled'}>Continue</button></div>
         <p class="hint">${valid ? '' : 'Choose an option to continue'}</p>
       </div>
     </section>`;
 }
+
+const backBtn = () => (S.i > 0 ? '<button type="button" class="btn ghost" data-act="back" aria-label="Previous step">Back</button>' : '');
 
 function fieldView(f) {
   const label = (f.label ? `<span class="label">${esc(f.label)}</span>` : '') + (f.subtitle ? `<p class="field-sub">${esc(f.subtitle)}</p>` : '');
@@ -370,7 +375,7 @@ function contactView() {
       <label class="check"><input type="checkbox" data-c="consent" ${c.consent ? 'checked' : ''} /><span>${esc(k.consent)}</span></label>
       ${S.error ? `<p class="error">${esc(S.error)}</p>` : ''}
       <div class="foot">
-        <button class="btn gold" data-act="submit" ${valid && !S.busy ? '' : 'disabled'}>${S.busy ? 'Sending' : esc(k.button)}</button>
+        <div class="foot-row">${S.busy ? '' : backBtn()}<button class="btn gold" data-act="submit" ${valid && !S.busy ? '' : 'disabled'}>${S.busy ? 'Sending' : esc(k.button)}</button></div>
         <p class="hint">We never share your details.</p>
       </div>
     </section>`;
@@ -498,6 +503,7 @@ function bind() {
   const tw = app.querySelector('[data-tweak]');
   if (tw) tw.addEventListener('keydown', (e) => e.key === 'Enter' && doTweak());
   app.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => { S.shown = +b.dataset.show; render(); }));
+  app.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.goto - S.i)));
 
   app.querySelectorAll('[data-act]').forEach((b) =>
     b.addEventListener('click', () => {

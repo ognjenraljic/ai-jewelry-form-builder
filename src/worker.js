@@ -1,4 +1,4 @@
-import { FORMS, TEMPLATES, publicForm, styleOf, optionsOf, validateFormDef, fromTemplate, enabledSteps } from './forms.js';
+import { FORMS, TEMPLATES, PIECE_OPTIONS, publicForm, styleOf, optionsOf, validateFormDef, fromTemplate, enabledSteps } from './forms.js';
 import { buildPrompt, buildTweakPrompt } from './prompt.js';
 import { parseTeeth, teethSummary } from './teeth.js';
 
@@ -320,7 +320,7 @@ async function adminForms(request, env, p) {
     const forms = rows.map((r) => { const d = JSON.parse(r.data); return { id: r.id, name: d.name || d.brand?.name || r.id, clientId: r.client_id || d.clientId || null, template: r.template || d.template || null, updated_at: r.updated_at }; });
     for (const [id, f] of Object.entries(FORMS)) if (!forms.some((x) => x.id === id)) forms.push({ id, name: f.name, clientId: null, template: f.template, builtin: true });
     const templates = Object.entries(TEMPLATES).map(([key, t]) => ({ key, label: t.label, description: t.description }));
-    return json({ clients, forms, templates });
+    return json({ clients, forms, templates, pieces: PIECE_OPTIONS });
   }
 
   // Nova forma: iz šablona za klijenta, ili kopija postojeće forme.
@@ -329,7 +329,7 @@ async function adminForms(request, env, p) {
     const client = b.clientId ? await env.DB.prepare('SELECT * FROM clients WHERE id = ?').bind(b.clientId).first() : null;
     if (!client) return json({ error: 'Pick a client first' }, 400);
     const cdata = JSON.parse(client.data || '{}');
-    const id = b.id ? String(b.id).trim().toLowerCase() : await uniqueId(env, 'forms', `${client.id}-${slugify(b.template || 'form')}`);
+    const id = b.id ? String(b.id).trim().toLowerCase() : await uniqueId(env, 'forms', `${client.id}-${slugify(b.piece || b.template || 'form')}`);
     if (!SLUG_RE.test(id)) return json({ error: 'ID: lowercase letters, numbers and dashes (e.g. northstar-grillz)' }, 400);
     if ((await env.DB.prepare('SELECT 1 FROM forms WHERE id = ?').bind(id).first()) || FORMS[id]) return json({ error: 'A form with this ID already exists' }, 409);
     let form;
@@ -339,7 +339,9 @@ async function adminForms(request, env, p) {
       form = { ...structuredClone(src), id, clientId: client.id, name: clean(b.name, 80) || `${src.name} (copy)` };
     } else {
       if (!TEMPLATES[b.template]) return json({ error: 'Pick a template' }, 400);
-      form = fromTemplate(b.template, { id, brand: client.name, name: clean(b.name, 80), clientId: client.id, logo: cdata.logo });
+      const piece = b.piece ? String(b.piece) : null;
+      if (piece && (b.template !== 'custom-enquiry' || !PIECE_OPTIONS.some((o) => o.value === piece))) return json({ error: 'Pick a piece' }, 400);
+      form = fromTemplate(b.template, { id, brand: client.name, name: clean(b.name, 80), clientId: client.id, logo: cdata.logo, piece });
     }
     try { validateFormDef(form, id); } catch (e) { return json({ error: e.message }, 400); }
     await env.DB.prepare('INSERT INTO forms (id, data, client_id, template, updated_at) VALUES (?,?,?,?,?)').bind(id, JSON.stringify(form), client.id, form.template || null, Date.now()).run();
