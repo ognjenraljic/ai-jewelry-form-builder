@@ -22,7 +22,8 @@ export function styleOf(form, a) {
 export function optionsOf(field, a, form) {
   if (field.optionsFrom?.styles) {
     const list = (form.styles?.[a[field.optionsFrom.field]] || []).map(({ value, label, image }) => ({ value, label, image }));
-    return [...list, OTHER_STYLE];
+    // "Something else" je uključen dok ga zlatar ne isključi (other: false na pitanju stila).
+    return field.other === false ? list : [...list, OTHER_STYLE];
   }
   return field.options;
 }
@@ -306,6 +307,7 @@ export function validateFormDef(f, id) {
       str(fl.hint, 200, `Hint of ${fl.id}`);
       if (fl.followup != null && !['text', 'file'].includes(fl.followup)) err(`Question ${fl.id}: follow-up must be text or file`);
       if (fl.max != null && (!Number.isInteger(fl.max) || fl.max < 1 || fl.max > 1000)) err(`Question ${fl.id}: max length 1 to 1000`);
+      bool(fl.other, `Question ${fl.id} "Something else"`);
       if (fl.optionsFrom) {
         if (!fl.optionsFrom.styles || fl.optionsFrom.field !== 'type') err(`Question ${fl.id}: styles can only depend on the piece`);
       } else if (CHOICE_TYPES.includes(fl.type)) {

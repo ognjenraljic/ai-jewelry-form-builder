@@ -255,3 +255,11 @@ a.logo:hover { background: var(--surface); }
 
 @media (max-width: 1440px) { .top .logo small { display: none; } .dd { max-width: 190px; } }
 @media (max-width: 1360px) { .dd { min-width: 0; max-width: 150px; } .top .nav-btn { padding: 0 11px; } .top { gap: 7px; } .top .status { max-width: 120px; } }
+
+/* Naslov koraka u Questions kao u pregledu: oznaka (Piece, Style...), pa naslov sitnije */
+details.step > summary .grow { display: flex; align-items: baseline; gap: 10px; }
+details.step > summary .grow b { font-weight: 700; }
+details.step > summary .grow small { font-weight: 500; font-size: 12px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* Sinhronizacija sa pregledom: kratko istakni korak ili pitanje */
+.flash { animation: q-flash 1.4s ease-out; }
+@keyframes q-flash { 0%, 35% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 8px color-mix(in srgb, var(--accent) 18%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }

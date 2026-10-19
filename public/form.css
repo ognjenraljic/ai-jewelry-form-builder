@@ -223,3 +223,9 @@ button.seg:hover { filter: brightness(1.35); }
   .brand-head .brand-logo { max-height: 54px; }
   .back, .top-pad { min-width: 58px; width: 58px; }
 }
+
+/* Podnaslov koraka: širok skoro kao kartice ispod */
+.sub { max-width: calc(100% - 12px); }
+/* Pregled u builderu: pitanje otvoreno lijevo se kratko istakne */
+.field.flash { animation: field-flash 1.4s ease-out; border-radius: 14px; outline-offset: 10px; }
+@keyframes field-flash { 0%, 35% { outline: 2px solid var(--accent); } 100% { outline: 2px solid transparent; } }

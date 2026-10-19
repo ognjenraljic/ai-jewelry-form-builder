@@ -483,7 +483,8 @@ function piecesView() {
       <h3>Styles for ${esc(o.label)}</h3>
       <p class="hint" style="margin:-6px 0 12px">Customers pick one of these. The picture also guides the AI's shape, so photos of the jeweler's own pieces work best. "Something else" is added automatically.</p>
       <div class="styles">${cards}</div>
-      <button class="btn small" style="margin-top:12px" data-act="add-style">+ Add style</button>`;
+      <button class="btn small" style="margin-top:12px" data-act="add-style">+ Add style</button>
+      ${(() => { const si = styleStepIndex(); const sj = si >= 0 ? B.draft.steps[si].fields.findIndex((f) => f.optionsFrom?.styles) : -1; return sj >= 0 ? `<div class="toggles" style="margin-top:14px">${otherToggle(si, sj)}</div>` : ''; })()}`;
   }
   const single = opts.length === 1 ? `<p class="note">One piece only, so the piece step is ${loc.step.enabled === false ? 'hidden and the piece is picked automatically' : 'shown'}. Turn it on or off in Questions.</p>` : '';
   return `
@@ -495,6 +496,9 @@ function piecesView() {
     ${editor}`;
 }
 
+// "Something else" na kraju liste stilova: kupac opisuje svoj stil. Uključeno dok se ne isključi.
+const otherToggle = (i, j) => toggle(`steps.${i}.fields.${j}.other`, 'Offer "Something else" at the end of the styles', { invert: true, title: 'Lets customers describe a style that is not in the list.' });
+
 function questionsView() {
   const tl = typeLoc();
   const steps = B.draft.steps.map((s, i) => {
@@ -502,13 +506,14 @@ function questionsView() {
     const locked = isType || s.fields.some((f) => f.optionsFrom);
     const canToggle = !isType || tl.field.options.length === 1;
     const builtinStep = s.fields.some((f) => f.builtin);
+    const sj = s.fields.findIndex((f) => f.optionsFrom?.styles);
     const fields = locked
-      ? '<p class="note">Choices for this step are managed in <b>Pieces &amp; styles</b>.</p>'
+      ? `<p class="note">Choices for this step are managed in <b>Pieces &amp; styles</b>.</p>${sj >= 0 ? `<div class="toggles">${otherToggle(i, sj)}</div>` : ''}`
       : s.fields.map((f, j) => fieldEditor(i, j, f)).join('') + `<button class="btn small" data-act="add-field" data-i="${i}">+ Add question</button>`;
     return `
       <details class="step ${s.enabled === false ? 'is-off' : ''}" data-step="${i}" ${B.open.has(i) ? 'open' : ''}>
         <summary>
-          <span class="num">${i + 1}</span><span class="grow">${esc(s.title)}</span>
+          <span class="num">${i + 1}</span><span class="grow"><b>${esc(s.label || s.title)}</b>${s.label && s.title ? `<small>${esc(s.title)}</small>` : ''}</span>
           ${s.enabled === false ? '<span class="pill">Off</span>' : ''}<span class="pill">${s.fields.length} ${s.fields.length === 1 ? 'question' : 'questions'}</span>
           <button class="icon-btn" title="Move up" data-act="move" data-path="steps" data-i="${i}" data-d="-1">↑</button>
           <button class="icon-btn" title="Move down" data-act="move" data-path="steps" data-i="${i}" data-d="1">↓</button>
@@ -569,7 +574,7 @@ function fieldEditor(i, j, f) {
     condVals = `<div class="cond-vals">${(src?.options || []).map((o) => `<label class="check"><input type="checkbox" data-cond-val="${p}" value="${esc(o.value)}" ${list.includes(o.value) ? 'checked' : ''} /> ${esc(o.label)}</label>`).join('')}</div>`;
   }
   return `
-    <div class="field ${f.enabled === false ? 'is-off' : ''}">
+    <div class="field ${f.enabled === false ? 'is-off' : ''}" data-si="${i}" data-fid="${esc(f.id)}">
       <div class="card-head"><div class="grow"><b>${esc(f.label || f.id)}</b></div>
         <span class="pill ${def ? 'pill-def' : 'pill-cus'}">${def ? 'Default' : 'Custom'}</span>
         <button class="icon-btn" data-act="move" data-path="steps.${i}.fields" data-i="${j}" data-d="-1" title="Move up">↑</button>
@@ -727,7 +732,13 @@ app.addEventListener('change', async (e) => {
 
 app.addEventListener('toggle', (e) => {
   const d = e.target;
-  if (d.matches?.('details.step')) { const i = +d.dataset.step; if (d.open) B.open.add(i); else B.open.delete(i); }
+  if (d.matches?.('details.step')) {
+    const i = +d.dataset.step;
+    if (d.open) B.open.add(i); else B.open.delete(i);
+    // Ručno otvoren korak se pokaže u pregledu; otvaranje koje je pokrenuo pregled ne vraća skok nazad.
+    if (d.open && !d.dataset.silent) previewTo(i);
+    delete d.dataset.silent;
+  }
 }, true);
 
 app.addEventListener('click', async (e) => {
@@ -759,7 +770,7 @@ app.addEventListener('click', async (e) => {
     } catch (err) { setStatus(err.message, 'err'); }
   }
   if (act === 'device') { B.device = el.dataset.d; document.getElementById('frame').classList.toggle('mobile', B.device === 'mobile'); renderPbar(); }
-  if (act === 'jump') pushPreview(i);
+  if (act === 'jump') { pushPreview(i); revealLeft(i); }
   if (act === 'test-render') { pushPreview(); setTimeout(() => document.getElementById('frame')?.contentWindow?.postMessage({ type: 'aik:test' }, location.origin), 80); }
   if (act === 'preset') { B.draft.theme = { ...PRESETS[el.dataset.p] }; changed(true); }
   if (act === 'use-client-logo') { B.draft.brand.logo = B.client.logo; changed(true); }
@@ -995,11 +1006,51 @@ function setStatus(text, kind = '') {
 let pt;
 function schedulePreview() { clearTimeout(pt); pt = setTimeout(() => pushPreview(), 250); }
 // Skok na korak šalje i izabrani komad, da korak sa stilovima pokaže stilove tog komada.
-function pushPreview(step) {
+// soft: skok iz Questions (sinhronizacija) ne mijenja kupčeve odgovore u pregledu, samo dopuni komad ako ga nema.
+function pushPreview(step, { soft = false, focus = null } = {}) {
   const frame = document.getElementById('frame');
-  const jump = typeof step === 'number' ? { step, answers: { type: B.piece || typeLoc()?.field.options[0]?.value } } : {};
+  const jump = typeof step === 'number' ? { step, answers: { type: B.piece || typeLoc()?.field.options[0]?.value }, soft, focus } : {};
   frame?.contentWindow?.postMessage({ type: 'aik:preview', form: B.draft, ...jump }, location.origin);
 }
+
+// ---------- Questions <-> pregled ----------
+// Lijevo otvoren korak ili kliknuto pitanje pokaže se desno; korak ili izbor u pregledu otvori i pokaže to pitanje lijevo.
+let lastFocus = '';
+function previewTo(i, focus = null) {
+  if (B.draft.steps[i]?.enabled === false) return; // isključen korak se u pregledu ne vidi
+  const key = `${i}:${focus || ''}`;
+  if (key === lastFocus) return;
+  lastFocus = key;
+  pushPreview(i, { soft: true, focus });
+}
+function revealLeft(i, fid = null) {
+  if (B.tab !== 'questions' || i < 0) return;
+  const d = document.querySelector(`#pane details.step[data-step="${i}"]`);
+  if (!d) return;
+  B.open.add(i);
+  if (!d.open) { d.dataset.silent = '1'; d.open = true; }
+  const el = (fid && d.querySelector(`[data-fid="${CSS.escape(fid)}"]`)) || d;
+  lastFocus = `${i}:${fid || ''}`;
+  el.scrollIntoView({ block: fid ? 'center' : 'start', behavior: 'smooth' });
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
+}
+app.addEventListener('focusin', (e) => {
+  const f = B.tab === 'questions' && e.target.closest?.('#pane .field[data-fid]');
+  if (f) previewTo(+f.dataset.si, f.dataset.fid);
+});
+app.addEventListener('pointerdown', (e) => {
+  const f = B.tab === 'questions' && e.target.closest?.('#pane .field[data-fid]');
+  if (f) previewTo(+f.dataset.si, f.dataset.fid);
+});
+window.addEventListener('message', (e) => {
+  const frame = document.getElementById('frame');
+  if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow) return;
+  if (e.data?.type === 'aik:step') revealLeft(B.draft.steps.findIndex((s) => s.id === e.data.step));
+  if (e.data?.type === 'aik:field') revealLeft(B.draft.steps.findIndex((s) => s.fields.some((f) => f.id === e.data.field)), e.data.field);
+});
 const styleStepIndex = () => B.draft.steps.findIndex((s) => s.fields.some((f) => f.optionsFrom?.styles));
 window.addEventListener('message', (e) => {
   if (e.origin === location.origin && e.data?.type === 'aik:preview-ready') pushPreview();

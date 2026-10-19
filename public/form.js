@@ -57,15 +57,29 @@ async function boot() {
       if (e.data?.type === 'aik:test' && testAllowed() && !S.busy) { startTest(); return; }
       if (e.data?.type !== 'aik:preview' || !e.data.form) return;
       S.cfg = { ...e.data.form, dev: S.cfg.dev };
-      if (e.data.answers) Object.assign(S.a, e.data.answers);
+      // Mekani skok (sinhronizacija sa Questions): ne diraj odgovore koje je admin već kliknuo u pregledu.
+      if (e.data.answers) {
+        if (e.data.soft) { for (const [k, v] of Object.entries(e.data.answers)) if (S.a[k] == null) S.a[k] = v; }
+        else Object.assign(S.a, e.data.answers);
+      }
       applyTheme();
       applyDefaults();
-      if (typeof e.data.step === 'number') S.i = Math.max(0, steps().findIndex((st) => st === S.cfg.steps[e.data.step] || (e.data.step >= S.cfg.steps.length && st.id === '_contact')));
+      if (typeof e.data.step === 'number') {
+        const idx = steps().findIndex((st) => st === S.cfg.steps[e.data.step] || (e.data.step >= S.cfg.steps.length && st.id === '_contact'));
+        if (idx >= 0 || !e.data.soft) S.i = Math.max(0, idx);
+      }
       S.i = Math.min(S.i, steps().length - 2);
       S.rendered = -1;
       render();
+      if (e.data.focus) focusField(e.data.focus);
     });
     parent.postMessage({ type: 'aik:preview-ready' }, location.origin);
+    // Klik na pitanje u pregledu: builder otvori i pokaže to pitanje u Questions.
+    app.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-pick],[data-select],[data-text],[data-tfield],[data-drop]');
+      const id = el && (el.dataset.pick || el.dataset.select || el.dataset.text || el.dataset.tfield || el.dataset.drop);
+      if (id) parent.postMessage({ type: 'aik:field', field: id.replace(/__more$/, '') }, location.origin);
+    }, true);
   }
   new ResizeObserver(() => parent.postMessage({ type: 'aik:resize', form: formId, height: document.documentElement.scrollHeight }, '*')).observe(document.body);
 }
@@ -98,11 +112,11 @@ function visible(f) {
   return true;
 }
 
-// Stilovi zavise od izabranog tipa; "Something else" je uvijek zadnji (bez reference).
+// Stilovi zavise od izabranog tipa; "Something else" je zadnji (bez reference), osim ako ga zlatar isključi.
 const optionsOf = (f) => {
   if (f.optionsFrom?.styles) {
     const list = (S.cfg.styles?.[S.a[f.optionsFrom.field]] || []).map(({ value, label, image }) => ({ value, label, image }));
-    return [...list, { value: 'other', label: 'Something else', icon: 'gem' }];
+    return f.other === false ? list : [...list, { value: 'other', label: 'Something else', icon: 'gem' }];
   }
   return f.options || [];
 };
@@ -174,6 +188,18 @@ function footHint(step, valid) {
     if (set.size) return `<span class="foot-teeth"><b>${top}</b> top + <b>${set.size - top}</b> bottom = <b>${set.size}</b> teeth</span>`;
   }
   return valid ? '' : 'Choose an option to continue';
+}
+
+// Pregled u builderu: pokaži i kratko istakni pitanje koje je admin otvorio lijevo.
+function focusField(id) {
+  const sel = ['data-pick', 'data-select', 'data-text', 'data-tfield', 'data-drop'].map((a) => `[${a}="${CSS.escape(id)}"]`).join(',');
+  const el = app.querySelector(sel)?.closest('.field');
+  if (!el) return;
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.remove('flash');
+  void el.offsetWidth;
+  el.classList.add('flash');
+  el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
 }
 
 const backBtn = () => (S.i > 0 ? '<button type="button" class="btn ghost" data-act="back" aria-label="Previous step">Back</button>' : '');
