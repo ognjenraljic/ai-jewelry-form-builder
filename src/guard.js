@@ -161,14 +161,16 @@ export async function sniffImage(file) {
 // ---------- Sigurnosna zaglavlja ----------
 const FONTS = 'https://fonts.googleapis.com';
 const TS = 'https://challenges.cloudflare.com';
+// Cloudflare Web Analytics: Cloudflare sam ubacuje beacon skriptu kad je analitika uključena na domenu.
+const CFI = 'https://static.cloudflareinsights.com';
 const csp = (frameAncestors, { turnstile = false } = {}) => [
   "default-src 'self'",
   "img-src 'self' data: blob:",
   `style-src 'self' 'unsafe-inline' ${FONTS}`,
   'font-src https://fonts.gstatic.com',
-  `script-src 'self'${turnstile ? ` ${TS}` : ''}`,
+  `script-src 'self' ${CFI}${turnstile ? ` ${TS}` : ''}`,
   `frame-src 'self'${turnstile ? ` ${TS}` : ''}`,
-  "connect-src 'self'",
+  "connect-src 'self' https://cloudflareinsights.com",
   "base-uri 'none'",
   "form-action 'self'",
   "object-src 'none'",
