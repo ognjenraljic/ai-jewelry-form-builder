@@ -1,70 +1,80 @@
-// Portal klijenta: njegovi leadovi (renderi, odgovori, fotografije) i njegove forme sa embed kodom.
-// Sesija: "View as client" iz buildera ostavi token u localStorage, portal ga prebaci u sessionStorage (ovaj tab).
-// Klijent dolazi preko svog linka (/portal#k=...): token ide u localStorage, a iz adrese se briše.
+// Portal klijenta: njegovi upiti (renderi, odgovori, fotografije, status), forme sa embed kodom i onboarding.
+// Prijava: link klijenta (/portal#k=...) ili admin pregled (/portal#v=...) se jednom zamijeni za HttpOnly kolačić
+// i odmah obriše iz adrese. Token se više ne čuva u browseru niti ide u adrese slika.
 const app = document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const safe = (fn) => { try { return fn(); } catch { return null; } };
 
-const P = { token: null, me: null, leads: [], tab: 'leads', form: '', own: false };
+const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
+const P = { me: null, leads: [], tab: 'leads', form: '', status: '', q: '', next: null, counts: {}, loadingMore: false };
 const day = (t) => new Date(t).toLocaleDateString('en-US', { dateStyle: 'medium' });
+const readOnly = () => P.me?.session.kind === 'view-as';
 
 boot();
 async function boot() {
-  const handoff = safe(() => localStorage.getItem('aik_view_as'));
-  if (handoff) {
-    safe(() => sessionStorage.setItem('aik_portal', handoff));
-    safe(() => localStorage.removeItem('aik_view_as'));
+  app.innerHTML = '<div class="center"><p class="faint">Loading your portal…</p></div>';
+  // Token iz adrese (ili starog načina čuvanja u browseru) se zamijeni za kolačić pa nestane.
+  const hash = location.hash;
+  const legacyView = safe(() => JSON.parse(sessionStorage.getItem('aik_portal') || 'null'))?.token || safe(() => JSON.parse(localStorage.getItem('aik_view_as') || 'null'))?.token;
+  const token = hash.match(/[#&]k=([a-z0-9]{20,})/)?.[1] || hash.match(/[#&]v=([a-z0-9]{20,})/)?.[1] || legacyView || safe(() => localStorage.getItem('aik_client'));
+  if (hash) history.replaceState(null, '', location.pathname);
+  safe(() => { sessionStorage.removeItem('aik_portal'); localStorage.removeItem('aik_view_as'); localStorage.removeItem('aik_client'); });
+  if (token) {
+    try { await api('/api/portal/session', { method: 'POST', body: JSON.stringify({ token }), json: true }); }
+    catch (e) { return ended('This link no longer works', 'Ask your JewelryLead team for a new portal link.'); }
   }
-  const k = location.hash.match(/k=([a-z0-9]{20,})/)?.[1];
-  if (k) {
-    safe(() => localStorage.setItem('aik_client', k));
-    history.replaceState(null, '', location.pathname);
-  }
-  P.token = safe(() => JSON.parse(sessionStorage.getItem('aik_portal') || 'null'))?.token;
-  if (!P.token) { P.token = safe(() => localStorage.getItem('aik_client')); P.own = !!P.token; }
-  if (!P.token) return ended('Your portal', 'Open the portal link your JewelryLead team sent you.');
   try {
     P.me = await api('/api/portal/me');
-    P.leads = (await api('/api/portal/leads')).leads;
   } catch (e) {
-    return P.own ? ended('This link no longer works', 'Ask your JewelryLead team for a new portal link.') : ended('Session ended', e.message);
+    return ended('Your portal', 'Open the portal link your JewelryLead team sent you.');
   }
+  if (P.me.onboarding?.status !== 'draft') await loadLeads();
   document.title = `${P.me.client.name} · JewelryLead`;
   render();
   setInterval(tick, 30_000);
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'x-portal-token': P.token, ...(opts.json ? { 'content-type': 'application/json' } : {}) } });
+  const res = await fetch(path, { ...opts, credentials: 'same-origin', headers: { ...(opts.json ? { 'content-type': 'application/json' } : {}) } });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!res.ok) { const e = new Error(data.error || `HTTP ${res.status}`); e.status = res.status; e.data = data; throw e; }
   return data;
 }
 
+// Upiti po stranicama od 50, sa filterom statusa i pretragom (rade na serveru, ne samo na učitanima).
+async function loadLeads(more = false) {
+  const qs = new URLSearchParams();
+  if (more && P.next) qs.set('before', P.next);
+  if (P.status) qs.set('status', P.status);
+  if (P.q) qs.set('q', P.q);
+  const r = await api(`/api/portal/leads?${qs}`);
+  P.leads = more ? [...P.leads, ...r.leads] : r.leads;
+  P.next = r.next;
+  P.counts = r.counts || {};
+}
+
 function ended(title, text) {
-  safe(() => sessionStorage.removeItem('aik_portal'));
-  if (P.own) safe(() => localStorage.removeItem('aik_client'));
   app.innerHTML = `<div class="center"><div><h1>${esc(title)}</h1><p style="color:var(--ink-faint)">${esc(text)}</p></div></div>`;
 }
 
 const minsLeft = () => Math.max(0, Math.round((P.me.session.expiresAt - Date.now()) / 60000));
 function tick() {
   if (Date.now() > P.me.session.expiresAt) {
-    return P.own ? ended('This link has expired', 'Ask your JewelryLead team for a new portal link.') : ended('Session ended', 'The admin view lasts one hour. Open it again from the builder.');
+    return P.me.session.kind === 'client' ? ended('This link has expired', 'Ask your JewelryLead team for a new portal link.') : ended('Session ended', 'The admin view lasts one hour. Open it again from the builder.');
   }
   const el = document.getElementById('left');
   if (el) el.textContent = `${minsLeft()} min`;
 }
 
-// Slike kupaca traže token u adresi (img ne šalje zaglavlja); renderi su javni po nepogodivom ključu.
-const media = (key) => `/media/${key}?t=${encodeURIComponent(P.token)}`;
+// Slike kupaca: pristup preko kolačića portala (bez tokena u adresi).
+const media = (key) => `/media/${key}`;
 
 function render() {
   const { client, forms, stats, session } = P.me;
   // Onboarding u toku: portal je vodič dok zlatar ne pošalje odgovore.
   if (P.me.onboarding?.status === 'draft') return renderOnboarding();
   const banner = session.kind === 'view-as'
-    ? `<div class="viewas"><div class="wrap"><span>Admin view</span><span class="grow">Viewing as <b>${esc(client.name)}</b>, exactly as they see it. Ends in <b id="left">${minsLeft()} min</b>.</span><button class="btn warn" data-act="exit">Exit view</button></div></div>`
+    ? `<div class="viewas"><div class="wrap"><span>Admin view</span><span class="grow">Viewing as <b>${esc(client.name)}</b>, read-only. Ends in <b id="left">${minsLeft()} min</b>.</span><button class="btn warn" data-act="exit">Exit view</button></div></div>`
     : '';
   app.innerHTML = `
     ${banner}
@@ -81,35 +91,42 @@ function render() {
         <div class="stat">AI renders<b>${stats.renders}</b></div>
         <div class="stat">Live forms<b>${forms.length}</b></div>
       </div>
-      ${P.me.onboarding?.status === 'submitted' ? `<div class="ob-sent"><b>Thank you, we have your answers.</b> We are building your form now and it will appear under Forms. Your leads will show up here as soon as customers use it.</div>` : ''}
+      ${P.me.onboarding?.status === 'submitted' || P.me.onboarding?.status === 'building' ? `<div class="ob-sent"><b>Thank you, we have your answers.</b> We are building your form now and it will appear under Forms. Your leads will show up here as soon as customers use it.</div>` : ''}
       ${P.tab === 'leads' ? leadsView() : formsView()}
       <p class="note">Want to change a form, add styles or questions? Contact your JewelryLead team.</p>
     </main>`;
 }
 
 function leadsView() {
-  if (!P.leads.length) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
+  const total = Object.values(P.counts).reduce((a, b) => a + b, 0);
+  if (!total && !P.q) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
   const forms = P.me.forms.filter((f) => f.leads);
-  const chips = forms.length > 1
-    ? `<div class="chips"><button class="chip ${P.form ? '' : 'on'}" data-form="">All forms <span>${P.leads.length}</span></button>${forms.map((f) => `<button class="chip ${P.form === f.id ? 'on' : ''}" data-form="${esc(f.id)}">${esc(f.name)} <span>${P.leads.filter((l) => l.formId === f.id).length}</span></button>`).join('')}</div>`
+  const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}</div>`;
+  const formChips = forms.length > 1
+    ? `<div class="chips" role="group" aria-label="Filter by form"><button class="chip ${P.form ? '' : 'on'}" data-form="">All forms</button>${forms.map((f) => `<button class="chip ${P.form === f.id ? 'on' : ''}" data-form="${esc(f.id)}">${esc(f.name)}</button>`).join('')}</div>`
     : '';
+  const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email or phone" value="${esc(P.q)}" /></label>`;
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
-  return chips + list.map((l) => {
+  const cards = list.map((l) => {
     const last = l.renders[l.renders.length - 1];
-    const photos = l.photos.map((p) => `<figure><img src="${media(p.key)}" alt="" data-zoom /><figcaption>${esc(p.label)}</figcaption></figure>`).join('');
-    const strip = l.renders.length > 1 ? l.renders.map((r, k) => `<figure><img src="${esc(r.url)}" alt="" data-zoom /><figcaption>${k === 0 ? 'First render' : esc(r.tweak || `Render ${k + 1}`)}</figcaption></figure>`).join('') : '';
+    const photos = l.photos.map((p) => `<figure><img src="${media(p.key)}" alt="${esc(p.label)}" width="64" height="64" loading="lazy" data-zoom tabindex="0" /><figcaption>${esc(p.label)}</figcaption></figure>`).join('');
+    const strip = l.renders.length > 1 ? l.renders.map((r, k) => `<figure><img src="${esc(r.url)}" alt="${k === 0 ? 'First render' : esc(r.tweak || `Render ${k + 1}`)}" width="64" height="64" loading="lazy" data-zoom tabindex="0" /><figcaption>${k === 0 ? 'First render' : esc(r.tweak || `Render ${k + 1}`)}</figcaption></figure>`).join('') : '';
+    const sel = `<select class="status-sel s-${esc(l.status)}" data-lead-status="${esc(l.id)}" aria-label="Status of ${esc(l.name)}" ${readOnly() ? 'disabled' : ''}>${STATUSES.map(([v, t]) => `<option value="${v}" ${l.status === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
     return `
       <article class="lead">
-        <div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render" data-zoom />` : 'No render yet'}</div>
+        <div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>
         <div>
-          <div class="lead-top"><h2>${esc(l.name)}</h2><span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span></div>
+          <div class="lead-top"><h2>${esc(l.name)}</h2><span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
           <div class="contact"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a></div>
           <div class="tags">${l.details.map((d) => `<span class="tag">${esc(d.label)}: <b>${esc(d.value)}</b></span>`).join('')}</div>
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
           <div class="thumbs">${strip}${photos}</div>
+          <label class="lead-note"><span class="sr-only">Note</span><textarea class="in" rows="1" data-lead-note="${esc(l.id)}" placeholder="Add a note (quote sent, follow up Friday…)" ${readOnly() ? 'disabled' : ''}>${esc(l.note)}</textarea></label>
         </div>
       </article>`;
-  }).join('');
+  }).join('') || '<p class="empty">No leads match.</p>';
+  const more = P.next ? `<div class="more"><button class="btn" data-act="more" ${P.loadingMore ? 'disabled' : ''}>${P.loadingMore ? 'Loading…' : 'Show older leads'}</button></div>` : '';
+  return `<div class="filters">${search}${statusChips}${formChips}</div>${cards}${more}`;
 }
 
 function formsView() {
@@ -126,34 +143,81 @@ function formsView() {
   }).join('') || '<p class="empty">No forms yet.</p>';
 }
 
+function zoom(src) {
+  const box = document.createElement('div');
+  box.className = 'lightbox';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-label', 'Image');
+  box.tabIndex = -1;
+  box.innerHTML = `<img src="${esc(src)}" alt="" />`;
+  const close = () => { box.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  box.onclick = close;
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(box);
+  box.focus();
+}
+
+let searchTimer;
+app.addEventListener('input', (e) => {
+  const el = e.target;
+  if (el.dataset.search !== undefined) {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => { P.q = el.value.trim(); await loadLeads(); render(); const s = app.querySelector('[data-search]'); s?.focus(); s?.setSelectionRange(s.value.length, s.value.length); }, 350);
+  }
+});
+app.addEventListener('change', async (e) => {
+  const el = e.target;
+  if (el.dataset.leadStatus) {
+    const id = el.dataset.leadStatus;
+    const prev = P.leads.find((l) => l.id === id)?.status;
+    try {
+      await api(`/api/portal/leads/${id}`, { method: 'PATCH', body: JSON.stringify({ status: el.value }), json: true });
+      const l = P.leads.find((x) => x.id === id);
+      if (l) { P.counts[prev] = Math.max(0, (P.counts[prev] || 1) - 1); P.counts[el.value] = (P.counts[el.value] || 0) + 1; l.status = el.value; }
+      el.className = `status-sel s-${el.value}`;
+    } catch (err) { alert(err.message); el.value = prev; }
+  }
+  if (el.dataset.leadNote) {
+    try { await api(`/api/portal/leads/${el.dataset.leadNote}`, { method: 'PATCH', body: JSON.stringify({ note: el.value }), json: true }); const l = P.leads.find((x) => x.id === el.dataset.leadNote); if (l) l.note = el.value; el.classList.add('saved'); setTimeout(() => el.classList.remove('saved'), 1200); }
+    catch (err) { alert(err.message); }
+  }
+});
+app.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset?.zoom !== undefined) { e.preventDefault(); zoom(e.target.src); }
+});
+
 app.addEventListener('click', async (e) => {
-  const t = e.target;
+  const t = e.target.closest('button, img[data-zoom]') || e.target;
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
+  if (t.dataset.status !== undefined) { P.status = t.dataset.status; await loadLeads(); render(); }
   if (t.dataset.see) { P.tab = 'leads'; P.form = t.dataset.see; render(); }
+  if (t.dataset.act === 'more') { P.loadingMore = true; render(); try { await loadLeads(true); } finally { P.loadingMore = false; render(); } }
   if (t.dataset.act === 'signout') {
     if (!confirm('Sign out on this device? You can come back with your portal link.')) return;
+    try { await api('/api/portal/logout', { method: 'POST' }); } catch {}
     ended('Signed out', 'Open your portal link again to come back.');
   }
-  if (t.dataset.copy) { try { await navigator.clipboard.writeText(t.dataset.copy); t.textContent = 'Copied'; } catch { t.textContent = 'Copy failed'; } }
+  if (t.dataset.copy) {
+    const label = t.textContent;
+    try { await navigator.clipboard.writeText(t.dataset.copy); t.textContent = 'Copied'; } catch { t.textContent = 'Copy failed'; }
+    setTimeout(() => { t.textContent = label; }, 1500);
+  }
   if (t.dataset.act === 'exit') {
     try { await api('/api/portal/exit', { method: 'POST' }); } catch {}
     ended('Admin view closed', 'You can close this tab.');
   }
-  if (t.dataset.zoom !== undefined) {
-    const box = document.createElement('div');
-    box.className = 'lightbox';
-    box.innerHTML = `<img src="${esc(t.src)}" alt="" />`;
-    box.onclick = () => box.remove();
-    document.body.appendChild(box);
-  }
+  if (t.dataset.zoom !== undefined) zoom(t.src);
 });
 
 // ---------- Onboarding (vodič za zlatara) ----------
 // Zlatar popuni radnju, komade, stilove sa slikama, materijale i budžet. Sve se čuva samo; Send šalje adminu.
 const OB_STEPS = [['store', 'Your store'], ['pieces', 'What you make'], ['styles', 'Styles'], ['materials', 'Materials & budget'], ['extras', 'Anything else'], ['send', 'Review & send']];
 const ACCENTS = ['#35d0c4', '#d8b46a', '#e7a9a0', '#9b8cff', '#5aa9ff', '#ef6f6f', '#f2f2f2'];
-const OB = { d: null, step: 0, timer: null, saving: false, savedAt: 0, err: '', dirty: false };
+const OB = { d: null, step: 0, timer: null, saving: false, savedAt: 0, err: '', dirty: false, rev: 0, inflight: null, retry: null };
+// Stabilan id za komade i stilove: slika se upiše u pravi stil i kad se u međuvremenu doda ili ukloni neki drugi.
+const uid = () => Math.random().toString(36).slice(2, 10);
 
 function obInit() {
   const defs = P.me.onboardingDefaults;
@@ -163,7 +227,9 @@ function obInit() {
   d.metals = Array.isArray(d.metals) ? d.metals : defs.metals.map((m) => m.value);
   d.stones = Array.isArray(d.stones) ? d.stones : defs.stones.map((s) => s.value);
   d.budgets = Array.isArray(d.budgets) ? d.budgets : [...defs.budgets];
+  for (const pc of d.pieces) { pc.uid ||= uid(); for (const st of pc.styles || []) st.uid ||= uid(); }
   OB.d = d;
+  OB.rev = P.me.onboarding.rev || 0;
   OB.step = Math.min(OB_STEPS.length - 1, Math.max(0, +d.step || 0));
 }
 
@@ -176,20 +242,41 @@ function obSet(path, v) {
 }
 
 function obSave(now = false) {
+  if (readOnly()) return; // admin pregled ne mijenja klijentove odgovore
   OB.dirty = true;
   clearTimeout(OB.timer);
+  clearTimeout(OB.retry);
   const go = async () => {
     if (OB.saving) { OB.timer = setTimeout(go, 300); return; }
     OB.saving = true;
     OB.dirty = false;
     obStatus();
-    try {
-      await api('/api/portal/onboarding', { method: 'PUT', body: JSON.stringify({ data: { ...OB.d, step: OB.step } }), json: true });
-      OB.savedAt = Date.now();
-      OB.err = '';
-    } catch (e) { OB.err = e.message; OB.dirty = true; }
-    OB.saving = false;
-    obStatus();
+    OB.inflight = (async () => {
+      try {
+        const r = await api('/api/portal/onboarding', { method: 'PUT', body: JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev }), json: true });
+        OB.rev = r.rev;
+        OB.savedAt = Date.now();
+        OB.err = '';
+      } catch (e) {
+        // Drugi uređaj je sačuvao novije odgovore: preuzmi ih umjesto da ih prepišeš.
+        if (e.data?.conflict && e.data.data) {
+          OB.rev = e.data.rev;
+          OB.d = null;
+          P.me.onboarding.data = e.data.data;
+          P.me.onboarding.rev = e.data.rev;
+          renderOnboarding();
+          alert('Your answers were updated on another device. You now see the latest version.');
+          return;
+        }
+        OB.err = e.message;
+        OB.dirty = true;
+        OB.retry = setTimeout(() => obSave(true), 5000); // mreža: pokušaj ponovo za 5 s
+      } finally {
+        OB.saving = false;
+        obStatus();
+      }
+    })();
+    await OB.inflight;
   };
   if (now) go(); else OB.timer = setTimeout(go, 700);
 }
@@ -201,14 +288,17 @@ function obStatus() {
 }
 // Zatvaranje taba usred kucanja: pošalji zadnje izmjene.
 addEventListener('pagehide', () => {
-  if (!OB.d || !OB.dirty) return;
-  try { fetch('/api/portal/onboarding', { method: 'PUT', keepalive: true, headers: { 'x-portal-token': P.token, 'content-type': 'application/json' }, body: JSON.stringify({ data: { ...OB.d, step: OB.step } }) }); } catch {}
+  if (!OB.d || !OB.dirty || readOnly()) return;
+  const body = JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev });
+  if (body.length > 60_000) return; // keepalive prima najviše 64 KB; ostalo je već sačuvano usput
+  try { fetch('/api/portal/onboarding', { method: 'PUT', keepalive: true, credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body }); } catch {}
 });
+addEventListener('beforeunload', (e) => { if (OB.d && (OB.dirty || OB.saving) && !readOnly()) { e.preventDefault(); e.returnValue = ''; } });
 
 function renderOnboarding() {
   if (!OB.d) obInit();
   const { client, session } = P.me;
-  const banner = session.kind === 'view-as' ? `<div class="viewas"><div class="wrap"><span>Admin view</span><span class="grow">Viewing <b>${esc(client.name)}</b>'s onboarding as they see it.</span><button class="btn warn" data-act="exit">Exit view</button></div></div>` : '';
+  const banner = session.kind === 'view-as' ? `<div class="viewas"><div class="wrap"><span>Admin view</span><span class="grow">Viewing <b>${esc(client.name)}</b>'s onboarding, read-only: nothing you change here is saved.</span><button class="btn warn" data-act="exit">Exit view</button></div></div>` : '';
   const steps = OB_STEPS.map(([k, l], i) => `<button class="ob-dot ${i === OB.step ? 'now' : i < OB.step ? 'done' : ''}" data-ob-go="${i}" ${i > OB.step && !(obCan(0) && obCan(1)) ? 'disabled' : ''}><span>${i + 1}</span>${esc(l)}</button>`).join('');
   app.innerHTML = `
     ${banner}
@@ -237,7 +327,8 @@ function obCan(i) {
 
 const obPick = (path, { label = 'Upload photo', cls = '' } = {}) => {
   const v = obGet(path);
-  return `<label class="ob-photo ${cls} ${v ? 'has' : ''}" title="${v ? 'Change photo' : 'Upload photo'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span>${esc(label)}</span>`}<input type="file" accept="image/jpeg,image/png,image/webp" data-ob-file="${path}" hidden /></label>`;
+  const owner = path === 'store.logo' ? '' : obGet(path.replace(/\.image$/, ''))?.uid || '';
+  return `<label class="ob-photo ${cls} ${v ? 'has' : ''}" title="${v ? 'Change photo' : 'Upload photo'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span>${esc(label)}</span>`}<input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-ob-file="${path}" data-uid="${esc(owner)}" ${readOnly() ? 'disabled' : ''} /></label>`;
 };
 
 function obStepView() {
@@ -328,7 +419,7 @@ function obStepView() {
       ${d.notes ? `<dt>Notes</dt><dd>${esc(d.notes)}</dd>` : ''}
     </dl>
     ${OB.err ? `<p class="ob-err">${esc(OB.err)}</p>` : ''}
-    <button class="btn primary big" data-ob-act="send">Send to our team</button>`;
+    <button class="btn primary big" data-ob-act="send" ${readOnly() ? 'disabled title="Admin view is read-only"' : ''}>Send to our team</button>`;
 }
 
 // Fotografija: smanji u browseru (logo 600 px PNG, ostalo 1200 px WebP), pa u R2.
@@ -352,10 +443,16 @@ async function obUpload(input) {
     } catch {}
     const fd = new FormData();
     fd.set('file', blob, isLogo ? 'logo.png' : 'photo.webp');
-    const res = await fetch('/api/portal/onboarding/upload', { method: 'POST', headers: { 'x-portal-token': P.token }, body: fd });
+    const res = await fetch('/api/portal/onboarding/upload', { method: 'POST', credentials: 'same-origin', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Upload failed.');
-    obSet(input.dataset.obFile, data.url);
+    // Slika ide stilu po njegovom id-ju (ne po rednom broju, koji se može promijeniti dok slika putuje).
+    const id = input.dataset.uid;
+    if (!id) obSet('store.logo', data.url);
+    else {
+      const st = OB.d?.pieces.flatMap((pc) => pc.styles || []).find((x) => x.uid === id);
+      if (st) st.image = data.url;
+    }
     obSave(true);
     renderOnboarding();
   } catch (e) {
@@ -400,20 +497,20 @@ app.addEventListener('click', async (e) => {
       d.pieces.splice(i, 1);
     } else {
       const p = defs.pieces.find((x) => x.value === v);
-      d.pieces.push({ value: v, label: p.label, styles: (defs.styles[v] || []).map((s) => ({ ...s, keep: true })) });
+      d.pieces.push({ uid: uid(), value: v, label: p.label, styles: (defs.styles[v] || []).map((s) => ({ ...s, uid: uid(), keep: true })) });
     }
     redraw();
   }
   if (act === 'add-piece') {
     const name = prompt('What is the piece called? (e.g. Belt buckle)');
     if (!name?.trim()) return;
-    d.pieces.push({ value: '', label: name.trim().slice(0, 60), styles: [] });
+    d.pieces.push({ uid: uid(), value: '', label: name.trim().slice(0, 60), styles: [] });
     redraw();
   }
   if (t.dataset.obDelPiece) { d.pieces.splice(+t.dataset.obDelPiece, 1); redraw(); }
   if (t.dataset.obAddStyle !== undefined) {
     const p = d.pieces[+t.dataset.obAddStyle];
-    (p.styles ||= []).push({ value: '', label: '', image: '', note: '', custom: true, keep: true });
+    (p.styles ||= []).push({ uid: uid(), value: '', label: '', image: '', note: '', custom: true, keep: true });
     redraw();
     const inputs = document.querySelectorAll(`[data-ob^="pieces.${t.dataset.obAddStyle}.styles."][data-ob$=".label"]`);
     inputs[inputs.length - 1]?.focus();
@@ -433,8 +530,13 @@ app.addEventListener('click', async (e) => {
     t.disabled = true;
     t.textContent = 'Sending…';
     try {
+      // Prvo sačekaj čuvanje koje je već krenulo, pa pošalji zadnju verziju, pa tek onda Send.
       clearTimeout(OB.timer);
-      await api('/api/portal/onboarding', { method: 'PUT', body: JSON.stringify({ data: { ...d, step: OB.step } }), json: true });
+      clearTimeout(OB.retry);
+      if (OB.inflight) await OB.inflight;
+      const r = await api('/api/portal/onboarding', { method: 'PUT', body: JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev }), json: true });
+      OB.rev = r.rev;
+      OB.dirty = false;
       await api('/api/portal/onboarding/submit', { method: 'POST' });
       P.me.onboarding.status = 'submitted';
       OB.d = null;

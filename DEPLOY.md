@@ -90,6 +90,11 @@ From now on every push to `main` deploys automatically. The token is a Cloudflar
 | `ADMIN_TOKEN` | a long password you make up (at least 24 characters). You sign in to the builder with it. |
 | `OPENAI_API_KEY` | your OpenAI key (starts with `sk-`) |
 | `GEMINI_API_KEY` | optional, only if you switch a model to Nano Banana |
+| `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET` | optional bot check: Cloudflare → **Turnstile** → **Add widget** for your domain, copy both keys |
+
+Always choose **Secret** for keys. A key added as **Text** can be lost on the next deploy.
+
+Optional spending limits, as Type **Text**: `DAILY_BUDGET_USD` (default 30), `FORM_DAILY_BUDGET_USD` (default 15), `RENDERS_PAUSED` = `1` to stop all renders at once. These stay when you deploy.
 
 One image key is enough. Without OpenAI all renders use Gemini, without Gemini all renders use GPT Image.
 
@@ -122,6 +127,7 @@ On GitHub, in your fork, click **Sync fork** → **Update branch**. Cloudflare d
 | Build fails with a database error | The Database ID in `wrangler.jsonc` is wrong or the database is not named `konfigurator`. |
 | Build fails at `migrations apply` with a permission/auth error | Open D1 → `konfigurator` → **Console** and run the files from the `migrations/` folder one by one, in order (0001, 0002, ...): copy each file's text, paste, **Execute**. Then change the deploy command to just `npx wrangler deploy` and redeploy. |
 | Build fails with an R2 error | The bucket is missing or not named exactly `konfigurator-media`. |
+| Renders stopped with "temporarily unavailable" | The daily budget was reached or `RENDERS_PAUSED` is `1`. Raise `DAILY_BUDGET_USD` / `FORM_DAILY_BUDGET_USD` or remove the pause. |
 | Builder says the token is wrong | `ADMIN_TOKEN` secret missing or typed differently. Edit the secret and try again. |
 | Customer sees "We could not create your preview" | Image key missing, wrong, or the provider account has no credit/billing. Check the Worker logs: **Workers & Pages** → your Worker → **Logs**. |
 | Gemini error "User location is not supported" | In `wrangler.jsonc` add `"placement": { "region": "aws:us-east-1" },` on its own line (for example after the `"compatibility_date"` line), commit. |

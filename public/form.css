@@ -6,7 +6,7 @@
   --line-strong: #4a4238;
   --ink: #f4efe6;
   --ink-soft: #a59d90;
-  --ink-faint: #6f685e;
+  --ink-faint: #8b8377;
   --accent: #d8b46a;
   --accent-ink: #17130c;
   --danger: #e58b7a;
@@ -94,7 +94,8 @@ h1 em { font-style: italic; color: var(--accent); }
 .drop svg { width: 34px; height: 34px; color: var(--accent); flex: none; }
 .drop p { margin: 0; color: var(--ink-soft); font-size: 14px; line-height: 1.45; }
 .drop strong { color: var(--ink); font-weight: 600; }
-.drop input { display: none; }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.drop:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
 .thumb { display: flex; align-items: center; gap: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
 .thumb img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; }
 .thumb .meta { flex: 1; font-size: 14px; color: var(--ink-soft); }
@@ -118,7 +119,8 @@ h1 em { font-style: italic; color: var(--accent); }
 
 /* Result */
 .stage { position: relative; width: min(100%, 520px); aspect-ratio: 1; margin: 0 auto; border-radius: 20px; overflow: hidden; background: var(--surface); border: 1px solid var(--line); }
-.stage img { width: 100%; height: 100%; object-fit: cover; display: block; animation: reveal 0.9s var(--ease); }
+.stage img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.stage img.fresh { animation: reveal 0.9s var(--ease); }
 @keyframes reveal { from { opacity: 0; transform: scale(1.04); filter: blur(10px); } to { opacity: 1; transform: none; filter: none; } }
 .forge { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
 .forge::before { content: ''; position: absolute; inset: -40%; background: conic-gradient(from 0deg, transparent 0 70%, color-mix(in srgb, var(--accent) 40%, transparent) 80%, transparent 90%); animation: spin 3.2s linear infinite; }
@@ -243,3 +245,17 @@ button.seg:hover { filter: brightness(1.35); }
 .tryon-wait { display: inline-flex; align-items: center; gap: 10px; margin-top: 16px; color: var(--ink-soft); font-size: 14px; }
 .spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Pristupačnost i sitnice (pregled 20.10.2026) */
+.sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+h1:focus { outline: none; }
+.card:focus-visible, .chip:focus-visible, .btn:focus-visible, button.seg:focus-visible, .link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.tryon-btn:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+.tryon-btn.off { opacity: 0.45; pointer-events: none; }
+.tryon-ok { justify-content: center; margin: 14px auto 0; max-width: 460px; text-align: left; }
+.ts { margin: 6px 0 4px; min-height: 66px; }
+.foot.floating { z-index: 20; transition: transform 0.12s ease-out; }
+.restart { margin-top: 18px; }
+.unavailable { text-align: center; padding: 60px 0; }
+.drop { position: relative; }
+@media (prefers-reduced-motion: reduce) { .foot.floating { transition: none; } }

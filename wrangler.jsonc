@@ -6,13 +6,23 @@
   "assets": {
     "directory": "public",
     "binding": "ASSETS",
-    "run_worker_first": ["/", "/api/*", "/f/*", "/media/*"]
+    // Stranice idu kroz Worker zbog sigurnosnih zaglavlja (CSP, zabrana ugrađivanja builder/admin/portala).
+    "run_worker_first": ["/", "/api/*", "/f/*", "/media/*", "/builder", "/admin", "/portal"]
   },
+  // Sajt samo na pravom domenu (bez duplikata na *.workers.dev i preview adresama).
+  "workers_dev": false,
+  "preview_urls": false,
+  // Deploy ne briše varijable i ključeve upisane u Cloudflare dashboardu.
+  "keep_vars": true,
+  // Noćno čišćenje: selfiji i probe na osmijehu stariji od 30 dana, renderi koji su ostali "u toku".
+  "triggers": { "crons": ["17 3 * * *"] },
   "d1_databases": [
     { "binding": "DB", "database_name": "konfigurator", "database_id": "794da75c-1a57-466c-8e9d-7e2ba3ae4471", "migrations_dir": "migrations" }
   ],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "konfigurator-media" }],
   // First render and refinement model keys (see MODELS in src/worker.js): flash, pro, gptflare, gptsun, gpt2
+  // Budžet i pauza se podešavaju u Cloudflare dashboardu (Variables), bez deploya; keep_vars ih čuva:
+  // DAILY_BUDGET_USD (podrazumijevano 30), FORM_DAILY_BUDGET_USD (15), RENDERS_PAUSED = "1" gasi sve rendere odmah.
   "vars": { "FIRST_MODEL": "gptflare", "TWEAK_MODEL": "gptflare" },
   // Workers Logs: errors and console output in the dashboard (Worker -> Observability)
   "observability": { "enabled": true }

@@ -31,6 +31,7 @@
   const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   let cur = null; // { sel, menu, opts, act }
+  let seq = 0;
 
   const usable = (sel) => sel && sel.tagName === 'SELECT' && !sel.multiple && !sel.disabled && !sel.hasAttribute('data-native');
   // Kutija ispod koje se lista otvara: omotač sa natpisom u builderu (.dd), inače samo polje.
@@ -41,8 +42,12 @@
     const r = anchorOf(cur.sel).getBoundingClientRect();
     const m = cur.menu;
     const gap = 6;
-    const below = innerHeight - r.bottom - gap - 8;
-    const above = r.top - gap - 8;
+    // U ugrađenoj formi (iframe) "ekran" je samo dio koji se vidi na sajtu zlatara (javlja embed.js).
+    const vp = window.__aikVp;
+    const vTop = vp ? vp.top : 0;
+    const vBottom = vp ? vp.top + vp.height : innerHeight;
+    const below = vBottom - r.bottom - gap - 8;
+    const above = r.top - vTop - gap - 8;
     m.style.minWidth = `${Math.max(160, r.width)}px`;
     m.style.maxHeight = '';
     const want = Math.min(m.scrollHeight, 340);
@@ -59,6 +64,7 @@
 
 // Lista ide ispod polja: ako dolje nema mjesta, pomjeri stranicu (ili panel u kojem je polje) tek toliko da stane.
   function makeRoom(anchor, need) {
+    if (window.__aikVp) return; // u iframe-u se stranica zlatara ne može pomjeriti odavde
     const below = innerHeight - anchor.getBoundingClientRect().bottom - 14;
     if (below >= need) return;
     let box = anchor.parentElement;
@@ -77,6 +83,8 @@
     if (!cur) return;
     cur.act = i;
     cur.opts.forEach((el, k) => el.classList.toggle('act', k === i));
+    // Čitač ekrana prati aktivnu opciju dok fokus ostaje na polju.
+    if (cur.opts[i]) cur.sel.setAttribute('aria-activedescendant', cur.opts[i].id);
     if (scroll && cur.opts[i]) cur.opts[i].scrollIntoView({ block: 'nearest' });
   }
 
@@ -85,14 +93,17 @@
     const menu = document.createElement('div');
     menu.className = 'gsel-menu';
     menu.setAttribute('role', 'listbox');
+    menu.id = `gsel-${++seq}`;
+    if (sel.getAttribute('aria-label') || sel.labels?.[0]) menu.setAttribute('aria-label', sel.getAttribute('aria-label') || sel.labels[0].textContent.trim());
     const font = getComputedStyle(sel).fontFamily;
     if (font) menu.style.fontFamily = font;
     const list = [...sel.options];
-    menu.innerHTML = list.map((o, i) => `<div class="gsel-opt ${o.selected ? 'on' : ''}" role="option" data-i="${i}" aria-selected="${o.selected}" ${o.disabled ? 'aria-disabled="true"' : ''}><span>${esc(o.label || o.text)}</span>${o.selected ? CHECK : ''}</div>`).join('');
+    menu.innerHTML = list.map((o, i) => `<div class="gsel-opt ${o.selected ? 'on' : ''}" role="option" id="${menu.id}-${i}" data-i="${i}" aria-selected="${o.selected}" ${o.disabled ? 'aria-disabled="true"' : ''}><span>${esc(o.label || o.text)}</span>${o.selected ? CHECK : ''}</div>`).join('');
     // U otvorenom <dialog> (gornji sloj) lista mora biti unutar dijaloga, inače ostaje iza njega.
     (sel.closest('dialog[open]') || document.body).appendChild(menu);
     cur = { sel, menu, opts: [...menu.children], act: Math.max(0, sel.selectedIndex) };
     sel.setAttribute('aria-expanded', 'true');
+    sel.setAttribute('aria-controls', menu.id);
     makeRoom(anchorOf(sel), Math.min(menu.scrollHeight, 340));
     place();
     highlight(cur.act);
@@ -103,6 +114,8 @@
   function close() {
     if (!cur) return;
     cur.sel.removeAttribute('aria-expanded');
+    cur.sel.removeAttribute('aria-activedescendant');
+    cur.sel.removeAttribute('aria-controls');
     cur.menu.remove();
     cur = null;
   }

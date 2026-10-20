@@ -1,0 +1,11 @@
+# Slike i biblioteka stilova se rijetko mijenjaju: browser ih čuva sedmicu (nova slika = novo ime).
+/site/gallery/*
+  Cache-Control: public, max-age=604800
+/library/*
+  Cache-Control: public, max-age=604800
+/favicon.svg
+  Cache-Control: public, max-age=604800
+# Sve statično: bez pogađanja tipa fajla.
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

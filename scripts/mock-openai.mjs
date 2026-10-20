@@ -28,6 +28,15 @@ createServer((req, res) => {
   req.on('end', () => {
     const buf = Buffer.concat(chunks);
     let entry = { path: req.url, auth: !!req.headers.authorization };
+    // Moderacija: tekst sa "FLAGME" je označen, sve ostalo prolazi.
+    if (req.url === '/v1/moderations') {
+      const body = buf.toString();
+      log.push({ path: req.url, flagged: body.includes('FLAGME'), images: (body.match(/image_url/g) || []).length });
+      writeFileSync(out, JSON.stringify(log, null, 2));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ results: [{ flagged: body.includes('FLAGME') }] }));
+      return;
+    }
     if (req.url === '/v1/images/edits') {
       const p = parts(buf, req.headers['content-type'] || '');
       const mask = p.find((x) => x.name === 'mask');

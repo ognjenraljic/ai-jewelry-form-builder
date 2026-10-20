@@ -36,7 +36,23 @@ const S = {
   rendered: -1,
   model: null,
   dev: null,
+  adminPreview: false, // builder javlja da je admin prijavljen (probni render)
+  adv: null, // tajmer za automatski prelaz na sljedeći korak
+  focusKey: '', // šta vratiti u fokus poslije ponovnog crtanja
+  fresh: false, // nova slika: animacija pojavljivanja samo tada
+  tryOk: false, // pristanak za fotografiju (proba na osmijehu)
+  ts: '', // Turnstile token
 };
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const LEAD_KEY = `aik_lead:${formId}`;
+const ss = { get: (k) => { try { return JSON.parse(sessionStorage.getItem(k) || 'null'); } catch { return null; } }, set: (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch {} }, del: (k) => { try { sessionStorage.removeItem(k); } catch {} } };
+// Kratka najava za čitače ekrana (korak, greška), umjesto da se svaki put čita cijela forma.
+function announce(text) {
+  const el = document.getElementById('sr');
+  if (!el) return;
+  el.textContent = '';
+  setTimeout(() => { el.textContent = text; }, 30);
+}
 
 boot();
 
@@ -46,20 +62,26 @@ async function boot() {
     if (!res.ok) throw new Error();
     S.cfg = await res.json();
   } catch {
-    app.innerHTML = '<p class="error">This form is not available.</p>';
+    app.innerHTML = '<section class="step unavailable"><h1>This form is not available</h1><p class="sub">It may have been turned off by the jeweler. Please contact the store directly, or try again later.</p></section>';
     return;
   }
   applyTheme();
   applyDefaults();
   S.model = S.cfg.dev?.defaultModel || null;
+  // Osvježena stranica poslije slanja: vrati kupca na njegov rezultat (upit i token su u ovom tabu).
+  if (!new URLSearchParams(location.search).has('preview')) await restoreLead();
   render();
+  if (window.parent !== window) initEmbed();
   // Živi pregled u builderu: nacrt stiže preko postMessage, samo sa istog porijekla i samo uz ?preview.
   if (new URLSearchParams(location.search).has('preview')) {
     window.addEventListener('message', (e) => {
-      if (e.origin !== location.origin) return;
+      if (e.origin !== location.origin || e.source !== window.parent) return;
       if (e.data?.type === 'aik:test' && testAllowed() && !S.busy) { startTest(); return; }
       if (e.data?.type !== 'aik:preview' || !e.data.form) return;
-      S.cfg = { ...e.data.form, dev: S.cfg.dev };
+      S.adminPreview = !!e.data.admin;
+      S.cfg = { ...e.data.form, dev: S.cfg.dev, turnstile: S.cfg.turnstile };
+      // Dok probni render traje (ili je prikazan), izmjena u builderu ne prebacuje pregled na drugi korak.
+      if (S.test || S.busy) { applyTheme(); return; }
       // Mekani skok (sinhronizacija sa Questions): ne diraj odgovore koje je admin već kliknuo u pregledu.
       if (e.data.answers) {
         if (e.data.soft) { for (const [k, v] of Object.entries(e.data.answers)) if (S.a[k] == null) S.a[k] = v; }
@@ -129,7 +151,7 @@ const optionsOf = (f) => {
 function stepValid(step) {
   if (step.id === '_contact') {
     const c = S.contact;
-    return c.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(c.email.trim()) && c.phone.replace(/\D/g, '').length >= 7 && c.consent;
+    return c.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(c.email.trim()) && c.phone.replace(/\D/g, '').length >= 7 && c.consent && (!S.cfg.turnstile || !!S.ts);
   }
   return (step.fields || []).filter(visible).every((f) => !f.required || (f.type === 'upload' ? !!S.files[f.id] : S.a[f.id] != null && S.a[f.id] !== ''));
 }
@@ -144,7 +166,7 @@ function render() {
     .slice(0, -1)
     .map((s, k) => (canBack && k < S.i
       ? `<button type="button" class="seg done" data-goto="${k}" title="Back to ${esc(s.label)}" aria-label="Back to ${esc(s.label)}"></button>`
-      : `<span class="seg ${k < S.i ? 'done' : k === S.i ? 'now' : ''}" title="${esc(s.label)}"></span>`))
+      : `<span class="seg ${k < S.i ? 'done' : k === S.i ? 'now' : ''}" title="${esc(s.label)}" aria-hidden="true"></span>`))
     .join('');
   const enter = S.i !== S.rendered ? 'enter' : '';
   S.rendered = S.i;
@@ -160,12 +182,16 @@ function render() {
     ${logo ? `<div class="brand-head"><img class="brand-logo" src="${esc(logo)}" alt="${esc(S.cfg.brand?.name || '')}" /></div>` : ''}
     <header class="top">
       <button class="back" data-act="back" ${canBack ? '' : 'hidden'} aria-label="Back">&larr; Back</button>
-      <div class="progress ${enter}" aria-hidden="true">${progress}</div>
+      <nav class="progress ${enter}" aria-label="Steps">${progress}</nav>
       ${logo ? '<span class="top-pad" aria-hidden="true"></span>' : `<span class="brand">${esc(S.cfg.brand?.name || '')}</span>`}
     </header>
     ${body}`;
   if (enter) app.querySelector('.step')?.classList.add('enter');
   bind();
+  // Fokus ostaje na onome što je kupac kliknuo (tastatura i čitači ekrana ne gube mjesto).
+  if (S.focusKey) { app.querySelector(S.focusKey)?.focus({ preventScroll: true }); S.focusKey = ''; }
+  S.fresh = false;
+  placeFoot();
 }
 
 function stepView(step) {
@@ -214,7 +240,8 @@ function tryOnView() {
   const action = S.tryBusy
     ? `<div class="tryon-wait"><span class="spin"></span>Putting them on your smile… about 20 to 40 seconds</div>`
     : S.tryLeft > 0
-      ? `<label class="btn ghost tryon-btn">${icon('upload')}<span>${S.tryons.length ? 'Try another photo' : 'Upload a smiling photo'}</span><input type="file" accept="image/jpeg,image/png,image/webp" data-tryon hidden /></label>`
+      ? `<label class="check tryon-ok"><input type="checkbox" data-tryok ${S.tryOk ? 'checked' : ''} /><span>I agree that my photo is used only to create this preview. It is deleted after 30 days.</span></label>
+         <label class="btn ghost tryon-btn ${S.tryOk ? '' : 'off'}">${icon('upload')}<span>${S.tryons.length ? 'Try another photo' : 'Upload a smiling photo'}</span><input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-tryon ${S.tryOk ? '' : 'disabled'} /></label>`
       : '<p class="fine">You have used all your try-ons.</p>';
   return `
     <section class="tryon">
@@ -222,7 +249,7 @@ function tryOnView() {
       ${imgs ? `<div class="tryon-imgs">${imgs}</div>` : ''}
       ${action}
       ${S.tryErr ? `<p class="error">${esc(S.tryErr)}</p>` : ''}
-      <p class="fine">Your photo is used only for this preview and shared only with ${esc(S.cfg.brand?.name || 'the jeweler')}.</p>
+      <p class="fine">Shared only with ${esc(S.cfg.brand?.name || 'the jeweler')}.</p>
     </section>`;
 }
 
@@ -248,6 +275,7 @@ async function doTryOn(file) {
     fd.set('token', S.lead.token);
     fd.set('base', String(S.shown + 1));
     fd.set('photo', blob, 'smile.jpg');
+    fd.set('consent', 'yes');
     const res = await fetch(`/api/leads/${S.lead.leadId}/tryon`, { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
@@ -262,10 +290,55 @@ async function doTryOn(file) {
   }
 }
 
+// ---------- Ugrađena forma (iframe na sajtu zlatara) ----------
+// embed.js javlja koji dio forme se vidi na ekranu; traka sa Continue tada ostaje pri dnu ekrana, kao na samom linku.
+function initEmbed() {
+  window.addEventListener('message', (e) => {
+    if (e.source !== window.parent || e.data?.type !== 'aik:viewport') return;
+    const { top, height } = e.data;
+    if (!(height > 0)) return;
+    window.__aikVp = { top: Math.max(0, +top || 0), height: +height };
+    placeFoot();
+  });
+}
+function placeFoot() {
+  const foot = app.querySelector('.foot');
+  const vp = window.__aikVp;
+  if (!foot || !vp || new URLSearchParams(location.search).has('preview')) return;
+  foot.style.transform = '';
+  foot.classList.remove('floating');
+  const r = foot.getBoundingClientRect();
+  const bottom = vp.top + vp.height;
+  // Ako je traka ispod vidljivog dijela, podigni je do dna ekrana (ali ne iznad sadržaja koraka).
+  if (r.bottom > bottom && bottom - r.height > app.getBoundingClientRect().top + 160) {
+    foot.style.transform = `translateY(${Math.round(bottom - r.bottom - 6)}px)`;
+    foot.classList.add('floating');
+  }
+}
+
+// Turnstile (Cloudflare provjera protiv botova) na koraku sa kontaktom, samo kad je uključen za sajt.
+function mountTurnstile() {
+  const box = app.querySelector('#ts');
+  const draw = () => window.turnstile?.render(box, {
+    sitekey: S.cfg.turnstile, theme: 'auto', size: 'flexible',
+    callback: (t) => { S.ts = t; const b = app.querySelector('[data-act="submit"]'); if (b) b.disabled = !stepValid(cur()) || S.busy; },
+    'expired-callback': () => { S.ts = ''; },
+  });
+  if (window.turnstile) return draw();
+  if (!document.getElementById('ts-js')) {
+    const sc = document.createElement('script');
+    sc.id = 'ts-js';
+    sc.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    sc.async = true;
+    sc.onload = () => app.querySelector('#ts') && draw();
+    document.head.appendChild(sc);
+  }
+}
+
 const backBtn = () => (S.i > 0 ? '<button type="button" class="btn ghost" data-act="back" aria-label="Previous step">Back</button>' : '');
 
 function fieldView(f) {
-  const label = (f.label ? `<span class="label">${esc(f.label)}</span>` : '') + (f.subtitle ? `<p class="field-sub">${esc(f.subtitle)}</p>` : '');
+  const label = (f.label ? `<span class="label" id="lbl-${esc(f.id)}">${esc(f.label)}</span>` : '') + (f.subtitle ? `<p class="field-sub">${esc(f.subtitle)}</p>` : '');
   const v = S.a[f.id];
   return choiceView(f, label, v) + (v != null && v !== '' && f.followup ? followupView(f) : '');
 }
@@ -289,12 +362,12 @@ function choiceView(f, label, v) {
   if (f.type === 'cards') {
     const opts = optionsOf(f);
     const pics = opts.some((o) => o.image);
-    return `<div class="field">${label}<div class="cards ${pics ? 'pics' : ''}" role="radiogroup">${opts
+    return `<div class="field">${label}<div class="cards ${pics ? 'pics' : ''}" role="radiogroup" aria-labelledby="${f.label ? `lbl-${esc(f.id)}` : 'step-title'}">${opts
       .map((o) => `<button type="button" class="card ${o.image ? 'pic' : ''} ${v === o.value ? 'on' : ''}" role="radio" aria-checked="${v === o.value}" data-pick="${esc(f.id)}" data-val="${esc(o.value)}">${o.image ? `<img src="${esc(o.image)}" alt="" loading="lazy" />` : icon(o.icon)}<span>${esc(o.label)}</span></button>`)
       .join('')}</div></div>`;
   }
   if (f.type === 'chips' || f.type === 'yesno') {
-    return `<div class="field">${label}<div class="chips ${f.big ? 'big' : ''}" role="radiogroup">${optionsOf(f)
+    return `<div class="field">${label}<div class="chips ${f.big ? 'big' : ''}" role="radiogroup" aria-labelledby="${f.label ? `lbl-${esc(f.id)}` : 'step-title'}">${optionsOf(f)
       .map((o) => `<button type="button" class="chip ${o.image ? 'pic' : ''} ${v === o.value ? 'on' : ''}" role="radio" aria-checked="${v === o.value}" data-pick="${esc(f.id)}" data-val="${esc(o.value)}">${o.image ? `<img src="${esc(o.image)}" alt="" loading="lazy" />` : o.swatch ? `<i class="dot" style="background:${esc(o.swatch)}"></i>` : ''}${esc(o.label)}</button>`)
       .join('')}</div></div>`;
   }
@@ -478,7 +551,8 @@ function contactView() {
         <label class="field"><span class="label">Phone</span><input class="input" type="tel" data-c="phone" autocomplete="tel" value="${esc(c.phone)}" /></label>
       </div>
       <label class="check"><input type="checkbox" data-c="consent" ${c.consent ? 'checked' : ''} /><span>${esc(k.consent)}</span></label>
-      ${S.error ? `<p class="error">${esc(S.error)}</p>` : ''}
+      ${S.cfg.turnstile ? '<div class="ts" id="ts"></div>' : ''}
+      ${S.error ? `<p class="error" role="alert">${esc(S.error)}</p>` : ''}
       <div class="foot">
         <div class="foot-row">${S.busy ? '' : backBtn()}<button class="btn gold" data-act="submit" ${valid && !S.busy ? '' : 'disabled'}>${S.busy ? 'Sending' : esc(k.button)}</button></div>
         <p class="hint">We never share your details.</p>
@@ -493,9 +567,9 @@ function resultView() {
   const left = S.test ? Infinity : S.cfg.maxRenders - S.renders.length;
   const marking = S.mask.on && shown && !S.busy;
   const stage = S.busy
-    ? `<div class="forge"><div class="forge-inner">${icon('gem').replace('<svg', '<svg class="gem"')}<div class="forge-msg" data-msg>${esc(r.loading[0])}</div><div class="forge-time" data-time>0s</div></div></div>`
+    ? `<div class="forge"><div class="forge-inner">${icon('gem').replace('<svg', '<svg class="gem"')}<div class="forge-msg" data-msg>${esc(r.loading[0])}</div><div class="forge-time" data-time aria-hidden="true">0s</div></div></div>`
     : shown
-      ? `<img src="${esc(shown.url)}" alt="AI preview of your custom piece" />${marking ? '<canvas class="maskc" data-mask aria-label="Paint over the area to change"></canvas>' : ''}`
+      ? `<img class="${S.fresh ? 'fresh' : ''}" src="${esc(shown.url)}" alt="AI preview of your custom piece" />${marking ? '<canvas class="maskc" data-mask aria-label="Paint over the area to change"></canvas>' : ''}`
       : '';
   const strip = S.renders.length > 1
     ? `<div class="strip">${S.renders.map((x, k) => `<button class="${k === S.shown ? 'on' : ''}" data-show="${k}" aria-label="Preview ${k + 1}"><img src="${esc(x.url)}" alt="" /></button>`).join('')}</div>`
@@ -533,6 +607,7 @@ function resultView() {
       ${!S.busy && S.renders.length ? `<p class="fine">${esc(r.disclaimer)}</p>` : ''}
       ${testNote}
       ${tryOnView()}
+      ${!S.test && S.lead && !S.busy && S.renders.length ? '<p class="fine restart"><button type="button" class="link" data-act="restart">Start a new design</button></p>' : ''}
       ${dev}
     </section>`;
 }
@@ -558,9 +633,15 @@ function bind() {
       // Promjena tipa poništava stil (opcije stila zavise od tipa)
       if (changed) for (const st of S.cfg.steps) for (const f of st.fields) if (f.optionsFrom?.field === b.dataset.pick) delete S.a[f.id];
       if (changed && b.dataset.pick === 'style') for (const st of S.cfg.steps) for (const f of st.fields) if (f.type === 'teeth') delete S.a[f.id];
+      S.focusKey = `[data-pick="${CSS.escape(b.dataset.pick)}"][data-val="${CSS.escape(b.dataset.val)}"]`;
       render();
       // Ne idi dalje sam ako polje ima dodatno pitanje (kupac možda želi da doda detalje).
-      if (cur().autoAdvance && stepValid(cur()) && !cur().fields.some((f) => f.followup && visible(f))) setTimeout(() => go(1), 260);
+      // Jedan tajmer: dvostruki dodir ili brz klik na Back ne preskaču sljedeći korak.
+      clearTimeout(S.adv);
+      if (cur().autoAdvance && stepValid(cur()) && !cur().fields.some((f) => f.followup && visible(f))) {
+        const at = S.i;
+        S.adv = setTimeout(() => { if (S.i === at) go(1); }, 260);
+      }
     })
   );
   app.querySelectorAll('[data-select]').forEach((el) =>
@@ -628,6 +709,8 @@ function bind() {
   app.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => { S.shown = +b.dataset.show; S.mask.strokes = []; render(); }));
   app.querySelectorAll('[data-brush]').forEach((b) => b.addEventListener('click', () => { S.mask.size = b.dataset.brush; render(); }));
   app.querySelector('[data-tryon]')?.addEventListener('change', (e) => doTryOn(e.target.files[0]));
+  app.querySelector('[data-tryok]')?.addEventListener('change', (e) => { S.tryOk = e.target.checked; render(); });
+  if (S.cfg.turnstile && app.querySelector('#ts')) mountTurnstile();
   bindMask();
   app.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.goto - S.i)));
 
@@ -640,6 +723,7 @@ function bind() {
       if (act === 'retry' || act === 'again') makeRender();
       if (act === 'tweak') doTweak();
       if (act === 'test') startTest();
+      if (act === 'restart') { ss.del(LEAD_KEY); location.reload(); }
       if (act === 'mask-toggle' && !S.mask.on) { S.mask.on = true; S.mask.strokes = []; render(); }
       if (act === 'mask-off' && S.mask.on) { S.mask.on = false; S.mask.strokes = []; render(); }
       if (act === 'mask-clear') { S.mask.strokes = []; render(); }
@@ -649,10 +733,15 @@ function bind() {
 
 function go(d) {
   if (d > 0 && !stepValid(cur())) return;
+  clearTimeout(S.adv);
   S.i = Math.max(0, Math.min(steps().length - 1, S.i + d));
   S.error = '';
   render();
-  window.scrollTo({ top: 0 });
+  window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
+  // Novi korak: fokus na naslov i kratka najava (čitač ekrana ne čita cijelu stranicu).
+  const h = app.querySelector('h1');
+  if (h) { h.id = 'step-title'; h.tabIndex = -1; h.focus({ preventScroll: true }); announce(h.textContent); }
+  // Signal stranici zlatara (analitika). Bez ličnih podataka: samo forma i korak.
   parent.postMessage({ type: 'aik:step', form: formId, step: cur().id }, '*');
 }
 
@@ -667,8 +756,10 @@ async function takeFile(f, key) {
     c.height = Math.round(bmp.height * scale);
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
     const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.88));
+    if (S.files[key]) URL.revokeObjectURL(S.files[key].url);
     S.files[key] = { blob, url: URL.createObjectURL(blob), name: f.name };
   } catch {
+    if (S.files[key]) URL.revokeObjectURL(S.files[key].url);
     S.files[key] = { blob: f, url: URL.createObjectURL(f), name: f.name };
   }
   render();
@@ -687,22 +778,48 @@ async function submit() {
   fd.set('email', S.contact.email);
   fd.set('phone', S.contact.phone);
   fd.set('consent', S.contact.consent ? 'yes' : 'no');
-  // Šaljemo samo fajlove polja koja su i dalje vidljiva
-  for (const [key, file] of Object.entries(S.files)) fd.set(`file_${key}`, file.blob, `${key}.jpg`);
+  // Šaljemo samo fajlove pitanja koja su i dalje vidljiva (i dodatni fajl samo uz odgovor na pitanje).
+  const shown = new Set(S.cfg.steps.filter((st) => st.enabled !== false).flatMap((st) => st.fields.filter((f) => f.enabled !== false && visible(f)).map((f) => f.id)));
+  for (const [key, file] of Object.entries(S.files)) {
+    const base = key.replace(/__more$/, '');
+    if (shown.has(base) && (key === base || (S.a[base] != null && S.a[base] !== ''))) fd.set(`file_${key}`, file.blob, `${key}.jpg`);
+  }
+  if (S.cfg.turnstile) fd.set('cf-turnstile-response', S.ts);
   try {
     const res = await fetch('/api/leads', { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
     S.lead = data;
     S.busy = false;
+    ss.set(LEAD_KEY, { leadId: data.leadId, token: data.token });
     parent.postMessage({ type: 'aik:lead', form: formId }, '*');
     go(1);
     makeRender();
   } catch (e) {
     S.busy = false;
     S.error = e.message;
+    S.ts = '';
     render();
+    announce(e.message);
   }
+}
+
+// Kupac je osvježio stranicu poslije slanja: rezultat (renderi, probe) se vraća iz upita, token se šalje u zaglavlju.
+async function restoreLead() {
+  const saved = ss.get(LEAD_KEY);
+  if (!saved?.leadId) return;
+  try {
+    const r = await fetch(`/api/leads/${encodeURIComponent(saved.leadId)}`, { headers: { 'x-lead-token': saved.token } });
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    S.lead = { leadId: saved.leadId, token: saved.token, maxRenders: d.maxRenders };
+    S.a = d.answers || {};
+    S.renders = d.renders;
+    S.shown = Math.max(0, S.renders.length - 1);
+    S.tryons = d.tryons;
+    S.tryLeft = d.tryLeft;
+    S.i = steps().length - 1;
+  } catch { ss.del(LEAD_KEY); }
 }
 
 let ticker;
@@ -744,7 +861,7 @@ async function makeRender(tweak = '', mask = null) {
       if (S.files.reference && !tweak) fd.set('reference', S.files.reference.blob, 'reference.jpg');
       if (tweak) { fd.set('tweak', tweak); fd.set('base', baseKey); }
       if (mask) fd.set('mask', await (await fetch(mask)).blob(), 'mask.png');
-      res = await fetch('/api/admin/test-render', { method: 'POST', headers: { 'x-admin-token': adminToken() }, body: fd });
+      res = await fetch('/api/admin/test-render', { method: 'POST', body: fd });
     } else {
       res = await fetch(`/api/leads/${S.lead.leadId}/renders`, {
         method: 'POST',
@@ -756,6 +873,7 @@ async function makeRender(tweak = '', mask = null) {
     S.dev = data.dev || null;
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
     S.renders.push({ url: data.url, key: data.key });
+    S.fresh = true;
     S.shown = S.renders.length - 1;
     S.mask = { on: false, strokes: [], size: S.mask.size };
     S.tweakDraft = '';
@@ -790,8 +908,8 @@ function startTest() {
   makeRender();
 }
 
-const adminToken = () => { try { return localStorage.getItem('aik_admin') || ''; } catch { return ''; } };
-const testAllowed = () => new URLSearchParams(location.search).has('preview') && !!adminToken();
+// Probni render: samo u pregledu buildera, kad builder javi da je admin prijavljen (kolačić šalje browser sam).
+const testAllowed = () => new URLSearchParams(location.search).has('preview') && S.adminPreview;
 
 // Četka u pikselima slike od 1024 px (skalira se na stvarnu veličinu).
 const BRUSH = { s: 26, m: 52, l: 96 };

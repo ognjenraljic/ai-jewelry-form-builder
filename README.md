@@ -67,6 +67,7 @@ Never put an API key in `wrangler.jsonc`, in the code, in a commit, or in GitHub
 | `OPENAI_API_KEY` | GPT Image models (all renders by default) | https://platform.openai.com/api-keys |
 | `GEMINI_API_KEY` | Nano Banana models (optional) | https://aistudio.google.com/apikey (billing must be on for image models) |
 | `ADMIN_TOKEN` | signing in to the builder and admin | any long random string, e.g. `openssl rand -hex 24` |
+| `TURNSTILE_SITE_KEY` + `TURNSTILE_SECRET` | optional bot check on the form and the demo request | Cloudflare dashboard → **Turnstile** → Add widget (your domain) |
 
 One image key is enough: without `OPENAI_API_KEY` all renders use Gemini, without `GEMINI_API_KEY` all renders use GPT Image 2.5 Flare.
 
@@ -119,6 +120,22 @@ Then add the secrets (see **API keys** above). Make sure `DEV_MODE` is not set i
 
 To deploy automatically on every push, connect this repo in the Cloudflare dashboard (**Workers & Pages → your Worker → Settings → Builds → Connect**). The keys stay in Cloudflare secrets; nothing secret goes into GitHub.
 
+### Spending limits and safety switches
+
+Set these as plain **Variables** (Text) in **Settings → Variables and Secrets**. They are not in `wrangler.jsonc` on purpose (`keep_vars: true` keeps what you set in the dashboard on every deploy):
+
+| variable | default | what it does |
+| --- | --- | --- |
+| `DAILY_BUDGET_USD` | `30` | estimated AI spend per day for the whole platform; above it new renders wait until tomorrow |
+| `FORM_DAILY_BUDGET_USD` | `15` | the same limit per form, so one busy or abused form cannot use the whole budget |
+| `RENDERS_PAUSED` | off | `1` stops all new renders right away (forms still collect leads) |
+
+When a limit is hit, the admin gets one notification per day in the builder bell.
+
+Built in, nothing to set: per-network lead limit (IPv6 by /64), text and photo moderation (OpenAI moderation, free), image type check on every upload, security headers (CSP, HSTS), forms can only be embedded on the sites listed in the form's Embed tab (empty = anywhere), `workers.dev` and preview URLs are off, and a nightly job (03:17 UTC) deletes customer selfies and try-on images older than 30 days.
+
+Sign-in: the builder, `/admin` and the portal use HttpOnly cookies (30 days for admin). A portal link is exchanged for a cookie on the first visit and removed from the address bar.
+
 If Gemini answers "User location is not supported", add a placement region to `wrangler.jsonc` (for example `"placement": { "region": "aws:us-east-1" }`).
 
 ## Checks
@@ -130,9 +147,10 @@ node scripts/platform-check.mjs      # clients, forms, uploads (server must run)
 node scripts/viewas-check.mjs        # client portal sessions (server must run)
 RENDER=1 node scripts/teeth-check.mjs  # tooth picker through the server + one render
 node scripts/versions-archive-check.mjs  # form history, archive, demo requests handled (server must run)
+node scripts/hardening-check.mjs     # sign-in cookies, limits, moderation, uploads, portal, conflicts, cron (server + mock must run)
 ```
 
-Renders without spending credit: start the fake OpenAI with `node scripts/mock-openai.mjs 8899 out.json`, then `npx wrangler dev --var OPENAI_API_KEY:mock --var OPENAI_BASE:http://127.0.0.1:8899` (only works with `DEV_MODE=1`). It returns gallery images and logs what the model received (images, mask, prompt).
+Renders without spending credit: start the fake OpenAI with `node scripts/mock-openai.mjs 8899 out.json`, then `npx wrangler dev --test-scheduled --var OPENAI_API_KEY:mock-local --var OPENAI_BASE:http://127.0.0.1:8899` (only works with `DEV_MODE=1`, and `DEV_MODE` only works on localhost). It returns gallery images, answers moderation (text containing `FLAGME` is flagged) and logs what the model received (images, mask, prompt).
 
 `scripts/build_library.py` regenerates the style library images with Gemini (reads the key from `.dev.vars`).
 
@@ -140,4 +158,4 @@ Renders without spending credit: start the fake OpenAI with `node scripts/mock-o
 
 - Code comments are in Serbian.
 - Customer photos are stored in R2 and are readable only by the admin or the owning client's portal session. Uploaded builder images must be JPG, PNG or WebP (no SVG).
-- Before production: rate limiting per IP is basic, there is no email notification for new leads yet, and `DEV_MODE` must be off.
+- Not done yet: email notification to the jeweler for new leads (they see leads in the portal).

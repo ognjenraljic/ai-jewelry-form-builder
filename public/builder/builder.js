@@ -43,27 +43,28 @@ const THEME_KEYS = [
   ['line', 'Borders'], ['line-strong', 'Strong borders'], ['ink', 'Text'], ['ink-soft', 'Secondary text'], ['ink-faint', 'Muted text'],
 ];
 const PRESETS = {
-  Turquoise: { accent: '#35d0c4', 'accent-ink': '#032220', bg: '#070b0c', surface: '#10171a', 'surface-2': '#152024', line: '#1f2c30', 'line-strong': '#34464b', ink: '#eef6f5', 'ink-soft': '#9fb3b1', 'ink-faint': '#627674' },
-  Gold: { accent: '#d8b46a', 'accent-ink': '#17130c', bg: '#0c0b0a', surface: '#151311', 'surface-2': '#1d1a17', line: '#2c2823', 'line-strong': '#4a4238', ink: '#f4efe6', 'ink-soft': '#a59d90', 'ink-faint': '#6f685e' },
-  Rose: { accent: '#e7a9a0', 'accent-ink': '#2a1210', bg: '#0d0a0a', surface: '#171112', 'surface-2': '#201819', line: '#302526', 'line-strong': '#4d3c3d', ink: '#f6eeec', 'ink-soft': '#b3a2a0', 'ink-faint': '#7a6967' },
-  Light: { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#8d8477' },
+  Turquoise: { accent: '#35d0c4', 'accent-ink': '#032220', bg: '#070b0c', surface: '#10171a', 'surface-2': '#152024', line: '#1f2c30', 'line-strong': '#34464b', ink: '#eef6f5', 'ink-soft': '#9fb3b1', 'ink-faint': '#80928f' },
+  Gold: { accent: '#d8b46a', 'accent-ink': '#17130c', bg: '#0c0b0a', surface: '#151311', 'surface-2': '#1d1a17', line: '#2c2823', 'line-strong': '#4a4238', ink: '#f4efe6', 'ink-soft': '#a59d90', 'ink-faint': '#8b8377' },
+  Rose: { accent: '#e7a9a0', 'accent-ink': '#2a1210', bg: '#0d0a0a', surface: '#171112', 'surface-2': '#201819', line: '#302526', 'line-strong': '#4d3c3d', ink: '#f6eeec', 'ink-soft': '#b3a2a0', 'ink-faint': '#93807e' },
+  Light: { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#6f675b' },
 };
 const TABS = [['client', 'Client'], ['brand', 'Brand'], ['pieces', 'Pieces & styles'], ['questions', 'Questions'], ['texts', 'Texts'], ['embed', 'Embed'], ['history', 'History'], ['json', 'JSON']];
 const FIELD_TYPES = [['chips', 'Choice (chips)'], ['cards', 'Choice (big cards)'], ['yesno', 'Yes / No'], ['dropdown', 'Dropdown'], ['text', 'Short text'], ['textarea', 'Long text'], ['upload', 'Photo upload'], ['teeth', 'Teeth picker (grillz)']];
 
 const app = document.getElementById('app');
 const B = {
-  token: store.get('aik_admin') || '', clients: [], forms: [], templates: [], clientId: null, id: null, draft: null, saved: '',
+  authed: false, clients: [], forms: [], templates: [], clientId: null, id: null, draft: null, saved: '', updatedAt: 0,
   client: null, clientSaved: '', tab: store.get('aik_builder_tab') || 'client', piece: null, device: 'desktop', open: new Set([0]), status: '', kind: '',
   view: 'hub', overview: { stats: {}, links: {} }, q: '',
 };
 
 // ---------- API ----------
 async function api(path, opts = {}) {
-  const headers = { 'x-admin-token': B.token, ...(opts.body && !(opts.body instanceof FormData) ? { 'content-type': 'application/json' } : {}) };
+  // Prijava je HttpOnly kolačić (šalje ga browser sam); token se ne čuva u browseru.
+  const headers = { ...(opts.body && !(opts.body instanceof FormData) ? { 'content-type': 'application/json' } : {}) };
   const res = await fetch(path, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { const e = new Error(data.error || `HTTP ${res.status}`); e.status = res.status; throw e; }
+  if (!res.ok) { const e = new Error(data.error || `HTTP ${res.status}`); e.status = res.status; e.data = data; throw e; }
   return data;
 }
 
@@ -84,6 +85,16 @@ function typeLoc() {
   }
   return null;
 }
+// Pitanja čiji uslov gleda na pitanje koje dolazi poslije njih (ili ne postoji): nikad se ne bi prikazala.
+function showIfProblems() {
+  const seen = new Set();
+  const bad = [];
+  for (const st of B.draft.steps) for (const f of st.fields) {
+    if (f.showIf && !seen.has(f.showIf.field)) bad.push(f.label || f.id);
+    seen.add(f.id);
+  }
+  return bad;
+}
 const allFieldIds = () => new Set(B.draft.steps.flatMap((s) => s.fields.map((f) => f.id)));
 const dirty = () => B.draft && JSON.stringify(B.draft) !== B.saved;
 const clientDirty = () => B.client && JSON.stringify(B.client) !== B.clientSaved;
@@ -95,17 +106,27 @@ const tplLabel = (k) => B.templates.find((t) => t.key === k)?.label || 'Custom';
 // ---------- Start ----------
 boot();
 async function boot() {
-  if (!B.token) return login();
-  try { await loadAll(); } catch (e) { if (e.status === 403) return login('Wrong token.'); throw e; }
+  try { localStorage.removeItem('aik_admin'); } catch {} // stari način prijave: token više ne stoji u browseru
+  try {
+    B.authed = (await api('/api/admin/session')).admin;
+    if (!B.authed) return login();
+    await loadAll();
+  } catch (e) {
+    if (e.status === 403) return login('Please sign in again.');
+    app.innerHTML = `<div class="center"><div class="box"><div class="logo">${icon('gem')} JewelryLead <small>Builder</small></div><p class="lead" style="margin-top:14px">The builder could not load: ${esc(e.message)}</p><button class="btn primary" data-act="reload">Try again</button></div></div>`;
+  }
 }
 
 function login(msg = '') {
-  app.innerHTML = `<div class="center"><form class="box" id="login"><div class="logo">${icon('gem')} JewelryLead <small>Builder</small></div><p class="lead" style="margin-top:14px">Sign in with the admin token.</p><input class="in" type="password" placeholder="ADMIN_TOKEN" autofocus /><p class="err-text">${esc(msg)}</p><button class="btn primary" style="width:100%">Sign in</button></form></div>`;
-  app.querySelector('#login').onsubmit = (e) => {
+  app.innerHTML = `<div class="center"><form class="box" id="login"><div class="logo">${icon('gem')} JewelryLead <small>Builder</small></div><p class="lead" style="margin-top:14px">Sign in with the admin token.</p><input class="in" type="password" placeholder="ADMIN_TOKEN" autocomplete="current-password" autofocus /><p class="err-text">${esc(msg)}</p><button class="btn primary" style="width:100%">Sign in</button></form></div>`;
+  app.querySelector('#login').onsubmit = async (e) => {
     e.preventDefault();
-    B.token = app.querySelector('input').value.trim();
-    store.set('aik_admin', B.token);
-    boot();
+    const btn = app.querySelector('#login button');
+    btn.disabled = true;
+    try {
+      await api('/api/admin/login', { method: 'POST', body: JSON.stringify({ token: app.querySelector('input').value.trim() }) });
+      boot();
+    } catch (err) { login(err.status === 403 ? 'Wrong token.' : err.message); }
   };
 }
 
@@ -126,6 +147,7 @@ async function loadAll(formId) {
   if (!formId && store.get('aik_builder_view') !== 'editor') return renderHub();
   const want = formId || store.get('aik_builder_form');
   const f = B.forms.find((x) => x.id === want) || B.forms.find((x) => x.clientId) || B.forms[0];
+  if (!f) return renderHub();
   await openForm(f.id, true);
 }
 
@@ -138,7 +160,8 @@ function setClient(cid) {
 
 async function openForm(id, force = false) {
   if (!force && (dirty() || clientDirty()) && !confirm('You have unsaved changes. Discard them?')) { if (B.view === 'editor') renderTop(); return; }
-  const { form } = await api(`/api/admin/forms/${id}`);
+  const { form, updated_at: updatedAt } = await api(`/api/admin/forms/${id}`);
+  B.updatedAt = updatedAt || 0;
   B.id = id;
   B.draft = form;
   B.saved = JSON.stringify(form);
@@ -235,7 +258,7 @@ async function archiveForm(id, on) {
     await api(`/api/admin/forms/${id}/archive`, { method: 'POST', body: JSON.stringify({ archived: on }) });
     await refreshLists();
     renderHub();
-  } catch (err) { alert(err.message); }
+  } catch (err) { toast(err.message); }
 }
 
 async function archiveClient(cid, on) {
@@ -245,7 +268,7 @@ async function archiveClient(cid, on) {
     await api(`/api/admin/clients/${cid}/archive`, { method: 'POST', body: JSON.stringify({ archived: on }) });
     await refreshLists();
     renderHub();
-  } catch (err) { alert(err.message); }
+  } catch (err) { toast(err.message); }
 }
 
 // ---------- Onboarding klijenta ----------
@@ -313,13 +336,13 @@ async function sendOnboarding(cid) {
     d.addEventListener('close', () => d.remove());
     d.showModal();
     d.querySelector('#ob-url').select();
-  } catch (err) { alert(err.message); }
+  } catch (err) { toast(err.message); }
 }
 
 // Pregled poslatog onboardinga i forma iz njega (slike se kopiraju u formu, admin je pregleda u builderu).
 async function reviewOnboarding(obid) {
   let ob;
-  try { ob = (await api(`/api/admin/onboardings/${obid}`)).onboarding; } catch (err) { return alert(err.message); }
+  try { ob = (await api(`/api/admin/onboardings/${obid}`)).onboarding; } catch (err) { return toast(err.message); }
   const d = ob.data || {};
   const s = d.store || {};
   const kept = (p) => (p.styles || []).filter((x) => x.keep !== false && x.label);
@@ -352,12 +375,14 @@ async function reviewOnboarding(obid) {
     if (b.dataset.obr === 'close') return dlg.close();
     if (b.dataset.obr === 'open') { dlg.close(); return openForm(b.dataset.id); }
     if (b.dataset.obr === 'build') {
+      if ((dirty() || clientDirty()) && !(await confirmBox('Unsaved changes', 'Creating the form opens it in the editor. Discard your unsaved changes in the current form?', 'Discard and create'))) return;
       b.disabled = true;
       b.textContent = 'Creating…';
       try {
         const { form } = await api(`/api/admin/onboardings/${obid}/build`, { method: 'POST' });
         dlg.close();
-        if ((dirty() || clientDirty()) && !confirm('Discard unsaved changes in the current form?')) { await refreshLists(); return B.view === 'hub' ? renderHub() : null; }
+        B.saved = JSON.stringify(B.draft);
+        B.clientSaved = JSON.stringify(B.client);
         await loadAll(form.id);
         setStatus('Form created from onboarding. Check it in the preview.', 'ok');
       } catch (err) { dlg.querySelector('.err-text').textContent = err.message; b.disabled = false; b.textContent = 'Create form from it'; }
@@ -368,9 +393,10 @@ async function reviewOnboarding(obid) {
 }
 
 // Obavještenja: staklena lista ispod zvonca; otvaranje označi sve kao viđeno.
+let notifOff = () => {};
 function toggleNotifs(btn) {
   const old = document.querySelector('.notif-panel');
-  if (old) { old.remove(); return; }
+  if (old) { old.remove(); document.removeEventListener('mousedown', notifOff); return; }
   const items = B.notifs?.items || [];
   const p = document.createElement('div');
   p.className = 'notif-panel';
@@ -389,7 +415,8 @@ function toggleNotifs(btn) {
     if (n.dataset.kind === 'onboarding' && n.dataset.ref) reviewOnboarding(n.dataset.ref);
     if (n.dataset.kind === 'demo') window.open('/admin', '_blank', 'noopener');
   });
-  setTimeout(() => document.addEventListener('mousedown', function off(e) { if (!p.contains(e.target) && !e.target.closest('[data-act="notifs"]')) { p.remove(); document.removeEventListener('mousedown', off); } }), 0);
+  notifOff = (e) => { if (!p.contains(e.target) && !e.target.closest('[data-act="notifs"]')) { p.remove(); document.removeEventListener('mousedown', notifOff); } };
+  setTimeout(() => document.addEventListener('mousedown', notifOff), 0);
   if (B.notifs?.unseen) {
     api('/api/admin/notifications/seen', { method: 'POST' }).catch(() => {});
     B.notifs.unseen = 0;
@@ -398,7 +425,7 @@ function toggleNotifs(btn) {
 }
 // Novo obavještenje bez osvježavanja stranice: provjera svake minute.
 setInterval(async () => {
-  if (!B.token || document.hidden) return;
+  if (!B.authed || document.hidden) return;
   try {
     const n = await api('/api/admin/notifications');
     const more = n.unseen > (B.notifs?.unseen || 0);
@@ -601,7 +628,24 @@ function brandView() {
     <label class="f"><span>Client</span><select class="sel" data-bind="clientId" data-rerender>${d.clientId ? '' : '<option value="">No client</option>'}${clientOpts}</select></label>
     <h3>Theme</h3>
     <div class="presets">${presets}</div>
+    ${contrastNote(d.theme || {})}
     <div class="colors">${colors}</div>`;
+}
+
+// Kontrast (WCAG): sitan tekst treba bar 4.5:1, inače se teško čita (posebno na telefonu i za starije kupce).
+function ratio(a, b) {
+  const lum = (h) => {
+    const n = parseInt(hex6(h).slice(1), 16);
+    const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+  return (x + 0.05) / (y + 0.05);
+}
+function contrastNote(t) {
+  const pairs = [['ink', 'bg', 'Text on background'], ['ink-soft', 'bg', 'Secondary text'], ['ink-faint', 'bg', 'Muted text (hints)'], ['accent-ink', 'accent', 'Text on accent buttons'], ['ink', 'surface', 'Text on cards']];
+  const bad = pairs.filter(([a, b]) => t[a] && t[b] && ratio(t[a], t[b]) < 4.5).map(([a, b, l]) => `${l} ${ratio(t[a], t[b]).toFixed(1)}:1`);
+  return bad.length ? `<p class="note warn">Hard to read: ${esc(bad.join(' · '))}. Aim for at least 4.5:1.</p>` : '';
 }
 
 function piecesView() {
@@ -610,7 +654,7 @@ function piecesView() {
   const opts = loc.field.options;
   if (!opts.some((o) => o.value === B.piece)) B.piece = opts[0]?.value;
   const list = opts.map((o, k) => `
-    <div class="piece ${o.value === B.piece ? 'sel' : ''}" data-act="pick-piece" data-v="${esc(o.value)}">
+    <div class="piece ${o.value === B.piece ? 'sel' : ''}" data-act="pick-piece" data-v="${esc(o.value)}" tabindex="0" role="button" aria-pressed="${o.value === B.piece}">
       ${o.image ? `<img class="piece-img" src="${esc(o.image)}" alt="" />` : icon(o.icon)}
       <div><b>${esc(o.label)}</b><small>${(B.draft.styles?.[o.value] || []).length} styles · id: ${esc(o.value)}</small></div>
       <span>
@@ -632,14 +676,14 @@ function piecesView() {
         <label class="img" title="Upload image">
           ${s.image ? `<img src="${esc(s.image)}" alt="" />` : '<span class="empty">No image yet<br />Click to upload</span>'}
           <span class="up">Replace image</span>
-          <input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="styles.${o.value}.${j}.image" data-scope="forms" />
+          <input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="styles.${esc(o.value)}.${j}.image" data-scope="forms" />
         </label>
         <div class="body">
-          <input class="in" data-bind="styles.${o.value}.${j}.label" value="${esc(s.label)}" placeholder="Style name" />
-          <textarea class="ta" data-bind="styles.${o.value}.${j}.shape" placeholder="Shape for the AI, e.g. thick interlocking oval links with a box clasp">${esc(s.shape || '')}</textarea>
+          <input class="in" data-bind="styles.${esc(o.value)}.${j}.label" value="${esc(s.label)}" placeholder="Style name" />
+          <textarea class="ta" data-bind="styles.${esc(o.value)}.${j}.shape" placeholder="Shape for the AI, e.g. thick interlocking oval links with a box clasp">${esc(s.shape || '')}</textarea>
           <div class="tools">
-            <span><button class="icon-btn" title="Move left" data-act="move" data-path="styles.${o.value}" data-i="${j}" data-d="-1">←</button><button class="icon-btn" title="Move right" data-act="move" data-path="styles.${o.value}" data-i="${j}" data-d="1">→</button></span>
-            <button class="icon-btn danger" title="Remove style" data-act="del" data-path="styles.${o.value}" data-i="${j}">✕</button>
+            <span><button class="icon-btn" title="Move left" data-act="move" data-path="styles.${esc(o.value)}" data-i="${j}" data-d="-1">←</button><button class="icon-btn" title="Move right" data-act="move" data-path="styles.${esc(o.value)}" data-i="${j}" data-d="1">→</button></span>
+            <button class="icon-btn danger" title="Remove style" data-act="del" data-path="styles.${esc(o.value)}" data-i="${j}">✕</button>
           </div>
         </div>
       </div>`).join('');
@@ -795,6 +839,9 @@ function embedView() {
     <h3>Direct link</h3>
     <pre class="code">${esc(`${o}/f/${B.id}`)}</pre><button class="btn small" data-act="copy-text" data-text="${esc(`${o}/f/${B.id}`)}">Copy link</button>
     ${others.length ? `<h3>Other forms of ${esc(B.client.name)}</h3>${others.map((f) => `<div class="card"><div class="card-head"><div class="grow"><b>${esc(f.name)}</b><p class="hint" style="margin:2px 0 0">${esc(tplLabel(f.template))}</p></div><button class="btn small" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button></div></div>`).join('')}` : ''}
+    <h3>Where it may appear</h3>
+    <p class="hint">Websites allowed to show this form, one per line (e.g. https://yourstore.com). Empty = any website. Other sites will see a blank frame, so nobody can put this form on their page and spend the client's previews.</p>
+    <textarea class="ta" data-origins rows="3" placeholder="https://yourstore.com">${esc((B.draft.allowedOrigins || []).join('\n'))}</textarea>
     <h3>Where to paste</h3>
     <p class="hint" style="font-size:13px;line-height:1.7"><b>Shopify:</b> Online Store, Customize, add a "Custom Liquid" section.<br /><b>WordPress:</b> a "Custom HTML" block, or the HTML widget in Elementor or Divi.<br /><b>Squarespace / Webflow:</b> a Code or Embed block.<br /><b>Wix:</b> Embed code, use the plain iframe.</p>`;
 }
@@ -875,6 +922,11 @@ app.addEventListener('change', async (e) => {
       if (!CHOICE.includes(v)) { delete f.options; delete f.followup; }
     }
     changed(el.dataset.rerender !== undefined || el.type === 'checkbox');
+  } else if (el.dataset.origins !== undefined) {
+    // https://, bez putanje i duplikata; prazno = forma radi na svakom sajtu.
+    const list = [...new Set(el.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean).map((x) => { try { return new URL(/^https?:\/\//.test(x) ? x : `https://${x}`).origin.replace(/^http:/, 'https:'); } catch { return ''; } }).filter(Boolean))].slice(0, 10);
+    if (list.length) B.draft.allowedOrigins = list; else delete B.draft.allowedOrigins;
+    changed(true);
   } else if (el.dataset.actChange === 'move-form') {
     if (!el.value) return;
     B.draft.clientId = el.value;
@@ -928,6 +980,7 @@ app.addEventListener('click', async (e) => {
   if (act === 'open-form') openForm(el.dataset.id);
   if (act === 'view-as') viewAs(el.dataset.cid || B.client?.id);
   if (act === 'hub') renderHub();
+  if (act === 'reload') location.reload();
   if (act === 'back-editor') { B.view = 'editor'; store.set('aik_builder_view', 'editor'); renderShell(); }
   if (act === 'portal-link') portalLink(el.dataset.cid);
   if (act === 'toggle-archived') { B.showArchived = !B.showArchived; renderHub(); }
@@ -958,18 +1011,22 @@ app.addEventListener('click', async (e) => {
     const j = i + +el.dataset.d;
     if (j < 0 || j >= arr.length) return;
     [arr[i], arr[j]] = [arr[j], arr[i]];
+    // Otvoreni koraci prate pomjereni korak; uslov "prikaži samo ako" ne smije gledati na pitanje koje dolazi kasnije.
+    if (el.dataset.path === 'steps') { const a = B.open.has(i); const b = B.open.has(j); B.open.delete(i); B.open.delete(j); if (a) B.open.add(j); if (b) B.open.add(i); }
+    const bad = showIfProblems();
+    if (bad.length) toast(`Check "Show only if" on: ${bad.join(', ')}. It now depends on a question that comes later.`);
     changed(true);
   }
   if (act === 'del') {
     if (el.dataset.confirm && !confirm(el.dataset.confirm)) return;
     const arr = getP(el.dataset.path);
-    if (arr.length === 1 && /fields$|options$/.test(el.dataset.path)) return alert('Keep at least one. Turn it off instead, or remove the whole step.');
+    if (arr.length === 1 && /fields$|options$/.test(el.dataset.path)) return toast('Keep at least one. Turn it off instead, or remove the whole step.');
     arr.splice(i, 1);
     changed(true);
   }
   if (act === 'del-piece') {
     const loc = typeLoc();
-    if (loc.field.options.length < 2) return alert('A form needs at least one piece.');
+    if (loc.field.options.length < 2) return toast('A form needs at least one piece.');
     if (!confirm('Remove this piece and its styles?')) return;
     loc.field.options = loc.field.options.filter((o) => o.value !== el.dataset.v);
     if (B.draft.styles) delete B.draft.styles[el.dataset.v];
@@ -977,7 +1034,7 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'add-piece') {
-    const name = prompt('Piece name, e.g. "Belt buckle"');
+    const name = await askText('New piece', { placeholder: 'e.g. Belt buckle' });
     if (!name?.trim()) return;
     const loc = typeLoc();
     const value = uniq(slug(name), new Set(loc.field.options.map((o) => o.value)));
@@ -990,7 +1047,7 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'add-style') {
-    const name = prompt('Style name, e.g. "Miami Cuban"');
+    const name = await askText('New style', { placeholder: 'e.g. Miami Cuban' });
     if (!name?.trim()) return;
     B.draft.styles = B.draft.styles || {};
     const list = (B.draft.styles[B.piece] = B.draft.styles[B.piece] || []);
@@ -999,7 +1056,7 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'add-option') {
-    const name = prompt('Option name');
+    const name = await askText('New option', { placeholder: 'e.g. Brushed finish' });
     if (!name?.trim()) return;
     const f = getP(el.dataset.path);
     f.options = f.options || [];
@@ -1007,13 +1064,13 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'add-field') {
-    const name = prompt('Question, e.g. "Finish"');
+    const name = await askText('New question', { placeholder: 'e.g. Finish' });
     if (!name?.trim()) return;
     B.draft.steps[i].fields.push({ id: uniq(key(name), allFieldIds()), type: 'chips', label: name.trim().slice(0, 120), required: false, options: [{ value: 'option-1', label: 'Option 1' }] });
     changed(true);
   }
   if (act === 'add-step') {
-    const name = prompt('Step title, e.g. "Finish & size"');
+    const name = await askText('New step', { placeholder: 'e.g. Finish & size' });
     if (!name?.trim()) return;
     const ids = new Set(B.draft.steps.map((s) => s.id));
     const title = name.trim().slice(0, 120);
@@ -1040,7 +1097,13 @@ app.addEventListener('click', async (e) => {
 async function upload(input) {
   const file = input.files[0];
   if (!file) return;
-  const isLogo = /logo$/.test(input.dataset.upload);
+  // Forma, klijent i polje se zapamte prije slanja: ako se u međuvremenu otvori druga forma, slika ne završi u njoj.
+  const formId = B.id;
+  const path = input.dataset.upload;
+  const clientScope = input.dataset.scope === 'clients';
+  const clientId = B.client?.id;
+  if (clientScope && !clientId) return setStatus('Pick a client first.', 'err');
+  const isLogo = /logo$/.test(path);
   setStatus('Uploading…', '');
   try {
     let blob = file;
@@ -1056,9 +1119,10 @@ async function upload(input) {
     } catch {}
     const fd = new FormData();
     fd.set('file', blob, isLogo ? 'logo.png' : 'image.webp');
-    const scope = input.dataset.scope === 'clients' ? `clients/${B.client.id}` : `forms/${B.id}`;
+    const scope = clientScope ? `clients/${clientId}` : `forms/${formId}`;
     const { url } = await api(`/api/admin/${scope}/upload`, { method: 'POST', body: fd });
-    setP(input.dataset.upload, url);
+    if (B.id !== formId || (clientScope && B.client?.id !== clientId)) return setStatus('Upload finished for a form you closed; it was not added.', 'err');
+    setP(path, url);
     setStatus('');
     changed(true);
   } catch (err) {
@@ -1067,32 +1131,47 @@ async function upload(input) {
 }
 
 // ---------- Čuvanje, klijenti, nove forme ----------
-async function save() {
+async function save(opts = {}) {
   if (!dirty()) return;
   const btn = document.getElementById('save-btn');
   btn.disabled = true;
   setStatus('Saving…', '');
+  // Snimak prije slanja: ono što se otkuca dok čuvanje traje ostaje "nesačuvano", ne gubi se tiho.
+  const snap = JSON.stringify(B.draft);
+  const id = B.id;
   try {
-    await api(`/api/admin/forms/${B.id}`, { method: 'PUT', body: JSON.stringify({ form: B.draft }) });
-    B.saved = JSON.stringify(B.draft);
+    const r = await api(`/api/admin/forms/${id}`, { method: 'PUT', body: JSON.stringify({ form: JSON.parse(snap), baseUpdatedAt: B.updatedAt, ...opts }) });
+    if (B.id !== id) return;
+    B.updatedAt = r.updated_at;
+    B.saved = snap;
     B.versions = null;
     await refreshLists();
     if ((B.client?.id || null) !== (B.draft.clientId || null)) setClient(B.draft.clientId);
     renderTop();
-    setStatus('Saved', 'ok');
-    renderPane();
+    setStatus(dirty() ? 'Saved (newer edits not saved yet)' : 'Saved', dirty() ? 'dirty' : 'ok');
+    if (!document.activeElement?.closest?.('#pane')) renderPane();
   } catch (err) {
-    setStatus(err.message, 'err');
     btn.disabled = false;
+    if (err.data?.conflict) {
+      setStatus('Saved elsewhere meanwhile', 'err');
+      if (await confirmBox('Saved somewhere else', `${err.message} Save your version anyway? The other version stays in History.`, 'Save my version')) return save({ ...opts, force: true });
+      return;
+    }
+    if (err.data?.moveLeads) {
+      if (await confirmBox('Move leads too?', err.message, 'Move form and leads')) return save({ ...opts, moveLeads: true });
+      return setStatus('Not saved', 'err');
+    }
+    setStatus(err.message, 'err');
   }
 }
 
 async function saveClient() {
   if (!clientDirty()) return;
   setStatus('Saving client…', '');
+  const snap = JSON.stringify(B.client);
   try {
-    await api(`/api/admin/clients/${B.client.id}`, { method: 'PUT', body: JSON.stringify(B.client) });
-    B.clientSaved = JSON.stringify(B.client);
+    await api(`/api/admin/clients/${B.client.id}`, { method: 'PUT', body: snap });
+    B.clientSaved = snap;
     await refreshLists();
     renderTop();
     renderPane();
@@ -1112,6 +1191,38 @@ function dialog(html, onSubmit) {
   d.addEventListener('close', () => d.remove());
   d.showModal();
   return d;
+}
+
+// Dijalozi u izgledu buildera umjesto prompt() i alert().
+function askText(title, { label = '', placeholder = '', value = '', ok = 'Add' } = {}) {
+  return new Promise((resolve) => {
+    const d = document.createElement('dialog');
+    d.innerHTML = `<form method="dialog"><h2>${esc(title)}</h2>${label ? `<p class="lead">${esc(label)}</p>` : ''}<input class="in" name="v" value="${esc(value)}" placeholder="${esc(placeholder)}" required maxlength="120" autocomplete="off" /><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">${esc(ok)}</button></div></form>`;
+    document.body.appendChild(d);
+    let out = null;
+    d.querySelector('form').addEventListener('submit', (e) => { if (e.submitter?.value === 'ok') out = d.querySelector('[name=v]').value.trim() || null; });
+    d.addEventListener('close', () => { d.remove(); resolve(out); });
+    d.showModal();
+  });
+}
+function confirmBox(title, text, ok = 'OK') {
+  return new Promise((resolve) => {
+    const d = document.createElement('dialog');
+    d.innerHTML = `<form method="dialog"><h2>${esc(title)}</h2><p class="lead">${esc(text)}</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" value="cancel">Cancel</button><button class="btn primary" value="ok">${esc(ok)}</button></div></form>`;
+    document.body.appendChild(d);
+    let out = false;
+    d.querySelector('form').addEventListener('submit', (e) => { out = e.submitter?.value === 'ok'; });
+    d.addEventListener('close', () => { d.remove(); resolve(out); });
+    d.showModal();
+  });
+}
+function toast(text, kind = 'err') {
+  const t = document.createElement('div');
+  t.className = `toast ${kind}`;
+  t.setAttribute('role', kind === 'err' ? 'alert' : 'status');
+  t.textContent = text;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 4500);
 }
 
 function newClient() {
@@ -1145,8 +1256,10 @@ function newForm(clientId = B.client?.id) {
       const piece = d.querySelector('[name=piece]').value;
       if (B.templates.some((t) => t.key === piece)) body.template = piece; else { body.template = 'custom-enquiry'; body.piece = piece; }
     } else body.template = tpl;
+    if ((dirty() || clientDirty()) && !(await confirmBox('Unsaved changes', 'The new form opens in the editor. Discard your unsaved changes in the current form?', 'Discard and create'))) return;
     const { form } = await api('/api/admin/forms', { method: 'POST', body: JSON.stringify(body) });
-    if ((dirty() || clientDirty()) && !confirm('Discard unsaved changes in the current form?')) return;
+    B.saved = JSON.stringify(B.draft);
+    B.clientSaved = JSON.stringify(B.client);
     await loadAll(form.id);
   });
 }
@@ -1158,8 +1271,9 @@ async function viewAs(cid) {
   const w = window.open('', '_blank');
   try {
     const r = await api(`/api/admin/clients/${cid}/view-as`, { method: 'POST' });
-    store.set('aik_view_as', JSON.stringify({ token: r.token, expiresAt: r.expiresAt }));
-    if (w) w.location.href = '/portal'; else location.href = '/portal';
+    // Token ide u hash (ne šalje se serveru), portal ga odmah zamijeni za kolačić i obriše iz adrese.
+    const to = `/portal#v=${r.token}`;
+    if (w) w.location.href = to; else location.href = to;
   } catch (err) {
     w?.close();
     setStatus(err.message, 'err');
@@ -1183,7 +1297,7 @@ function schedulePreview() { clearTimeout(pt); pt = setTimeout(() => pushPreview
 function pushPreview(step, { soft = false, focus = null } = {}) {
   const frame = document.getElementById('frame');
   const jump = typeof step === 'number' ? { step, answers: { type: B.piece || typeLoc()?.field.options[0]?.value }, soft, focus } : {};
-  frame?.contentWindow?.postMessage({ type: 'aik:preview', form: B.draft, ...jump }, location.origin);
+  frame?.contentWindow?.postMessage({ type: 'aik:preview', form: B.draft, admin: true, ...jump }, location.origin);
 }
 
 // Korak koji pregled trenutno pokazuje: isto dugme u "Jump to" je označeno (null = rezultat ili nepoznato).
@@ -1244,8 +1358,12 @@ window.addEventListener('message', (e) => {
   if (e.origin === location.origin && e.data?.type === 'aik:preview-ready') pushPreview();
 });
 
+// Elementi sa data-act koji nisu dugmad (npr. kartice komada) rade i na Enter / razmak.
+app.addEventListener('keydown', (e) => {
+  const el = e.target;
+  if ((e.key === 'Enter' || e.key === ' ') && el.dataset?.act && !/^(BUTTON|A|INPUT|SELECT|TEXTAREA|LABEL)$/.test(el.tagName)) { e.preventDefault(); el.click(); }
+});
 window.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); if (B.view === 'hub') return; if (B.tab === 'client' && clientDirty()) saveClient(); else save(); } });
-window.addEventListener('beforeunload', (e) => { if (dirty() || clientDirty()) { e.preventDefault(); e.returnValue = ''; } });
 
 // Logo vodi na početnu: ne izgubi nesačuvane izmjene bez pitanja.
 window.addEventListener('beforeunload', (e) => { if (dirty() || clientDirty()) { e.preventDefault(); e.returnValue = ''; } });

@@ -248,7 +248,8 @@ section { position: relative; scroll-margin-top: 72px; }
 .form-msg { font-size: 14px; min-height: 20px; }
 .form-msg.ok { color: var(--green); }
 .form-msg.err { color: #e58b7a; }
-.hp { position: absolute; left: -9999px; }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.ts { margin: 4px 0 8px; }
 
 /* Footer */
 footer { border-top: 1px solid var(--line); padding: 50px 0 60px; color: var(--ink-faint); font-size: 14px; }
@@ -285,3 +286,4 @@ footer a:hover { color: var(--ink); }
   .float-card { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before { animation: none !important; transition: none !important; } .reveal { opacity: 1; transform: none; } }
+img { max-width: 100%; height: auto; }

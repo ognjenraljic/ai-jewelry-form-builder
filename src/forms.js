@@ -49,7 +49,7 @@ const METALS = [
 const BUDGETS = ['Under $1,500', '$1,500 - $2,500', '$2,500 - $5,000', '$5,000 - $10,000', '$10,000 - $20,000', '$20,000+'].map((v) => opt(v, v));
 const THEME = {
   accent: '#35d0c4', 'accent-ink': '#032220', bg: '#070b0c', surface: '#10171a', 'surface-2': '#152024',
-  line: '#1f2c30', 'line-strong': '#34464b', ink: '#eef6f5', 'ink-soft': '#9fb3b1', 'ink-faint': '#627674',
+  line: '#1f2c30', 'line-strong': '#34464b', ink: '#eef6f5', 'ink-soft': '#9fb3b1', 'ink-faint': '#80928f',
 };
 const B = { builtin: true };
 
@@ -269,7 +269,7 @@ export function validateFormDef(f, id) {
     if (v == null || v === '') { if (required) err(`Missing: ${name}`); return; }
     if (typeof v !== 'string' || v.length > max) err(`${name}: up to ${max} characters`);
   };
-  const imgOk = (src) => src == null || src === '' || src.startsWith('/library/') || src.startsWith(`/media/forms/${id}/`) || src.startsWith('/media/clients/');
+  const imgOk = (src) => src == null || src === '' || (typeof src === 'string' && !src.includes('..') && (src.startsWith('/library/') || src.startsWith(`/media/forms/${id}/`) || src.startsWith('/media/clients/')));
   const bool = (v, name) => { if (v != null && typeof v !== 'boolean') err(`${name}: true or false`); };
 
   if (!f || typeof f !== 'object') err('Invalid form');
@@ -279,6 +279,11 @@ export function validateFormDef(f, id) {
   if (f.clientId != null && !SLUG.test(f.clientId)) err('Client: invalid ID');
   if (f.template != null && !TEMPLATES[f.template]) err('Unknown template');
   bool(f.tryOn, 'Try-on on the customer photo');
+  // Sajtovi na kojima se forma smije ugraditi (prazno = svuda). Samo https adrese, bez putanje.
+  if (f.allowedOrigins != null) {
+    if (!Array.isArray(f.allowedOrigins) || f.allowedOrigins.length > 10) err('Allowed sites: up to 10');
+    for (const o of f.allowedOrigins) if (typeof o !== 'string' || !/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(o)) err(`Allowed site "${o}": use https://yourstore.com`);
+  }
   str(f.brand?.name, 60, 'Brand name', true);
   if (f.brand?.logo && !imgOk(f.brand.logo)) err('Logo must be uploaded here');
   str(f.background, 80, 'Render background');
@@ -371,7 +376,7 @@ export const ONBOARDING_DEFAULTS = {
   budgets: BUDGETS.map((b) => b.label),
 };
 
-const LIGHT_THEME = { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#8d8477' };
+const LIGHT_THEME = { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#6f675b' };
 const slugOf = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36) || 'item';
 const uniqOf = (base, taken) => { let v = base; for (let i = 2; taken.has(v); i++) v = `${base}-${i}`; taken.add(v); return v; };
 // Tekst na boji: taman ili svijetao, po svjetlini boje.

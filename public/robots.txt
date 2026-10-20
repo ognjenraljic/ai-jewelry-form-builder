@@ -1,0 +1,9 @@
+User-agent: *
+Disallow: /builder
+Disallow: /admin
+Disallow: /portal
+Disallow: /api/
+Disallow: /media/refs/
+Disallow: /f/
+
+Sitemap: https://jewelrylead.com/sitemap.xml

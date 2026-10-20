@@ -50,7 +50,8 @@ ok(myLead.details.some((d) => d.label === 'Shape' && d.value === 'Oval'), 'odgov
 
 const photoA = myLead.photos[0]?.key;
 const photoB = leadsB.find((l) => l.id === lb.body.leadId).photos[0]?.key;
-const mediaStatus = (key, t) => fetch(`${BASE}/media/${key}${t ? `?t=${encodeURIComponent(t)}` : ''}`).then((r) => r.status);
+// Token portala ide u zaglavlje (u browseru je to HttpOnly kolačić); u adresi slike više nije dozvoljen.
+const mediaStatus = (key, t) => fetch(`${BASE}/media/${key}`, { headers: t ? { 'x-portal-token': t } : {} }).then((r) => r.status);
 ok((await mediaStatus(photoA, tA)) === 200, 'A otvara fotografiju svog kupca');
 ok((await mediaStatus(photoB, tA)) === 403, 'A ne može otvoriti fotografiju kupca klijenta B');
 ok((await mediaStatus(photoA)) === 403, 'fotografija kupca bez tokena = 403');
