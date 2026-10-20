@@ -194,9 +194,15 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
 export function buildTweakPrompt(tweak, { masked = false } = {}) {
   return [
     'Edit the attached jewelry product photograph.',
-    'Keep the same piece, camera angle, lighting, background and overall design.',
-    ...(masked ? ['The customer marked one area of the photo (the transparent part of the mask). Change only that area and keep everything outside it exactly as it is.'] : []),
-    `Apply only this change requested by the customer: "${clean(tweak, 300)}"`,
+    `The required edit is the customer's request: "${clean(tweak, 300)}"`,
+    ...(masked ? [
+      'The transparent part of the supplied mask marks the area to edit. Apply the requested change visibly inside that area; preserve everything outside it.',
+      'The requested edit takes priority over preserving the original shape, material or decoration INSIDE the marked area. You may remove or replace those details there when the request requires it.',
+    ] : [
+      'Apply the requested change and preserve all details that the customer did not ask to change.',
+    ]),
+    'If the customer requests a hole, opening or cutout, actually remove the metal and stones in that shape and show the background through the opening; do not merely draw a shape on the surface.',
+    'Keep the same camera angle, lighting, background and placement. The requested edit must be visible; do not return an unchanged copy of the input.',
     'Keep it photorealistic. No people, no hands, no watermark, no brand logos.',
   ].join('\n');
 }
