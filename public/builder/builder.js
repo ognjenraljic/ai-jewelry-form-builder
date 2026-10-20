@@ -18,7 +18,11 @@ const NAV = {
   list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
   open: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
 };
+// Zvonce: obavještenja (poslat onboarding, zahtjev za demo), broj neviđenih na dugmetu.
+const bell = () => `<button class="nav-add bell" data-act="notifs" title="Notifications" aria-label="Notifications">${nav('bell')}${B.notifs?.unseen ? `<b>${B.notifs.unseen > 9 ? '9+' : B.notifs.unseen}</b>` : ''}</button>`;
 const nav = (n) => `<svg class="nav-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${NAV[n]}</svg>`;
 // Logo vodi na početnu stranicu sajta (landing), u istom tabu.
 const homeLogo = () => `<a class="logo" href="/" title="Go to the JewelryLead homepage">${icon('gem')} JewelryLead <small>Builder</small></a>`;
@@ -106,7 +110,9 @@ function login(msg = '') {
 }
 
 async function refreshLists() {
-  const [d, o] = await Promise.all([api('/api/admin/forms'), api('/api/admin/overview')]);
+  const [d, o, ob, nt] = await Promise.all([api('/api/admin/forms'), api('/api/admin/overview'), api('/api/admin/onboardings'), api('/api/admin/notifications')]);
+  B.onboardings = ob.onboardings;
+  B.notifs = nt;
   B.clients = d.clients;
   B.forms = d.forms;
   B.templates = d.templates;
@@ -167,6 +173,7 @@ function renderHub() {
         <button class="nav-btn" data-act="new-client">${nav('plus')}New project</button>
         <button class="nav-btn" data-act="new-form">${nav('plus')}New form</button>
         <a class="nav-btn hi" href="/admin" target="_blank" rel="noopener">${nav('list')}<span>Leads</span></a>
+        ${bell()}
         ${B.id ? `<button class="btn primary save" data-act="back-editor">Back to editor${dirty() || clientDirty() ? ' (unsaved)' : ''}</button>` : ''}
       </header>
       <main class="hub-main">
@@ -209,6 +216,7 @@ function renderHubList() {
         ${c?.logo ? `<img src="${esc(c.logo)}" alt="" />` : `<span class="hub-mono">${esc((c?.name || '?').slice(0, 1))}</span>`}
         <div class="grow"><b>${esc(c ? c.name : 'Unassigned')}</b><small>${c ? [c.website, `${forms.length} form${forms.length === 1 ? '' : 's'}`].filter(Boolean).map(esc).join(' · ') : 'Forms without a client'}</small></div>
         ${c?.archivedAt ? `<span class="pill">Archived ${esc(day(c.archivedAt))}</span><button class="btn small" data-act="restore-client" data-cid="${esc(c.id)}">Restore client</button>` : ''}
+        ${c && !c.archivedAt ? obPill(c.id) : ''}
         ${c && !c.archivedAt ? `<span class="pill ${link ? 'pill-def' : ''}" title="${link ? `Active since ${esc(day(link.createdAt))}` : 'The client has no portal link yet'}">${link ? 'Portal link on' : 'No portal link'}</span>
           <button class="btn small ghost" data-act="portal-link" data-cid="${esc(c.id)}">Portal link</button>
           <button class="btn small ghost" data-act="view-as" data-cid="${esc(c.id)}">View as client ↗</button>
@@ -239,6 +247,165 @@ async function archiveClient(cid, on) {
     renderHub();
   } catch (err) { alert(err.message); }
 }
+
+// ---------- Onboarding klijenta ----------
+// Kod opcije u čitljiv natpis (yellow-gold -> Yellow gold, lab -> Lab-grown diamonds).
+const NICE = { lab: 'Lab-grown diamonds', natural: 'Natural diamonds', moissanite: 'Moissanite', none: 'No stones' };
+const nice = (v) => NICE[v] || String(v).replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
+const latestOb = (cid) => (B.onboardings || []).filter((o) => o.client_id === cid).sort((a, b) => b.created_at - a.created_at)[0];
+function obPill(cid) {
+  const o = latestOb(cid);
+  if (!o) return '';
+  if (o.status === 'draft') return `<span class="pill" title="Last saved ${esc(day(o.updated_at))}">Onboarding: waiting for client</span><button class="btn small ghost" data-act="ob-link" data-cid="${esc(cid)}" title="New link (the old one stops working)">Resend link</button>`;
+  if (o.status === 'submitted') return `<button class="btn small primary" data-act="ob-review" data-obid="${esc(o.id)}">Review onboarding</button>`;
+  return '';
+}
+
+// Nova forma: odmah iz šablona, ili onboarding koji klijent sam popuni.
+function newFormChoice(clientId) {
+  if (!B.clients.length) return newClient();
+  const d = document.createElement('dialog');
+  d.className = 'choice';
+  d.innerHTML = `
+    <h2>New form</h2>
+    <p class="lead">${esc(B.clients.find((c) => c.id === clientId)?.name || 'Pick a project')}</p>
+    <div class="choices">
+      <button class="choice-card" data-ch="custom"><b>Create custom form</b><small>Start from a template and set it up yourself in the builder.</small></button>
+      <button class="choice-card" data-ch="onboarding"><b>Send onboarding form</b><small>The client fills in their pieces, styles with photos, metals and budget. You get notified, then turn it into a form with one click.</small></button>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" data-ch="close">Cancel</button></div>`;
+  document.body.appendChild(d);
+  d.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ch]');
+    if (!b) return;
+    d.close();
+    if (b.dataset.ch === 'custom') newForm(clientId);
+    if (b.dataset.ch === 'onboarding') sendOnboarding(clientId);
+  });
+  d.addEventListener('close', () => d.remove());
+  d.showModal();
+}
+
+// Onboarding link: novi portal link klijenta (stari prestaje da radi); prikazuje se jednom, za kopiranje.
+async function sendOnboarding(cid) {
+  const c = B.clients.find((x) => x.id === cid);
+  if (!c) return;
+  if (B.overview.links[cid] && !confirm(`${c.name} already has a portal link. Sending onboarding creates a new link and the old one stops working. Continue?`)) return;
+  try {
+    const r = await api(`/api/admin/clients/${cid}/onboarding`, { method: 'POST' });
+    B.overview.links[cid] = { createdAt: r.createdAt };
+    await refreshLists();
+    if (B.view === 'hub') renderHubList();
+    const d = document.createElement('dialog');
+    d.innerHTML = `
+      <h2>Onboarding link</h2>
+      <p class="lead">Send this link to ${esc(c.name)}. They set up their store, pieces, styles with photos, metals and budget. Everything saves as they go, and you get a notification when they press Send. The same link later opens their portal with leads.</p>
+      <div class="pick-row"><input class="in" id="ob-url" readonly value="${esc(r.url)}" /><button class="btn small primary" data-ob="copy">Copy</button></div>
+      <p class="hint">For safety the link is shown only once. Valid for one year.</p>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Open as client ↗</a><button class="btn primary" data-ob="close">Done</button></div>`;
+    document.body.appendChild(d);
+    d.addEventListener('click', async (e) => {
+      const b = e.target.closest('[data-ob]');
+      if (!b) return;
+      if (b.dataset.ob === 'close') d.close();
+      if (b.dataset.ob === 'copy') { try { await navigator.clipboard.writeText(d.querySelector('#ob-url').value); b.textContent = 'Copied'; } catch { d.querySelector('#ob-url').select(); } }
+    });
+    d.addEventListener('close', () => d.remove());
+    d.showModal();
+    d.querySelector('#ob-url').select();
+  } catch (err) { alert(err.message); }
+}
+
+// Pregled poslatog onboardinga i forma iz njega (slike se kopiraju u formu, admin je pregleda u builderu).
+async function reviewOnboarding(obid) {
+  let ob;
+  try { ob = (await api(`/api/admin/onboardings/${obid}`)).onboarding; } catch (err) { return alert(err.message); }
+  const d = ob.data || {};
+  const s = d.store || {};
+  const kept = (p) => (p.styles || []).filter((x) => x.keep !== false && x.label);
+  const pieces = (d.pieces || []).map((p) => `
+    <div class="obr-piece"><b>${esc(p.label)}</b>
+      <div class="obr-styles">${kept(p).map((x) => `<figure>${x.image ? `<img src="${esc(x.image)}" alt="" />` : '<span></span>'}<figcaption>${esc(x.label)}</figcaption></figure>`).join('') || '<p class="hint">No styles: customers describe their idea.</p>'}</div></div>`).join('');
+  const dlg = document.createElement('dialog');
+  dlg.className = 'obr';
+  dlg.innerHTML = `
+    <h2>${esc(ob.name || 'Onboarding')}</h2>
+    <p class="lead">${ob.status === 'submitted' ? `Sent ${esc(day(ob.submitted_at))}.` : ob.status === 'done' ? 'A form was already created from this onboarding.' : 'Still in progress (not sent yet).'}</p>
+    <div class="obr-store">${s.logo ? `<img src="${esc(s.logo)}" alt="" />` : ''}<div><b>${esc(s.name || '')}</b><small>${esc(s.website || '')} · ${s.theme === 'light' ? 'Light' : 'Dark'} look <i style="background:${esc(s.accent || '#35d0c4')}"></i></small></div></div>
+    ${pieces}
+    <dl class="obr-list">
+      <dt>Metals</dt><dd>${esc([...(d.metals || []).map(nice), ...String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)].join(', ') || 'All')}</dd>
+      <dt>Stones</dt><dd>${esc((d.stones || []).map(nice).join(', ') || 'All')}</dd>
+      <dt>Budgets</dt><dd>${esc((d.budgets || []).filter(Boolean).join(' · '))}</dd>
+      ${d.questions ? `<dt>Questions</dt><dd>${esc(d.questions)}</dd>` : ''}
+      ${d.notes ? `<dt>Notes</dt><dd>${esc(d.notes)}</dd>` : ''}
+    </dl>
+    <p class="err-text"></p>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
+      <button class="btn" data-obr="close">Close</button>
+      ${ob.status === 'done' && ob.form_id ? `<button class="btn primary" data-obr="open" data-id="${esc(ob.form_id)}">Open the form</button>` : ob.status === 'submitted' ? '<button class="btn primary" data-obr="build">Create form from it</button>' : ''}
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-obr]');
+    if (!b) return;
+    if (b.dataset.obr === 'close') return dlg.close();
+    if (b.dataset.obr === 'open') { dlg.close(); return openForm(b.dataset.id); }
+    if (b.dataset.obr === 'build') {
+      b.disabled = true;
+      b.textContent = 'Creating…';
+      try {
+        const { form } = await api(`/api/admin/onboardings/${obid}/build`, { method: 'POST' });
+        dlg.close();
+        if ((dirty() || clientDirty()) && !confirm('Discard unsaved changes in the current form?')) { await refreshLists(); return B.view === 'hub' ? renderHub() : null; }
+        await loadAll(form.id);
+        setStatus('Form created from onboarding. Check it in the preview.', 'ok');
+      } catch (err) { dlg.querySelector('.err-text').textContent = err.message; b.disabled = false; b.textContent = 'Create form from it'; }
+    }
+  });
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.showModal();
+}
+
+// Obavještenja: staklena lista ispod zvonca; otvaranje označi sve kao viđeno.
+function toggleNotifs(btn) {
+  const old = document.querySelector('.notif-panel');
+  if (old) { old.remove(); return; }
+  const items = B.notifs?.items || [];
+  const p = document.createElement('div');
+  p.className = 'notif-panel';
+  p.innerHTML = `<div class="notif-head">Notifications</div>${items.map((n) => `
+    <button class="notif ${n.seen_at ? '' : 'new'}" data-kind="${esc(n.kind)}" data-ref="${esc(n.ref || '')}">
+      ${nav(n.kind === 'demo' ? 'mail' : 'bell')}<span><b>${esc(n.title)}</b><small>${esc(new Date(n.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))}</small></span>
+    </button>`).join('') || '<p class="hint" style="padding:10px 12px">Nothing yet. You will see sent onboardings and demo requests here.</p>'}`;
+  document.body.appendChild(p);
+  const r = btn.getBoundingClientRect();
+  p.style.top = `${r.bottom + 8}px`;
+  p.style.right = `${Math.max(8, innerWidth - r.right)}px`;
+  p.addEventListener('click', (e) => {
+    const n = e.target.closest('.notif');
+    if (!n) return;
+    p.remove();
+    if (n.dataset.kind === 'onboarding' && n.dataset.ref) reviewOnboarding(n.dataset.ref);
+    if (n.dataset.kind === 'demo') window.open('/admin', '_blank', 'noopener');
+  });
+  setTimeout(() => document.addEventListener('mousedown', function off(e) { if (!p.contains(e.target) && !e.target.closest('[data-act="notifs"]')) { p.remove(); document.removeEventListener('mousedown', off); } }), 0);
+  if (B.notifs?.unseen) {
+    api('/api/admin/notifications/seen', { method: 'POST' }).catch(() => {});
+    B.notifs.unseen = 0;
+    document.querySelectorAll('.bell b').forEach((x) => x.remove());
+  }
+}
+// Novo obavještenje bez osvježavanja stranice: provjera svake minute.
+setInterval(async () => {
+  if (!B.token || document.hidden) return;
+  try {
+    const n = await api('/api/admin/notifications');
+    const more = n.unseen > (B.notifs?.unseen || 0);
+    B.notifs = n;
+    if (more) { document.querySelectorAll('.bell').forEach((b) => { b.querySelector('b')?.remove(); b.insertAdjacentHTML('beforeend', `<b>${n.unseen > 9 ? '9+' : n.unseen}</b>`); }); }
+  } catch {}
+}, 60_000);
 
 // Link za portal klijenta: vidi se samo jednom; novi link gasi stari.
 function portalLink(cid) {
@@ -328,6 +495,7 @@ function renderTop() {
     ${B.client ? `<button class="nav-btn hi" data-act="view-as" title="Open ${esc(B.client.name)}'s portal as they see it (logged, 1 hour)">${nav('eye')}<span>View as client</span></button>` : ''}
     <a class="nav-btn hi" href="/admin" target="_blank" rel="noopener" title="All leads and renders">${nav('list')}<span>Leads</span></a>
     <a class="nav-btn hi" href="/f/${esc(B.id)}" target="_blank" rel="noopener" title="Open this form as customers see it">${nav('open')}<span>Open form</span></a>
+    ${bell()}
     <button class="btn primary save" data-act="save" id="save-btn" ${dirty() ? '' : 'disabled'}>Save</button>`;
   document.getElementById('form-select').onchange = (e) => openForm(e.target.value);
   document.getElementById('client-select').onchange = (e) => {
@@ -481,6 +649,7 @@ function piecesView() {
         <div class="f"><span>Card image (optional, replaces the icon)</span><div class="pick-row">${imgPick(`${op}.image`)}</div></div>
         ${area(`${op}.subject`, 'How the AI should describe this piece', { ph: 'e.g. a custom western belt buckle, oval, front view', hint: 'Optional for built-in pieces (pendant, chain, ring, grillz, bracelet, earrings, watch). Needed for new ones.' })}
       </div>
+      ${o.value === 'grillz' ? `<div class="toggles" style="margin:14px 0 4px">${toggle('tryOn', 'Offer "See them on your smile" after the render (customer uploads a smiling photo)', { invert: true, title: 'The AI shows the customer wearing the grillz. The photo stays private.' })}</div>` : ''}
       <h3>Styles for ${esc(o.label)}</h3>
       <p class="hint" style="margin:-6px 0 12px">Customers pick one of these. The picture also guides the AI's shape, so photos of the jeweler's own pieces work best. "Something else" is added automatically.</p>
       <div class="styles">${cards}</div>
@@ -751,7 +920,10 @@ app.addEventListener('click', async (e) => {
   if (act === 'tab') { B.tab = el.dataset.tab; store.set('aik_builder_tab', B.tab); renderTabs(); renderPane(); }
   if (act === 'save') save();
   if (act === 'save-client') saveClient();
-  if (act === 'new-form') newForm(el.dataset.cid || B.client?.id);
+  if (act === 'new-form') newFormChoice(el.dataset.cid || B.client?.id);
+  if (act === 'notifs') toggleNotifs(el);
+  if (act === 'ob-review') reviewOnboarding(el.dataset.obid);
+  if (act === 'ob-link') sendOnboarding(el.dataset.cid);
   if (act === 'new-client') newClient();
   if (act === 'open-form') openForm(el.dataset.id);
   if (act === 'view-as') viewAs(el.dataset.cid || B.client?.id);
@@ -949,7 +1121,7 @@ function newClient() {
     <p class="hint">Next you pick a template for their first form.</p>`, async (d) => {
     const { client } = await api('/api/admin/clients', { method: 'POST', body: JSON.stringify({ name: d.querySelector('[name=name]').value, website: d.querySelector('[name=website]').value }) });
     await refreshLists();
-    setTimeout(() => newForm(client.id), 50);
+    setTimeout(() => newFormChoice(client.id), 50);
   });
 }
 

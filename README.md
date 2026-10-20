@@ -13,6 +13,8 @@ Runs entirely on Cloudflare: one Worker, D1 (database), R2 (images).
 - **Client portal** (`/portal`): each client gets a **portal link** (one year, shown once, new link revokes the old one) to see their leads, renders and forms on their own, without AI costs. "View as client" opens the same portal for an admin (one hour, logged).
 - **Leads admin** (`/admin`): leads with every render and its cost, test renders, and demo requests you can mark as handled.
 - **Archive**: archived forms and clients disappear from the lists and stop taking new leads; nothing is deleted.
+- **Onboarding**: New form → **Send onboarding form** gives the client a link to a guided setup in their portal (store, logo and color, pieces, styles with their own photos, metals, stones, budget, notes). It saves as they type; when they press Send you get a notification (bell in the builder) and **Create form from it** builds the form, photos included. The same link then opens their normal portal.
+- **Grillz try-on**: after a grillz render the customer can upload a smiling photo and see themselves wearing the design (2 per lead, photos stay private: customer via their lead token, the jeweler and admin). Turn it off per form in Pieces & styles.
 - **Style library** (`public/library/`): reference images per style, sent to the model with the prompt so the shape comes out right.
 
 Image models (pick per environment in `wrangler.jsonc`, keys in `src/worker.js` `MODELS`):

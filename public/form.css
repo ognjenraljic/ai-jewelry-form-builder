@@ -229,3 +229,17 @@ button.seg:hover { filter: brightness(1.35); }
 /* Pregled u builderu: pitanje otvoreno lijevo se kratko istakne */
 .field.flash { animation: field-flash 1.4s ease-out; border-radius: 14px; outline-offset: 10px; }
 @keyframes field-flash { 0%, 35% { outline: 2px solid var(--accent); } 100% { outline: 2px solid transparent; } }
+
+/* Grillz na osmijehu kupca */
+.tryon { margin-top: 26px; padding: 18px; border: 1px solid var(--line); border-radius: 18px; background: color-mix(in srgb, var(--accent) 5%, var(--surface)); text-align: center; }
+.tryon-head b { display: block; font-family: var(--serif); font-weight: 500; font-size: 24px; margin-bottom: 4px; }
+.tryon-head span { color: var(--ink-soft); font-size: 14px; line-height: 1.5; }
+.tryon-imgs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 300px)); justify-content: center; gap: 12px; margin: 16px 0 4px; }
+.tryon-imgs figure { margin: 0; }
+.tryon-imgs img { width: 100%; border-radius: 14px; display: block; border: 1px solid var(--line); }
+.tryon-imgs figcaption { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
+.tryon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: auto; margin-top: 16px; cursor: pointer; padding-left: 26px; padding-right: 26px; }
+.tryon-btn svg { width: 18px; height: 18px; }
+.tryon-wait { display: inline-flex; align-items: center; gap: 10px; margin-top: 16px; color: var(--ink-soft); font-size: 14px; }
+.spin { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

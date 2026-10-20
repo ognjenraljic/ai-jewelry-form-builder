@@ -265,3 +265,43 @@ details.step > summary .grow small { font-weight: 500; font-size: 12px; color: v
 @keyframes q-flash { 0%, 35% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 8px color-mix(in srgb, var(--accent) 18%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
 /* Korak koji se vidi u pregledu */
 #pbar .btn.on[data-act="jump"] { background: color-mix(in srgb, var(--accent) 16%, var(--surface)); border-color: var(--accent); color: var(--ink); }
+
+/* Nova forma: izbor */
+dialog.choice { width: min(560px, 94vw); }
+.choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.choice-card { text-align: left; padding: 18px; border-radius: 16px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; display: flex; flex-direction: column; gap: 8px; transition: border-color 0.2s, transform 0.15s; }
+.choice-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.choice-card b { font-size: 15px; }
+.choice-card small { color: var(--ink-faint); line-height: 1.5; font-size: 12px; }
+@media (max-width: 560px) { .choices { grid-template-columns: 1fr; } }
+
+/* Zvonce i obavještenja */
+.nav-add.bell { position: relative; border-style: solid; }
+.nav-add.bell b { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-size: 10px; font-weight: 800; display: grid; place-items: center; }
+.notif-panel { position: fixed; z-index: 2147482000; width: min(360px, calc(100vw - 16px)); max-height: 70vh; overflow-y: auto; padding: 6px; border-radius: 16px; border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); background: color-mix(in srgb, var(--surface) 58%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5); box-shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.55); animation: np-in 0.14s ease-out; }
+@keyframes np-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.notif-head { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; padding: 8px 12px 6px; }
+.notif { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; padding: 10px 12px; border: 0; border-radius: 10px; background: none; color: var(--ink); cursor: pointer; }
+.notif:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.notif .nav-ic { margin-top: 2px; color: var(--ink-faint); }
+.notif.new .nav-ic { color: var(--accent); }
+.notif span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.notif b { font-weight: 600; font-size: 13px; }
+.notif.new b::after { content: ''; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 8px; vertical-align: 1px; }
+.notif small { color: var(--ink-faint); font-size: 11px; }
+
+/* Pregled onboardinga */
+dialog.obr { width: min(760px, 94vw); max-height: 88vh; }
+.obr-store { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; background: var(--surface); margin-bottom: 14px; }
+.obr-store img { max-height: 44px; max-width: 140px; object-fit: contain; }
+.obr-store small { display: block; color: var(--ink-faint); font-size: 12px; }
+.obr-store i { display: inline-block; width: 11px; height: 11px; border-radius: 50%; vertical-align: -1px; margin-left: 4px; }
+.obr-piece { margin-bottom: 14px; }
+.obr-piece > b { display: block; margin-bottom: 8px; }
+.obr-styles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.obr-styles figure { margin: 0; }
+.obr-styles img, .obr-styles figure > span { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); }
+.obr-styles figcaption { font-size: 11px; color: var(--ink-soft); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.obr-list { display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px; margin: 16px 0 0; font-size: 13px; }
+.obr-list dt { color: var(--ink-faint); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; padding-top: 2px; }
+.obr-list dd { margin: 0; line-height: 1.5; white-space: pre-wrap; }

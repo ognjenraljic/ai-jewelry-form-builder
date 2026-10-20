@@ -1,4 +1,4 @@
-import { FORMS, TEMPLATES, PIECE_OPTIONS, publicForm, styleOf, optionsOf, validateFormDef, fromTemplate, enabledSteps } from './forms.js';
+import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, validateFormDef, fromTemplate, enabledSteps } from './forms.js';
 import { buildPrompt, buildTweakPrompt } from './prompt.js';
 import { parseTeeth, teethSummary } from './teeth.js';
 
@@ -48,6 +48,10 @@ export default {
       if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/portal-link$/)) && (request.method === 'POST' || request.method === 'DELETE')) return clientLink(request, env, m[1]);
       if (p === '/api/admin/overview' && request.method === 'GET') return adminOverview(request, env);
       if (p === '/api/admin/test-render' && request.method === 'POST') return testRender(request, env);
+      if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/onboarding$/)) && request.method === 'POST') return startOnboarding(request, env, m[1]);
+      if (p.startsWith('/api/admin/onboardings')) return adminOnboardings(request, env, p);
+      if (p.startsWith('/api/admin/notifications')) return adminNotifications(request, env, p);
+      if ((m = p.match(/^\/api\/leads\/([\w-]+)\/tryon$/)) && request.method === 'POST') return createTryOn(request, env, m[1]);
       if (p.startsWith('/api/admin/clients') && !p.endsWith('/upload')) return adminClients(request, env, p);
       if (p.startsWith('/api/admin/forms') || /^\/api\/admin\/clients\/[a-z0-9-]+\/upload$/.test(p)) return adminForms(request, env, p);
       if (p === '/api/leads' && request.method === 'POST') return createLead(request, env);
@@ -147,7 +151,8 @@ async function createRender(request, env, leadId) {
   const form = await loadForm(env, lead.form_id);
   if (!form) return json({ error: 'Form not found' }, 404);
 
-  const rows = (await env.DB.prepare('SELECT * FROM renders WHERE lead_id = ? ORDER BY created_at').bind(leadId).all()).results;
+  const all = (await env.DB.prepare('SELECT * FROM renders WHERE lead_id = ? ORDER BY created_at').bind(leadId).all()).results;
+  const rows = all.filter((r) => r.kind !== 'tryon'); // proba na osmijehu se ne broji u dorade
   const ok = rows.filter((r) => r.status === 'ok');
   if (ok.length >= form.maxRenders) return json({ error: 'You have used all your previews. Our team will follow up with you.' }, 429);
   if (rows.length >= form.maxRenders + 3) return json({ error: 'Preview limit reached. Our team will follow up with you.' }, 429);
@@ -198,6 +203,56 @@ async function createRender(request, env, leadId) {
   }
 }
 
+// Grillz na fotografiji kupca: njegov osmijeh + render koji gleda -> ista osoba sa tim grillzima.
+// Fotografija i rezultat su privatni (refs/): vide ih kupac (token upita), zlatar i admin. Najviše TRYONS_PER_LEAD po upitu.
+const TRYONS_PER_LEAD = 2;
+async function createTryOn(request, env, leadId) {
+  const fd = await request.formData();
+  const lead = await env.DB.prepare('SELECT * FROM leads WHERE id = ?').bind(leadId).first();
+  if (!lead || !fd.get('token') || fd.get('token') !== lead.token) return json({ error: 'Not allowed.' }, 403);
+  const form = await loadForm(env, lead.form_id);
+  const answers = JSON.parse(lead.answers);
+  if (!form || form.tryOn === false || answers.type !== 'grillz') return json({ error: 'Try-on is not available for this piece.' }, 400);
+  const all = (await env.DB.prepare('SELECT * FROM renders WHERE lead_id = ? ORDER BY created_at').bind(leadId).all()).results;
+  const tries = all.filter((r) => r.kind === 'tryon');
+  if (tries.filter((r) => r.status === 'ok').length >= TRYONS_PER_LEAD || tries.length >= TRYONS_PER_LEAD + 2) return json({ error: 'You have used all your try-ons. Our team will follow up with you.' }, 429);
+  if (all.some((r) => r.status === 'pending' && Date.now() - r.created_at < PENDING_WINDOW_MS)) return json({ error: 'Your preview is still being created.' }, 409);
+  const design = all.filter((r) => r.kind !== 'tryon' && r.status === 'ok');
+  const n = Number(fd.get('base'));
+  const pick = design[Number.isInteger(n) && n >= 1 && n <= design.length ? n - 1 : design.length - 1];
+  if (!pick) return json({ error: 'Create your grillz preview first.' }, 400);
+  const photo = fd.get('photo');
+  if (!photo || typeof photo !== 'object' || !/^image\/(jpeg|png|webp)$/.test(photo.type)) return json({ error: 'Please upload a JPG, PNG or WebP photo.' }, 400);
+  if (photo.size > MAX_REF_BYTES) return json({ error: 'The photo is too large (max 8 MB).' }, 400);
+  const selfieKey = `refs/${leadId}-selfie-${rid(8)}.${photo.type.split('/')[1]}`;
+  const buf = await photo.arrayBuffer();
+  await env.MEDIA.put(selfieKey, buf, { httpMetadata: { contentType: photo.type } });
+  const base = await r2Image(env, pick.image_key);
+  const images = [{ mime: photo.type, b64: toB64(buf) }, base];
+  const prompt = [
+    'Image 1 is a photo of a customer smiling. Image 2 is the custom grillz (teeth jewelry) they designed.',
+    'Create a photorealistic photo of the same person wearing exactly these grillz on their teeth: same metal color, stones, shape, rows and number of covered teeth as image 2, fitted naturally to their teeth and gums.',
+    'Keep the person\'s face, identity, skin, expression, hair, clothing, lighting, camera angle and background exactly as in image 1. Change only the teeth area.',
+    'No text, no watermark, no extra people.',
+  ].join('\n');
+  const model = MODELS[tweakModel(env)];
+  const renderId = rid(12);
+  await env.DB.prepare('INSERT INTO renders (id, lead_id, n, model, prompt, tweak, status, kind, created_at) VALUES (?,?,?,?,?,?,?,?,?)')
+    .bind(renderId, leadId, tries.length + 1, model.id, prompt, 'Try-on on the customer photo', 'pending', 'tryon', Date.now()).run();
+  try {
+    const out = await runModel(env, model, prompt, images, null, model.provider === 'openai' ? 'auto' : '1024x1024');
+    const key = `refs/${leadId}-tryon-${rid(8)}.${out.mime.split('/')[1] || 'png'}`;
+    await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
+    await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ? WHERE id = ?')
+      .bind('ok', key, out.ms, out.inT, out.outT, out.cost, renderId).run();
+    return json({ url: `/media/${key}?lt=${lead.token}`, remaining: TRYONS_PER_LEAD - (tries.filter((r) => r.status === 'ok').length + 1) });
+  } catch (err) {
+    console.error('try-on failed', model.id, err.message);
+    await env.DB.prepare('UPDATE renders SET status = ?, error = ? WHERE id = ?').bind('error', String(err.message).slice(0, 500), renderId).run();
+    return json({ error: 'We could not create the try-on this time. Please try another photo.', ...(env.DEV_MODE === '1' ? { dev: { error: err.message } } : {}) }, 502);
+  }
+}
+
 // Ulaz za model: prvi render (slika stila iz biblioteke ili buildera, pa slika kupca) ili dorada (baza + izmjena).
 async function renderInputs(env, request, form, answers, { ref = null, tweak = '', base = null, masked = false } = {}) {
   if (tweak && base) return { images: [base], prompt: buildTweakPrompt(tweak, { masked }) };
@@ -240,9 +295,9 @@ function maskFrom(v) {
 }
 
 // Poziv modela + trošak iz potrošnje tokena (cijene u MODELS).
-async function runModel(env, model, prompt, images, mask = null) {
+async function runModel(env, model, prompt, images, mask = null, size = '1024x1024') {
   const t0 = Date.now();
-  const out = model.provider === 'openai' ? await openaiImage(env, model, prompt, images, mask) : await gemini(env, model.id, prompt, images);
+  const out = model.provider === 'openai' ? await openaiImage(env, model, prompt, images, mask, size) : await gemini(env, model.id, prompt, images);
   const inT = out.usage.promptTokenCount ?? out.usage.input_tokens ?? 0;
   const outT = out.usage.candidatesTokenCount ?? out.usage.output_tokens ?? 0;
   const imgIn = out.usage.input_tokens_details?.image_tokens || 0;
@@ -301,7 +356,7 @@ async function testRender(request, env) {
 
 // OpenAI Image API: sa referencama /v1/images/edits (multipart, redom kao u promptu), bez njih /v1/images/generations.
 // Maska ide uz prvu sliku (bazu): providni pikseli su dio koji model smije mijenjati.
-async function openaiImage(env, model, prompt, images, mask = null) {
+async function openaiImage(env, model, prompt, images, mask = null, size = '1024x1024') {
   if (!env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY nije postavljen');
   const headers = { authorization: `Bearer ${env.OPENAI_API_KEY}` };
   // Samo lokalno: lažni OpenAI server za provjere bez troška (scripts/mask-check.mjs).
@@ -311,7 +366,7 @@ async function openaiImage(env, model, prompt, images, mask = null) {
     const fd = new FormData();
     fd.set('model', model.id);
     fd.set('prompt', prompt);
-    fd.set('size', '1024x1024');
+    fd.set('size', size);
     fd.set('quality', model.quality || 'high');
     fd.set('output_format', 'jpeg');
     images.forEach((img, i) => fd.append('image[]', new Blob([fromB64(img.b64)], { type: img.mime }), `ref-${i + 1}.${img.mime.split('/')[1] || 'png'}`));
@@ -369,8 +424,12 @@ async function createDemoRequest(request, env) {
   const ip = request.headers.get('cf-connecting-ip') || 'local';
   const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM demo_requests WHERE ip = ? AND created_at > ?').bind(ip, Date.now() - 3600_000).first();
   if (n >= (env.DEV_MODE === '1' ? 50 : 5)) return json({ error: 'Too many requests. Please try again later.' }, 429);
-  await env.DB.prepare('INSERT INTO demo_requests (id, name, email, website, platform, volume, ip, created_at) VALUES (?,?,?,?,?,?,?,?)')
-    .bind(rid(12), name, email, website, clean(b.platform, 40), clean(b.volume, 40), ip, Date.now()).run();
+  const demoId = rid(12);
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO demo_requests (id, name, email, website, platform, volume, ip, created_at) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(demoId, name, email, website, clean(b.platform, 40), clean(b.volume, 40), ip, Date.now()),
+    notify(env, 'demo', `Demo request: ${name} (${website})`, demoId),
+  ]);
   return json({ ok: true });
 }
 
@@ -576,14 +635,106 @@ async function clientLink(request, env, clientId) {
   if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
   const client = await env.DB.prepare('SELECT id, name FROM clients WHERE id = ?').bind(clientId).first();
   if (!client) return json({ error: 'Client not found' }, 404);
+  if (request.method === 'DELETE') {
+    await env.DB.prepare("UPDATE portal_sessions SET ended_at = ? WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL").bind(Date.now(), client.id).run();
+    return json({ ok: true });
+  }
+  return json(await makeClientLink(request, env, client.id));
+}
+
+// Novi stalni link klijenta (stari prestaje da radi). Koriste ga i portal link i onboarding.
+async function makeClientLink(request, env, clientId) {
   const now = Date.now();
-  await env.DB.prepare("UPDATE portal_sessions SET ended_at = ? WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL").bind(now, client.id).run();
-  if (request.method === 'DELETE') return json({ ok: true });
   const token = rid(40);
-  await env.DB.prepare('INSERT INTO portal_sessions (id, token_hash, client_id, kind, ip, started_at, expires_at) VALUES (?,?,?,?,?,?,?)')
-    .bind(rid(12), await sha256(token), client.id, 'client', request.headers.get('cf-connecting-ip') || 'local', now, now + CLIENT_LINK_MS).run();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE portal_sessions SET ended_at = ? WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL").bind(now, clientId),
+    env.DB.prepare('INSERT INTO portal_sessions (id, token_hash, client_id, kind, ip, started_at, expires_at) VALUES (?,?,?,?,?,?,?)')
+      .bind(rid(12), await sha256(token), clientId, 'client', request.headers.get('cf-connecting-ip') || 'local', now, now + CLIENT_LINK_MS),
+  ]);
   const origin = new URL(request.url).origin.replace('//builder.', '//');
-  return json({ url: `${origin}/portal#k=${token}`, createdAt: now, expiresAt: now + CLIENT_LINK_MS });
+  return { url: `${origin}/portal#k=${token}`, createdAt: now, expiresAt: now + CLIENT_LINK_MS };
+}
+
+const notify = (env, kind, title, ref) => env.DB.prepare('INSERT INTO notifications (id, kind, title, ref, created_at) VALUES (?,?,?,?,?)').bind(rid(12), kind, clean(title, 160), ref || null, Date.now());
+
+// ---------- Onboarding klijenta ----------
+// Admin šalje onboarding: nacrt za klijenta + njegov portal link (isti link kasnije vodi u običan portal).
+async function startOnboarding(request, env, clientId) {
+  if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
+  const client = await env.DB.prepare('SELECT id, name, data FROM clients WHERE id = ?').bind(clientId).first();
+  if (!client) return json({ error: 'Client not found' }, 404);
+  let ob = await env.DB.prepare("SELECT id, status FROM onboardings WHERE client_id = ? AND status != 'done' ORDER BY created_at DESC LIMIT 1").bind(client.id).first();
+  if (!ob) {
+    const cd = JSON.parse(client.data || '{}');
+    const now = Date.now();
+    ob = { id: rid(12), status: 'draft' };
+    await env.DB.prepare('INSERT INTO onboardings (id, client_id, data, status, created_at, updated_at) VALUES (?,?,?,?,?,?)')
+      .bind(ob.id, client.id, JSON.stringify({ store: { name: client.name, website: cd.website || '', logo: cd.logo || '' } }), 'draft', now, now).run();
+  }
+  return json({ ...(await makeClientLink(request, env, client.id)), onboarding: ob });
+}
+
+async function adminOnboardings(request, env, p) {
+  if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
+  let m;
+  if (p === '/api/admin/onboardings' && request.method === 'GET') {
+    const rows = (await env.DB.prepare('SELECT o.id, o.client_id, c.name, o.status, o.created_at, o.updated_at, o.submitted_at, o.form_id FROM onboardings o LEFT JOIN clients c ON c.id = o.client_id ORDER BY o.updated_at DESC LIMIT 200').all()).results;
+    return json({ onboardings: rows });
+  }
+  if ((m = p.match(/^\/api\/admin\/onboardings\/([a-z0-9]+)$/)) && request.method === 'GET') {
+    const r = await env.DB.prepare('SELECT o.*, c.name FROM onboardings o LEFT JOIN clients c ON c.id = o.client_id WHERE o.id = ?').bind(m[1]).first();
+    return r ? json({ onboarding: { ...r, data: JSON.parse(r.data || '{}') } }) : json({ error: 'Not found' }, 404);
+  }
+  // Forma iz poslatog onboardinga: slike se kopiraju u folder forme (i logo kod klijenta), pa admin pregleda formu u builderu.
+  if ((m = p.match(/^\/api\/admin\/onboardings\/([a-z0-9]+)\/build$/)) && request.method === 'POST') {
+    const ob = await env.DB.prepare('SELECT * FROM onboardings WHERE id = ?').bind(m[1]).first();
+    if (!ob) return json({ error: 'Not found' }, 404);
+    const client = await env.DB.prepare('SELECT * FROM clients WHERE id = ?').bind(ob.client_id).first();
+    if (!client) return json({ error: 'Client not found' }, 404);
+    const d = JSON.parse(ob.data || '{}');
+    const id = await uniqueId(env, 'forms', `${client.id}-custom`);
+    const prefix = `/media/onboarding/${client.id}/`;
+    const copy = async (url, dir) => {
+      if (!url || !url.startsWith(prefix) || url.includes('..')) return '';
+      const obj = await env.MEDIA.get(url.slice(7));
+      if (!obj) return '';
+      const key = `${dir}/${rid(10)}.${url.split('.').pop()}`;
+      await env.MEDIA.put(key, obj.body, { httpMetadata: { contentType: obj.httpMetadata?.contentType || 'image/webp' } });
+      return `/media/${key}`;
+    };
+    const map = new Map();
+    for (const piece of d.pieces || []) for (const s of piece.styles || []) if (s?.image?.startsWith(prefix) && !map.has(s.image)) map.set(s.image, await copy(s.image, `forms/${id}`));
+    const logo = d.store?.logo?.startsWith(prefix) ? await copy(d.store.logo, `clients/${client.id}`) : d.store?.logo?.startsWith('/media/clients/') ? d.store.logo : '';
+    let form;
+    try {
+      form = formFromOnboarding(d, { id, clientId: client.id, brand: clean(d.store?.name, 60) || client.name, logo, img: (u) => (u.startsWith('/library/') ? u : map.get(u) || '') });
+      validateFormDef(form, id);
+    } catch (e) { return json({ error: e.message }, 400); }
+    const cd = JSON.parse(client.data || '{}');
+    const extra = [d.questions && `Questions they want to ask customers: ${clean(d.questions, 1500)}`, d.notes && `Notes from onboarding: ${clean(d.notes, 1500)}`].filter(Boolean).join('\n');
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO forms (id, data, client_id, template, updated_at) VALUES (?,?,?,?,?)').bind(id, JSON.stringify(form), client.id, 'custom-enquiry', now),
+      env.DB.prepare('UPDATE onboardings SET status = ?, form_id = ?, updated_at = ? WHERE id = ?').bind('done', id, now, ob.id),
+      env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify({
+        ...cd, website: cd.website || clean(d.store?.website, 200), logo: cd.logo || logo,
+        notes: [cd.notes, extra].filter(Boolean).join('\n\n').slice(0, 4000),
+      }), client.id),
+    ]);
+    return json({ form });
+  }
+  return json({ error: 'Not found' }, 404);
+}
+
+async function adminNotifications(request, env, p) {
+  if (!isAdmin(request, env)) return json({ error: 'Not allowed.' }, 403);
+  if (p === '/api/admin/notifications/seen' && request.method === 'POST') {
+    await env.DB.prepare('UPDATE notifications SET seen_at = ? WHERE seen_at IS NULL').bind(Date.now()).run();
+    return json({ ok: true });
+  }
+  const items = (await env.DB.prepare('SELECT id, kind, title, ref, created_at, seen_at FROM notifications ORDER BY created_at DESC LIMIT 30').all()).results;
+  const { n } = await env.DB.prepare('SELECT COUNT(*) AS n FROM notifications WHERE seen_at IS NULL').first();
+  return json({ items, unseen: n });
 }
 
 // Pregled svih formi za builder: upiti, renderi, zadnji upit i trošak po formi, plus aktivni linkovi klijenata.
@@ -640,6 +791,8 @@ async function portalApi(request, env, p) {
     if (sess.kind === 'view-as') await env.DB.prepare('UPDATE portal_sessions SET ended_at = ? WHERE id = ?').bind(Date.now(), sess.id).run();
     return json({ ok: true });
   }
+  // Onboarding: zlatar popunjava svoj vodič; čuva se dok kuca, Send ga šalje adminu.
+  if (p.startsWith('/api/portal/onboarding')) return portalOnboarding(request, env, p, client);
   const formRows = (await env.DB.prepare('SELECT id, data, template, updated_at, archived_at FROM forms WHERE client_id = ? ORDER BY updated_at DESC').bind(client.id).all()).results;
   const forms = Object.fromEntries(formRows.map((r) => [r.id, JSON.parse(r.data)]));
 
@@ -650,9 +803,12 @@ async function portalApi(request, env, p) {
     // Po formi: upiti, renderi i zadnji upit. Trošak AI-ja klijent ne vidi (samo admin).
     const per = Object.fromEntries((await env.DB.prepare(`SELECT l.form_id, COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, MAX(l.created_at) AS last_lead
       FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? GROUP BY l.form_id`).bind(client.id).all()).results.map((r) => [r.form_id, r]));
+    const ob = await env.DB.prepare('SELECT id, status, data, updated_at, submitted_at FROM onboardings WHERE client_id = ? ORDER BY created_at DESC LIMIT 1').bind(client.id).first();
     return json({
       session: { kind: sess.kind, expiresAt: sess.expires_at },
       client: { id: client.id, name: client.name, logo: d.logo || null, website: d.website || '' },
+      onboarding: ob ? { id: ob.id, status: ob.status, data: JSON.parse(ob.data || '{}'), updatedAt: ob.updated_at, submittedAt: ob.submitted_at } : null,
+      ...(ob && ob.status === 'draft' ? { onboardingDefaults: ONBOARDING_DEFAULTS } : {}),
       forms: formRows.filter((r) => !r.archived_at).map((r) => ({
         id: r.id, name: forms[r.id].name, template: r.template, label: TEMPLATES[r.template]?.label || 'Custom', updated_at: r.updated_at,
         leads: per[r.id]?.leads || 0, renders: per[r.id]?.renders || 0, lastLead: per[r.id]?.last_lead || null,
@@ -667,7 +823,7 @@ async function portalApi(request, env, p) {
     const leads = (await env.DB.prepare(`SELECT id, form_id, name, email, phone, answers, ref_key, files, created_at FROM leads WHERE form_id IN (${marks}) ORDER BY created_at DESC LIMIT 200`).bind(...ids).all()).results;
     const lids = leads.map((l) => l.id);
     const renders = lids.length
-      ? (await env.DB.prepare(`SELECT lead_id, n, image_key, tweak FROM renders WHERE status = 'ok' AND lead_id IN (${lids.map(() => '?').join(',')}) ORDER BY created_at`).bind(...lids).all()).results
+      ? (await env.DB.prepare(`SELECT lead_id, n, image_key, tweak, kind FROM renders WHERE status = 'ok' AND lead_id IN (${lids.map(() => '?').join(',')}) ORDER BY created_at`).bind(...lids).all()).results
       : [];
     return json({
       leads: leads.map((l) => {
@@ -677,8 +833,12 @@ async function portalApi(request, env, p) {
         return {
           id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a),
-          photos: [...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []), ...Object.entries(files).map(([k, key]) => ({ label: k.replace(/__more$/, ' (extra)').replace(/_/g, ' '), key }))],
-          renders: renders.filter((r) => r.lead_id === l.id).map((r) => ({ url: `/media/${r.image_key}`, tweak: r.tweak })),
+          photos: [
+            ...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []),
+            ...Object.entries(files).map(([k, key]) => ({ label: k.replace(/__more$/, ' (extra)').replace(/_/g, ' '), key })),
+            ...renders.filter((r) => r.lead_id === l.id && r.kind === 'tryon').map((r) => ({ label: 'On their smile', key: r.image_key })),
+          ],
+          renders: renders.filter((r) => r.lead_id === l.id && r.kind !== 'tryon').map((r) => ({ url: `/media/${r.image_key}`, tweak: r.tweak })),
         };
       }),
     });
@@ -691,6 +851,43 @@ async function demoHandled(request, env, id) {
   const b = await request.json().catch(() => ({}));
   const r = await env.DB.prepare('UPDATE demo_requests SET handled_at = ? WHERE id = ?').bind(b.handled === false ? null : Date.now(), id).run();
   return r.meta.changes ? json({ ok: true }) : json({ error: 'Not found' }, 404);
+}
+
+async function portalOnboarding(request, env, p, client) {
+  const ob = await env.DB.prepare('SELECT * FROM onboardings WHERE client_id = ? ORDER BY created_at DESC LIMIT 1').bind(client.id).first();
+  if (!ob) return json({ error: 'No onboarding for this store.' }, 404);
+  const open = ob.status === 'draft';
+  if (p === '/api/portal/onboarding' && request.method === 'PUT') {
+    if (!open) return json({ error: 'This onboarding was already sent.' }, 409);
+    const raw = await request.text();
+    if (raw.length > 200_000) return json({ error: 'Too much data.' }, 413);
+    let data;
+    try { data = JSON.parse(raw).data; } catch { return json({ error: 'Invalid data.' }, 400); }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return json({ error: 'Invalid data.' }, 400);
+    await env.DB.prepare('UPDATE onboardings SET data = ?, updated_at = ? WHERE id = ?').bind(JSON.stringify(data), Date.now(), ob.id).run();
+    return json({ ok: true, savedAt: Date.now() });
+  }
+  if (p === '/api/portal/onboarding/upload' && request.method === 'POST') {
+    if (!open) return json({ error: 'This onboarding was already sent.' }, 409);
+    const file = (await request.formData()).get('file');
+    if (!file || typeof file !== 'object' || !/^image\/(jpeg|png|webp)$/.test(file.type)) return json({ error: 'Photo must be JPG, PNG or WebP.' }, 400);
+    if (file.size > 5 * 1024 * 1024) return json({ error: 'Photo is too large (max 5 MB).' }, 400);
+    const key = `onboarding/${client.id}/${rid(12)}.${file.type.split('/')[1]}`;
+    await env.MEDIA.put(key, file.stream(), { httpMetadata: { contentType: file.type } });
+    return json({ url: `/media/${key}` });
+  }
+  if (p === '/api/portal/onboarding/submit' && request.method === 'POST') {
+    if (!open) return json({ ok: true, status: ob.status });
+    const d = JSON.parse(ob.data || '{}');
+    if (!(d.pieces || []).some((x) => x && String(x.label || '').trim())) return json({ error: 'Pick at least one piece you make.' }, 400);
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare('UPDATE onboardings SET status = ?, submitted_at = ?, updated_at = ? WHERE id = ?').bind('submitted', now, now, ob.id),
+      notify(env, 'onboarding', `${client.name} sent their onboarding`, ob.id),
+    ]);
+    return json({ ok: true, status: 'submitted' });
+  }
+  return json({ error: 'Not found' }, 404);
 }
 
 async function adminLeads(request, env) {
@@ -713,13 +910,17 @@ async function adminLeads(request, env) {
 }
 
 async function media(request, env, key) {
-  if (!/^(renders|refs|forms|clients|tests)\/[\w./-]+$/.test(key) || key.includes('..')) return json({ error: 'Not found' }, 404);
-  // Renderi su javni preko nepogodivog ključa; referentne slike kupaca vidi samo admin.
+  if (!/^(renders|refs|forms|clients|tests|onboarding)\/[\w./-]+$/.test(key) || key.includes('..')) return json({ error: 'Not found' }, 404);
+  // Renderi su javni preko nepogodivog ključa; slike kupaca (refs/, i proba na osmijehu) vide admin, zlatar tog upita i sam kupac (token upita).
   if (key.startsWith('refs/') && !isAdmin(request, env)) {
-    const sess = await portalSession(request, env);
     const leadId = key.slice(5).split(/[.-]/)[0];
-    const owner = sess && (await env.DB.prepare('SELECT f.client_id FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ?').bind(leadId).first());
-    if (!owner || owner.client_id !== sess.client_id) return json({ error: 'Not allowed.' }, 403);
+    const lt = new URL(request.url).searchParams.get('lt');
+    const lead = await env.DB.prepare('SELECT l.token, f.client_id FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ?').bind(leadId).first();
+    const byCustomer = lead && lt && lt === lead.token;
+    if (!byCustomer) {
+      const sess = await portalSession(request, env);
+      if (!lead || !sess || lead.client_id !== sess.client_id) return json({ error: 'Not allowed.' }, 403);
+    }
   }
   const obj = await env.MEDIA.get(key);
   if (!obj) return json({ error: 'Not found' }, 404);

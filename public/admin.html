@@ -60,6 +60,7 @@
       if (res.status === 403) return login('Pogrešan token.');
       const data = await res.json();
       const log = (await (await fetch('/api/admin/view-as-log', { headers: { 'x-admin-token': token } })).json()).sessions || [];
+      const obs = (await (await fetch('/api/admin/onboardings', { headers: { 'x-admin-token': token } })).json()).onboardings || [];
       const t = data.totals;
       const avg = t.renders ? t.cost / t.renders : 0;
       root.innerHTML = `
@@ -74,7 +75,9 @@
           <div class="stat">Prosjek po renderu<b>$${avg.toFixed(3)}</b></div>
         </div>
         ${log.length ? `<h2 style="font-size:17px;margin:0 0 12px">View as client (log)</h2><div class="lead" style="padding:6px 18px">${log.map((x) => `<p style="margin:8px 0"><b>${esc(x.name || x.client_id)}</b> <span class="muted">· ${new Date(x.started_at).toLocaleString('sr-Latn')} · ${x.ended_at ? 'zatvoreno ' + new Date(x.ended_at).toLocaleTimeString('sr-Latn') : x.expires_at < Date.now() ? 'isteklo' : 'aktivno'}</span></p>`).join('')}</div>` : ''}
-        <h2 style="font-size:17px;margin:0 0 12px">Zahtjevi za demo (JewelryLead sajt)</h2>
+        <h2 style="font-size:17px;margin:0 0 12px">Onboarding klijenata</h2>
+        ${obs.length ? `<div class="lead" style="padding:6px 18px">${obs.map((o) => `<p style="margin:10px 0"><b>${esc(o.name || o.client_id)}</b> <span class="muted">· ${o.status === 'draft' ? 'popunjava' : o.status === 'submitted' ? `<b style="color:var(--gold)">poslato ${new Date(o.submitted_at).toLocaleString('sr-Latn')}</b>, pregledaj u builderu` : `forma napravljena (${esc(o.form_id || '')})`} · zadnja izmjena ${new Date(o.updated_at).toLocaleString('sr-Latn')}</span></p>`).join('')}</div>` : '<p class="muted">Još nema onboardinga. Pošalji ga iz buildera: New form → Send onboarding form.</p>'}
+        <h2 style="font-size:17px;margin:20px 0 12px">Zahtjevi za demo (JewelryLead sajt)</h2>
         ${demosView(data.demos)}
         <h2 style="font-size:17px;margin:28px 0 12px">Leadovi iz widgeta</h2>
         ${data.leads.length ? data.leads.map(lead).join('') : '<p class="muted">Još nema leadova. Prođi formu na demo sajtu.</p>'}`;
@@ -107,7 +110,7 @@
       try { extra = JSON.parse(l.files || '{}'); } catch {}
       const files = Object.entries(extra).map(([f, key]) => `<figure><img src="/media/${esc(key)}?k=${k}" alt="" /><figcaption>Fajl: ${esc(f)}</figcaption></figure>`).join('');
       const renders = l.renders.map((r) => r.status === 'ok'
-        ? `<figure><a href="/media/${esc(r.image_key)}" target="_blank"><img src="/media/${esc(r.image_key)}" alt="" /></a><figcaption>#${r.n} · ${esc(r.model)}<br />${(r.ms / 1000).toFixed(1)} s · $${(r.cost_usd || 0).toFixed(4)}${r.tweak ? `<br />dorada: ${esc(r.tweak)}` : ''}</figcaption></figure>`
+        ? `<figure><a href="/media/${esc(r.image_key)}${r.image_key.startsWith('refs/') ? `?k=${k}` : ''}" target="_blank"><img src="/media/${esc(r.image_key)}${r.image_key.startsWith('refs/') ? `?k=${k}` : ''}" alt="" /></a><figcaption>#${r.n} · ${esc(r.model)}<br />${(r.ms / 1000).toFixed(1)} s · $${(r.cost_usd || 0).toFixed(4)}${r.tweak ? `<br />dorada: ${esc(r.tweak)}` : ''}</figcaption></figure>`
         : `<figure><div class="err">${esc(r.status)}: ${esc(r.error || '')}</div><figcaption>${esc(r.model)}</figcaption></figure>`).join('');
       return `<article class="lead">
         <header><h2>${esc(l.name)} <span class="muted">· ${esc(l.email)} · ${esc(l.phone)}</span></h2><span class="muted">${new Date(l.created_at).toLocaleString('sr-Latn')}</span></header>

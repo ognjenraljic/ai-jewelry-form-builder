@@ -245,13 +245,13 @@ export const FORMS = { demo: { ...fromTemplate('custom-enquiry', { id: 'demo', b
 
 export function publicForm(form) {
   // Sve što ide u browser. Opis oblika (shape) i napomene za AI (note) nisu za kupca.
-  const { id, brand, theme, maxRenders, contact, result } = form;
+  const { id, brand, theme, maxRenders, contact, result, tryOn } = form;
   const steps = (form.steps || []).map((s) => ({
     ...s,
     fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => o) } : f)),
   }));
   const styles = Object.fromEntries(Object.entries(form.styles || {}).map(([t, list]) => [t, list.map(({ value, label, image }) => ({ value, label, image }))]));
-  return { id, brand, theme, maxRenders, steps, styles, contact, result };
+  return { id, brand, theme, maxRenders, steps, styles, contact, result, tryOn };
 }
 
 // ---------- Provjera definicije forme (builder čuva samo ono što prođe ovo) ----------
@@ -278,6 +278,7 @@ export function validateFormDef(f, id) {
   str(f.name, 80, 'Internal name');
   if (f.clientId != null && !SLUG.test(f.clientId)) err('Client: invalid ID');
   if (f.template != null && !TEMPLATES[f.template]) err('Unknown template');
+  bool(f.tryOn, 'Try-on on the customer photo');
   str(f.brand?.name, 60, 'Brand name', true);
   if (f.brand?.logo && !imgOk(f.brand.logo)) err('Logo must be uploaded here');
   str(f.background, 80, 'Render background');
@@ -357,4 +358,88 @@ export function validateFormDef(f, id) {
   str(f.result.done, 200, 'Message under the render', true);
   str(f.result.disclaimer, 240, 'Disclaimer', true);
   return true;
+}
+
+// ---------- Onboarding klijenta ----------
+
+// Šta zlatar vidi u vodiču: komadi, početni stilovi sa slikama, metali, kamenje i rasponi budžeta.
+export const ONBOARDING_DEFAULTS = {
+  pieces: PIECES.map(({ value, label, icon }) => ({ value, label, icon })),
+  styles: Object.fromEntries(Object.entries(DEFAULT_STYLES).map(([k, list]) => [k, list.map(({ value, label, image }) => ({ value, label, image }))])),
+  metals: METALS.map(({ value, label, swatch }) => ({ value, label, swatch })),
+  stones: [opt('moissanite', 'Moissanite'), opt('lab', 'Lab-grown diamonds'), opt('natural', 'Natural diamonds'), opt('none', 'No stones')],
+  budgets: BUDGETS.map((b) => b.label),
+};
+
+const LIGHT_THEME = { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#8d8477' };
+const slugOf = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36) || 'item';
+const uniqOf = (base, taken) => { let v = base; for (let i = 2; taken.has(v); i++) v = `${base}-${i}`; taken.add(v); return v; };
+// Tekst na boji: taman ili svijetao, po svjetlini boje.
+const inkOn = (hex) => {
+  const n = parseInt(hex.slice(1), 16);
+  const l = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return l > 0.6 ? '#111111' : '#ffffff';
+};
+
+// Forma iz poslatog onboardinga: Custom Enquiry suženo na komade, stilove, metale, kamenje i budžete koje je zlatar izabrao.
+// img(url) pretvara sliku iz onboardinga u sliku forme (worker je prije toga kopira u R2), ili vrati '' ako slika ne važi.
+export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => u }) {
+  const form = fromTemplate('custom-enquiry', { id, brand, clientId, logo, name: `${brand} · Custom form` });
+  const typeStep = form.steps.find((s) => s.id === 'type');
+  const typeField = typeStep.fields.find((f) => f.id === 'type');
+  const known = Object.fromEntries(typeField.options.map((o) => [o.value, o]));
+  const pieces = (Array.isArray(d.pieces) ? d.pieces : []).filter((p) => p && String(p.label || '').trim()).slice(0, 12);
+  if (!pieces.length) throw new Error('The onboarding has no pieces yet.');
+
+  const taken = new Set();
+  const options = [];
+  const styles = {};
+  for (const p of pieces) {
+    const label = String(p.label).trim().slice(0, 60);
+    const base = known[p.value];
+    const value = base && !taken.has(base.value) ? uniqOf(base.value, taken) : uniqOf(slugOf(label), taken);
+    options.push(base ? { ...base, value, label } : opt(value, label, { icon: 'gem', subject: `a custom ${label.toLowerCase()}` }));
+    const lib = DEFAULT_STYLES[p.value] || [];
+    const st = new Set(['other']);
+    styles[value] = (Array.isArray(p.styles) ? p.styles : [])
+      .filter((s) => s && s.keep !== false && String(s.label || '').trim())
+      .slice(0, 24)
+      .map((s) => {
+        const shape = String(s.note || '').trim().slice(0, 300) || lib.find((x) => x.value === s.value)?.shape || '';
+        return { value: uniqOf(slugOf(s.label), st), label: String(s.label).trim().slice(0, 40), image: s.image ? img(s.image) : '', shape };
+      });
+  }
+  typeField.options = options;
+  if (options.length === 1) { typeField.default = options[0].value; typeStep.enabled = false; }
+  form.styles = styles;
+  if (!options.some((o) => o.value === 'grillz')) form.steps = form.steps.filter((s) => s.id !== 'teeth');
+
+  const design = form.steps.find((s) => s.id === 'design');
+  const field = (fid) => design?.fields.find((f) => f.id === fid);
+  // Metali: izabrani iz liste + vlastiti (npr. "Black gold"); bez izbora ostaju svi.
+  const metals = Array.isArray(d.metals) ? d.metals : [];
+  const extraMetals = String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 6);
+  if (field('metal') && (metals.length || extraMetals.length)) {
+    const mt = new Set();
+    field('metal').options = [
+      ...field('metal').options.filter((o) => metals.includes(o.value)).map((o) => (mt.add(o.value), o)),
+      ...extraMetals.map((m) => opt(uniqOf(slugOf(m), mt), m.slice(0, 40))),
+    ];
+  }
+  // Kamenje: samo izabrano; ako zlatar radi samo bez kamena, pitanja o kamenu se isključe.
+  const stones = Array.isArray(d.stones) ? d.stones : [];
+  if (field('stones') && stones.length) {
+    field('stones').options = field('stones').options.filter((o) => stones.includes(o.value));
+    if (stones.every((x) => x === 'none')) for (const f of design.fields) if (['stones', 'coverage', 'clarity'].includes(f.id)) f.enabled = false;
+  }
+  // Budžet: rasponi zlatara.
+  const budgets = (Array.isArray(d.budgets) ? d.budgets : []).map((b) => String(b || '').trim().slice(0, 40)).filter(Boolean).slice(0, 10);
+  const bf = form.steps.find((s) => s.id === 'budget')?.fields.find((f) => f.id === 'budget');
+  if (bf && budgets.length) { const bt = new Set(); bf.options = budgets.map((b) => opt(uniqOf(slugOf(b), bt), b)); }
+
+  // Izgled: svijetla ili tamna tema i boja brenda.
+  const store = d.store || {};
+  if (store.theme === 'light') form.theme = { ...LIGHT_THEME };
+  if (/^#[0-9a-f]{6}$/i.test(store.accent || '')) { form.theme.accent = store.accent; form.theme['accent-ink'] = inkOn(store.accent); }
+  return form;
 }
