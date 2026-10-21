@@ -159,7 +159,7 @@ function setClient(cid) {
 }
 
 async function openForm(id, force = false) {
-  if (!force && (dirty() || clientDirty()) && !confirm('You have unsaved changes. Discard them?')) { if (B.view === 'editor') renderTop(); return; }
+  if (!force && (dirty() || clientDirty()) && !(await JLUI.confirm('You have unsaved changes. Discard them?'))) { if (B.view === 'editor') renderTop(); return; }
   const { form, updated_at: updatedAt } = await api(`/api/admin/forms/${id}`);
   B.updatedAt = updatedAt || 0;
   B.id = id;
@@ -253,7 +253,7 @@ function renderHubList() {
 
 async function archiveForm(id, on) {
   const f = B.forms.find((x) => x.id === id);
-  if (on && !confirm(`Archive "${f?.name || id}"?\n\nIt disappears from the lists and stops taking new leads (the embedded form shows "not available"). Leads and renders stay. You can restore it anytime.`)) return;
+  if (on && !(await JLUI.confirm(`Archive "${f?.name || id}"?\n\nIt disappears from the lists and stops taking new leads (the embedded form shows "not available"). Leads and renders stay. You can restore it anytime.`))) return;
   try {
     await api(`/api/admin/forms/${id}/archive`, { method: 'POST', body: JSON.stringify({ archived: on }) });
     await refreshLists();
@@ -263,7 +263,7 @@ async function archiveForm(id, on) {
 
 async function archiveClient(cid, on) {
   const c = B.clients.find((x) => x.id === cid);
-  if (on && !confirm(`Archive ${c?.name || cid}?\n\nTheir forms are archived too and stop taking new leads, and their portal link is turned off. Leads and renders stay. Restore brings the client and those forms back (a new portal link is needed).`)) return;
+  if (on && !(await JLUI.confirm(`Archive ${c?.name || cid}?\n\nTheir forms are archived too and stop taking new leads, and their portal link is turned off. Leads and renders stay. Restore brings the client and those forms back (a new portal link is needed).`))) return;
   try {
     await api(`/api/admin/clients/${cid}/archive`, { method: 'POST', body: JSON.stringify({ archived: on }) });
     await refreshLists();
@@ -292,51 +292,60 @@ function newFormChoice(clientId) {
   d.innerHTML = `
     <h2>New form</h2>
     <p class="lead">${esc(B.clients.find((c) => c.id === clientId)?.name || 'Pick a project')}</p>
+    ${clientId ? '' : `<label class="f"><span>Project</span><select class="sel" data-choice-client>${activeClients().map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></label>`}
     <div class="choices">
       <button class="choice-card" data-ch="custom"><b>Create custom form</b><small>Start from a template and set it up yourself in the builder.</small></button>
       <button class="choice-card" data-ch="onboarding"><b>Send onboarding form</b><small>The client fills in their pieces, styles with photos, metals and budget. You get notified, then turn it into a form with one click.</small></button>
     </div>
     <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" data-ch="close">Cancel</button></div>`;
   document.body.appendChild(d);
-  d.addEventListener('click', (e) => {
+  d.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-ch]');
-    if (!b) return;
+    if (!b || d.dataset.busy === 'true') return;
+    const cid = clientId || d.querySelector('[data-choice-client]')?.value;
+    if (b.dataset.ch === 'onboarding') return sendOnboarding(cid, d);
     d.close();
-    if (b.dataset.ch === 'custom') newForm(clientId);
-    if (b.dataset.ch === 'onboarding') sendOnboarding(clientId);
+    if (b.dataset.ch === 'custom') newForm(cid);
   });
   d.addEventListener('close', () => d.remove());
   d.showModal();
 }
 
 // Onboarding link: novi portal link klijenta (stari prestaje da radi); prikazuje se jednom, za kopiranje.
-async function sendOnboarding(cid) {
+async function sendOnboarding(cid, existingDialog = null) {
   const c = B.clients.find((x) => x.id === cid);
   if (!c) return;
-  if (B.overview.links[cid] && !confirm(`${c.name} already has a portal link. Sending onboarding creates a new link and the old one stops working. Continue?`)) return;
+  if (B.overview.links[cid] && !(await JLUI.confirm(`${c.name} already has a portal link. Sending onboarding creates a new link and the old one stops working. Continue?`))) return;
+  const d = existingDialog || document.createElement('dialog');
+  if (!existingDialog) { document.body.appendChild(d); d.addEventListener('close', () => d.remove()); d.showModal(); }
+  d.dataset.busy = 'true';
+  d.innerHTML = `<h2>Preparing onboarding</h2><div class="jl-loading" role="status"><span class="jl-spinner"></span><span>Creating a secure link for ${esc(c.name)}…</span></div>`;
+  d.addEventListener('cancel', (e) => { if (d.dataset.busy === 'true') e.preventDefault(); });
   try {
     const r = await api(`/api/admin/clients/${cid}/onboarding`, { method: 'POST' });
     B.overview.links[cid] = { createdAt: r.createdAt };
     await refreshLists();
     if (B.view === 'hub') renderHubList();
-    const d = document.createElement('dialog');
+    d.dataset.busy = 'false';
     d.innerHTML = `
       <h2>Onboarding link</h2>
       <p class="lead">Send this link to ${esc(c.name)}. They set up their store, pieces, styles with photos, metals and budget. Everything saves as they go, and you get a notification when they press Send. The same link later opens their portal with leads.</p>
       <div class="pick-row"><input class="in" id="ob-url" readonly value="${esc(r.url)}" /><button class="btn small primary" data-ob="copy">Copy</button></div>
       <p class="hint">For safety the link is shown only once. Valid for one year.</p>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Open as client ↗</a><button class="btn primary" data-ob="close">Done</button></div>`;
-    document.body.appendChild(d);
     d.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-ob]');
       if (!b) return;
       if (b.dataset.ob === 'close') d.close();
       if (b.dataset.ob === 'copy') { try { await navigator.clipboard.writeText(d.querySelector('#ob-url').value); b.textContent = 'Copied'; } catch { d.querySelector('#ob-url').select(); } }
     });
-    d.addEventListener('close', () => d.remove());
-    d.showModal();
     d.querySelector('#ob-url').select();
-  } catch (err) { toast(err.message); }
+  } catch (err) {
+    d.dataset.busy = 'false';
+    d.innerHTML = `<h2>Could not prepare the link</h2><p class="err-text">${esc(err.message)}</p><button class="btn" data-retry-onboarding>Try again</button> <button class="btn" data-dismiss-onboarding>Close</button>`;
+    d.querySelector('[data-retry-onboarding]').onclick = () => sendOnboarding(cid, d);
+    d.querySelector('[data-dismiss-onboarding]').onclick = () => d.close();
+  }
 }
 
 // Pregled poslatog onboardinga i forma iz njega (slike se kopiraju u formu, admin je pregleda u builderu).
@@ -351,14 +360,15 @@ async function reviewOnboarding(obid) {
       <div class="obr-styles">${kept(p).map((x) => `<figure>${x.image ? `<img src="${esc(x.image)}" alt="" />` : '<span></span>'}<figcaption>${esc(x.label)}</figcaption></figure>`).join('') || '<p class="hint">No styles: customers describe their idea.</p>'}</div></div>`).join('');
   const dlg = document.createElement('dialog');
   dlg.className = 'obr';
+  const materialName = (value) => [...(d.customMetals || []), ...(d.customStones || [])].find((x) => x.value === value)?.label || nice(value);
   dlg.innerHTML = `
     <h2>${esc(ob.name || 'Onboarding')}</h2>
     <p class="lead">${ob.status === 'submitted' ? `Sent ${esc(day(ob.submitted_at))}.` : ob.status === 'done' ? 'A form was already created from this onboarding.' : 'Still in progress (not sent yet).'}</p>
     <div class="obr-store">${s.logo ? `<img src="${esc(s.logo)}" alt="" />` : ''}<div><b>${esc(s.name || '')}</b><small>${esc(s.website || '')} · ${s.theme === 'light' ? 'Light' : 'Dark'} look <i style="background:${esc(s.accent || '#35d0c4')}"></i></small></div></div>
     ${pieces}
     <dl class="obr-list">
-      <dt>Metals</dt><dd>${esc([...(d.metals || []).map(nice), ...String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)].join(', ') || 'All')}</dd>
-      <dt>Stones</dt><dd>${esc((d.stones || []).map(nice).join(', ') || 'All')}</dd>
+      <dt>Metals</dt><dd>${esc([...(d.metals || []).map(materialName), ...String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)].join(', ') || 'All')}</dd>
+      <dt>Stones</dt><dd>${esc((d.stones || []).map(materialName).join(', ') || 'All')}</dd>
       <dt>Budgets</dt><dd>${esc((d.budgets || []).filter(Boolean).join(' · '))}</dd>
       ${d.questions ? `<dt>Questions</dt><dd>${esc(d.questions)}</dd>` : ''}
       ${d.notes ? `<dt>Notes</dt><dd>${esc(d.notes)}</dd>` : ''}
@@ -394,11 +404,16 @@ async function reviewOnboarding(obid) {
 
 // Obavještenja: staklena lista ispod zvonca; otvaranje označi sve kao viđeno.
 let notifOff = () => {};
+let notifClose = () => {};
 function toggleNotifs(btn) {
   const old = document.querySelector('.notif-panel');
-  if (old) { old.remove(); document.removeEventListener('mousedown', notifOff); return; }
+  if (old) return notifClose();
   const items = B.notifs?.items || [];
   const p = document.createElement('div');
+  const shade = document.createElement('div'); shade.className = 'jl-popover-shade'; document.body.appendChild(shade);
+  const close = () => { p.remove(); shade.remove(); document.removeEventListener('mousedown', notifOff); document.removeEventListener('keydown', onKey); };
+  notifClose = close;
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
   p.className = 'notif-panel';
   p.innerHTML = `<div class="notif-head">Notifications</div>${items.map((n) => `
     <button class="notif ${n.seen_at ? '' : 'new'}" data-kind="${esc(n.kind)}" data-ref="${esc(n.ref || '')}">
@@ -411,12 +426,13 @@ function toggleNotifs(btn) {
   p.addEventListener('click', (e) => {
     const n = e.target.closest('.notif');
     if (!n) return;
-    p.remove();
+    close();
     if (n.dataset.kind === 'onboarding' && n.dataset.ref) reviewOnboarding(n.dataset.ref);
     if (n.dataset.kind === 'demo') window.open('/admin', '_blank', 'noopener');
   });
-  notifOff = (e) => { if (!p.contains(e.target) && !e.target.closest('[data-act="notifs"]')) { p.remove(); document.removeEventListener('mousedown', notifOff); } };
+  notifOff = (e) => { if (!p.contains(e.target) && !e.target.closest('[data-act="notifs"]')) close(); };
   setTimeout(() => document.addEventListener('mousedown', notifOff), 0);
+  document.addEventListener('keydown', onKey);
   if (B.notifs?.unseen) {
     api('/api/admin/notifications/seen', { method: 'POST' }).catch(() => {});
     B.notifs.unseen = 0;
@@ -463,14 +479,14 @@ function portalLink(cid) {
       if (b.dataset.pl === 'close') return d.close();
       if (b.dataset.pl === 'copy') { await navigator.clipboard.writeText(d.querySelector('#pl-url').value); b.textContent = 'Copied'; return; }
       if (b.dataset.pl === 'off') {
-        if (!confirm(`Turn off ${c.name}'s portal link? It stops working right away.`)) return;
+        if (!(await JLUI.confirm(`Turn off ${c.name}'s portal link? It stops working right away.`))) return;
         await api(`/api/admin/clients/${cid}/portal-link`, { method: 'DELETE' });
         delete B.overview.links[cid];
         after();
         return d.close();
       }
       if (b.dataset.pl === 'new') {
-        if (B.overview.links[cid] && !confirm('Create a new link? The old link stops working right away.')) return;
+        if (B.overview.links[cid] && !(await JLUI.confirm('Create a new link? The old link stops working right away.'))) return;
         const r = await api(`/api/admin/clients/${cid}/portal-link`, { method: 'POST' });
         B.overview.links[cid] = { createdAt: r.createdAt };
         d.innerHTML = body();
@@ -574,7 +590,7 @@ const toggle = (path, label, { invert = false, title = '' } = {}) => {
 // Slika sa uploadom (data-upload = putanja gdje ide URL; data-scope = forms ili clients)
 const imgPick = (path, { scope = 'forms', size = 'sm', empty = 'Image' } = {}) => {
   const v = getP(path);
-  return `<label class="pick ${size}" title="${v ? 'Replace image' : 'Upload image'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span>${esc(empty)}</span>`}<input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="${path}" data-scope="${scope}" /></label>${v ? `<button class="icon-btn danger" title="Remove image" data-act="unset" data-path="${path}">✕</button>` : ''}`;
+  return `<label class="pick ${size}" title="${v ? 'Replace image or drag a new photo here' : 'Upload or drop an image'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span>${esc(empty)}${size === 'logo' ? '<small>or drag & drop here</small>' : ''}</span>`}<input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="${path}" data-scope="${scope}" /></label>${v ? `<button class="icon-btn danger" title="Remove image" data-act="unset" data-path="${path}">✕</button>` : ''}`;
 };
 const snippetFor = (id) => {
   const o = location.origin.replace('//builder.', '//');
@@ -675,7 +691,7 @@ function piecesView() {
       <div class="style">
         <label class="img" title="Upload image">
           ${s.image ? `<img src="${esc(s.image)}" alt="" />` : '<span class="empty">No image yet<br />Click to upload</span>'}
-          <span class="up">Replace image</span>
+          <span class="up">Replace image or drag & drop</span>
           <input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="styles.${esc(o.value)}.${j}.image" data-scope="forms" />
         </label>
         <div class="body">
@@ -987,7 +1003,7 @@ app.addEventListener('click', async (e) => {
   if (act === 'archive-form' || act === 'restore-form') archiveForm(el.dataset.id, act === 'archive-form');
   if (act === 'archive-client' || act === 'restore-client') archiveClient(el.dataset.cid, act === 'archive-client');
   if (act === 'load-version') {
-    if (dirty() && !confirm('Replace your unsaved changes with this version?')) return;
+    if (dirty() && !(await JLUI.confirm('Replace your unsaved changes with this version?'))) return;
     try {
       const { form } = await api(`/api/admin/forms/${B.id}/versions/${el.dataset.vid}`);
       B.draft = { ...form, id: B.id };
@@ -1018,7 +1034,7 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'del') {
-    if (el.dataset.confirm && !confirm(el.dataset.confirm)) return;
+    if (el.dataset.confirm && !(await JLUI.confirm(el.dataset.confirm))) return;
     const arr = getP(el.dataset.path);
     if (arr.length === 1 && /fields$|options$/.test(el.dataset.path)) return toast('Keep at least one. Turn it off instead, or remove the whole step.');
     arr.splice(i, 1);
@@ -1027,7 +1043,7 @@ app.addEventListener('click', async (e) => {
   if (act === 'del-piece') {
     const loc = typeLoc();
     if (loc.field.options.length < 2) return toast('A form needs at least one piece.');
-    if (!confirm('Remove this piece and its styles?')) return;
+    if (!(await JLUI.confirm('Remove this piece and its styles?'))) return;
     loc.field.options = loc.field.options.filter((o) => o.value !== el.dataset.v);
     if (B.draft.styles) delete B.draft.styles[el.dataset.v];
     if (loc.field.options.length === 1) loc.field.default = loc.field.options[0].value;
@@ -1097,6 +1113,8 @@ app.addEventListener('click', async (e) => {
 async function upload(input) {
   const file = input.files[0];
   if (!file) return;
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return toast('Please choose a JPG, PNG or WebP photo.');
+  if (file.size > 20 * 1024 * 1024) return toast('Please choose a photo smaller than 20 MB.');
   // Forma, klijent i polje se zapamte prije slanja: ako se u međuvremenu otvori druga forma, slika ne završi u njoj.
   const formId = B.id;
   const path = input.dataset.upload;
@@ -1104,6 +1122,10 @@ async function upload(input) {
   const clientId = B.client?.id;
   if (clientScope && !clientId) return setStatus('Pick a client first.', 'err');
   const isLogo = /logo$/.test(path);
+  const box = input.closest('label');
+  if (input.disabled) return;
+  input.disabled = true;
+  JLUI.uploadBusy(box, true);
   setStatus('Uploading…', '');
   try {
     let blob = file;
@@ -1127,7 +1149,7 @@ async function upload(input) {
     changed(true);
   } catch (err) {
     setStatus(err.message, 'err');
-  }
+  } finally { JLUI.uploadBusy(box, false); input.disabled = false; input.value = ''; }
 }
 
 // ---------- Čuvanje, klijenti, nove forme ----------
@@ -1186,14 +1208,20 @@ function dialog(html, onSubmit) {
   d.querySelector('form').addEventListener('submit', async (e) => {
     if (e.submitter?.value !== 'ok') return;
     e.preventDefault();
-    try { await onSubmit(d); d.close(); } catch (err) { d.querySelector('.err-text').textContent = err.message; }
+    if (d.dataset.busy === 'true') return;
+    d.dataset.busy = 'true';
+    const submit = e.submitter; const label = submit.innerHTML;
+    submit.disabled = true; submit.innerHTML = '<span class="jl-spinner"></span> Creating…';
+    try { await onSubmit(d); d.close(); }
+    catch (err) { d.querySelector('.err-text').textContent = err.message; }
+    finally { d.dataset.busy = 'false'; submit.disabled = false; submit.innerHTML = label; }
   });
   d.addEventListener('close', () => d.remove());
   d.showModal();
   return d;
 }
 
-// Dijalozi u izgledu buildera umjesto prompt() i alert().
+// Dijalozi u izgledu buildera umjesto prompt() i JLUI.alert().
 function askText(title, { label = '', placeholder = '', value = '', ok = 'Add' } = {}) {
   return new Promise((resolve) => {
     const d = document.createElement('dialog');
@@ -1229,7 +1257,7 @@ function newClient() {
   dialog(`<h2>New client</h2>
     <label class="f"><span>Store name</span><input class="in" name="name" required placeholder="Northstar Jewelers" /></label>
     <label class="f"><span>Website (optional)</span><input class="in" name="website" placeholder="northstarjewelers.com" /></label>
-    <p class="hint">Next you pick a template for their first form.</p>`, async (d) => {
+    <p class="hint">Next, create a form yourself or send the client an onboarding link.</p>`, async (d) => {
     const { client } = await api('/api/admin/clients', { method: 'POST', body: JSON.stringify({ name: d.querySelector('[name=name]').value, website: d.querySelector('[name=website]').value }) });
     await refreshLists();
     setTimeout(() => newFormChoice(client.id), 50);

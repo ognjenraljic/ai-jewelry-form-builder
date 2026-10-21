@@ -369,7 +369,7 @@ export function validateFormDef(f, id) {
 
 // Šta zlatar vidi u vodiču: komadi, početni stilovi sa slikama, metali, kamenje i rasponi budžeta.
 export const ONBOARDING_DEFAULTS = {
-  pieces: PIECES.map(({ value, label, icon }) => ({ value, label, icon })),
+  pieces: PIECES.map(({ value, label, icon }) => ({ value, label, icon, image: value === 'chain' ? '/site/gallery/chain-category-v2.webp' : DEFAULT_STYLES[value]?.[0]?.image || '' })),
   styles: Object.fromEntries(Object.entries(DEFAULT_STYLES).map(([k, list]) => [k, list.map(({ value, label, image }) => ({ value, label, image }))])),
   metals: METALS.map(({ value, label, swatch }) => ({ value, label, swatch })),
   stones: [opt('moissanite', 'Moissanite'), opt('lab', 'Lab-grown diamonds'), opt('natural', 'Natural diamonds'), opt('none', 'No stones')],
@@ -424,17 +424,24 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
   // Metali: izabrani iz liste + vlastiti (npr. "Black gold"); bez izbora ostaju svi.
   const metals = Array.isArray(d.metals) ? d.metals : [];
   const extraMetals = String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 6);
-  if (field('metal') && (metals.length || extraMetals.length)) {
+  const customMetals = (Array.isArray(d.customMetals) ? d.customMetals : []).filter((m) => metals.includes(m.value));
+  if (field('metal') && (metals.length || extraMetals.length || customMetals.length)) {
     const mt = new Set();
     field('metal').options = [
       ...field('metal').options.filter((o) => metals.includes(o.value)).map((o) => (mt.add(o.value), o)),
       ...extraMetals.map((m) => opt(uniqOf(slugOf(m), mt), m.slice(0, 40))),
+      ...customMetals.map((m) => opt(uniqOf(slugOf(m.label), mt), String(m.label).slice(0, 40))),
     ];
   }
   // Kamenje: samo izabrano; ako zlatar radi samo bez kamena, pitanja o kamenu se isključe.
   const stones = Array.isArray(d.stones) ? d.stones : [];
+  const customStones = (Array.isArray(d.customStones) ? d.customStones : []).filter((s) => stones.includes(s.value));
   if (field('stones') && stones.length) {
-    field('stones').options = field('stones').options.filter((o) => stones.includes(o.value));
+    const st = new Set();
+    field('stones').options = [
+      ...field('stones').options.filter((o) => stones.includes(o.value)).map((o) => (st.add(o.value), o)),
+      ...customStones.map((s) => opt(uniqOf(slugOf(s.label), st), String(s.label).slice(0, 40))),
+    ];
     if (stones.every((x) => x === 'none')) for (const f of design.fields) if (['stones', 'coverage', 'clarity'].includes(f.id)) f.enabled = false;
   }
   // Budžet: rasponi zlatara.

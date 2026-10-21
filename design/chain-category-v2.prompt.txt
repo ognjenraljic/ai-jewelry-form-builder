@@ -1,0 +1,4 @@
+Generator: Codex built-in ImageGen
+Asset: public/site/gallery/chain-category-v2.webp
+
+Use case: product-mockup. Asset type: square jewelry category thumbnail for JewelryLead custom-jewelry onboarding. Primary request: a beautiful premium 18k yellow-gold Cuban link chain necklace, unmistakably a CHAIN with no pendant. Show the complete necklace arranged in an elegant open oval or U shape on a dark near-black studio backdrop. Thick polished interlocking links with realistic craftsmanship, subtle warm edge highlights, soft contact shadow. Photorealistic high-end catalog photography, three-quarter overhead view, centered, square composition with generous padding so entire chain fits inside category card. Chain should fill 75% of frame. Crisp links and clasp, rich gold, restrained elegant lighting, no excessive sparkle. No text, no logos, no gemstones, no hands, no person, no props.

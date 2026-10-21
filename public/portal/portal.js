@@ -176,11 +176,11 @@ app.addEventListener('change', async (e) => {
       const l = P.leads.find((x) => x.id === id);
       if (l) { P.counts[prev] = Math.max(0, (P.counts[prev] || 1) - 1); P.counts[el.value] = (P.counts[el.value] || 0) + 1; l.status = el.value; }
       el.className = `status-sel s-${el.value}`;
-    } catch (err) { alert(err.message); el.value = prev; }
+    } catch (err) { JLUI.alert(err.message); el.value = prev; }
   }
   if (el.dataset.leadNote) {
     try { await api(`/api/portal/leads/${el.dataset.leadNote}`, { method: 'PATCH', body: JSON.stringify({ note: el.value }), json: true }); const l = P.leads.find((x) => x.id === el.dataset.leadNote); if (l) l.note = el.value; el.classList.add('saved'); setTimeout(() => el.classList.remove('saved'), 1200); }
-    catch (err) { alert(err.message); }
+    catch (err) { JLUI.alert(err.message); }
   }
 });
 app.addEventListener('keydown', (e) => {
@@ -195,7 +195,7 @@ app.addEventListener('click', async (e) => {
   if (t.dataset.see) { P.tab = 'leads'; P.form = t.dataset.see; render(); }
   if (t.dataset.act === 'more') { P.loadingMore = true; render(); try { await loadLeads(true); } finally { P.loadingMore = false; render(); } }
   if (t.dataset.act === 'signout') {
-    if (!confirm('Sign out on this device? You can come back with your portal link.')) return;
+    if (!(await JLUI.confirm('Sign out on this device? You can come back with your portal link.'))) return;
     try { await api('/api/portal/logout', { method: 'POST' }); } catch {}
     ended('Signed out', 'Open your portal link again to come back.');
   }
@@ -213,9 +213,9 @@ app.addEventListener('click', async (e) => {
 
 // ---------- Onboarding (vodič za zlatara) ----------
 // Zlatar popuni radnju, komade, stilove sa slikama, materijale i budžet. Sve se čuva samo; Send šalje adminu.
-const OB_STEPS = [['store', 'Your store'], ['pieces', 'What you make'], ['styles', 'Styles'], ['materials', 'Materials & budget'], ['extras', 'Anything else'], ['send', 'Review & send']];
+const OB_STEPS = [['store', 'Your store'], ['pieces', 'What you make'], ['styles', 'Styles'], ['materials', 'Materials & budget'], ['extras', 'Notes for our team'], ['send', 'Review & send']];
 const ACCENTS = ['#35d0c4', '#d8b46a', '#e7a9a0', '#9b8cff', '#5aa9ff', '#ef6f6f', '#f2f2f2'];
-const OB = { d: null, step: 0, timer: null, saving: false, savedAt: 0, err: '', dirty: false, rev: 0, inflight: null, retry: null };
+const OB = { d: null, step: 0, timer: null, saving: false, savedAt: 0, err: '', dirty: false, rev: 0, inflight: null, retry: null, uploads: new Map(), submitting: false, previewBg: '#20262b', previewTimer: null, previewSeq: 0, previewStep: -1 };
 // Stabilan id za komade i stilove: slika se upiše u pravi stil i kad se u međuvremenu doda ili ukloni neki drugi.
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -227,6 +227,14 @@ function obInit() {
   d.metals = Array.isArray(d.metals) ? d.metals : defs.metals.map((m) => m.value);
   d.stones = Array.isArray(d.stones) ? d.stones : defs.stones.map((s) => s.value);
   d.budgets = Array.isArray(d.budgets) ? d.budgets : [...defs.budgets];
+  d.customMetals = Array.isArray(d.customMetals) ? d.customMetals : [];
+  d.customStones = Array.isArray(d.customStones) ? d.customStones : [];
+  // Ranije upisani "Other metals" postaju prave opcije, bez gubitka podataka.
+  for (const label of String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+    const value = `custom-${uid()}`;
+    d.customMetals.push({ value, label: label.slice(0, 40) }); d.metals.push(value);
+  }
+  d.metalsOther = '';
   for (const pc of d.pieces) { pc.uid ||= uid(); for (const st of pc.styles || []) st.uid ||= uid(); }
   OB.d = d;
   OB.rev = P.me.onboarding.rev || 0;
@@ -242,11 +250,12 @@ function obSet(path, v) {
 }
 
 function obSave(now = false) {
-  if (readOnly()) return; // admin pregled ne mijenja klijentove odgovore
+  if (readOnly() || OB.submitting || !OB.d) return; // admin pregled ne mijenja klijentove odgovore
   OB.dirty = true;
   clearTimeout(OB.timer);
   clearTimeout(OB.retry);
   const go = async () => {
+    if (OB.submitting || !OB.d) return;
     if (OB.saving) { OB.timer = setTimeout(go, 300); return; }
     OB.saving = true;
     OB.dirty = false;
@@ -265,7 +274,7 @@ function obSave(now = false) {
           P.me.onboarding.data = e.data.data;
           P.me.onboarding.rev = e.data.rev;
           renderOnboarding();
-          alert('Your answers were updated on another device. You now see the latest version.');
+          JLUI.alert('Your answers were updated on another device. You now see the latest version.');
           return;
         }
         OB.err = e.message;
@@ -297,13 +306,17 @@ addEventListener('beforeunload', (e) => { if (OB.d && (OB.dirty || OB.saving) &&
 
 function renderOnboarding() {
   if (!OB.d) obInit();
+  applyOnboardingTheme();
+  if (!document.getElementById('ob-editor')) app.innerHTML = '<div id="ob-editor"></div><div class="wrap" id="ob-preview-host"></div>';
+  const editor = document.getElementById('ob-editor');
+  const restoreImages = JLUI.images(editor);
   const { client, session } = P.me;
   const banner = session.kind === 'view-as' ? `<div class="viewas"><div class="wrap"><span>Admin view</span><span class="grow">Viewing <b>${esc(client.name)}</b>'s onboarding, read-only: nothing you change here is saved.</span><button class="btn warn" data-act="exit">Exit view</button></div></div>` : '';
   const steps = OB_STEPS.map(([k, l], i) => `<button class="ob-dot ${i === OB.step ? 'now' : i < OB.step ? 'done' : ''}" data-ob-go="${i}" ${i > OB.step && !(obCan(0) && obCan(1)) ? 'disabled' : ''}><span>${i + 1}</span>${esc(l)}</button>`).join('');
-  app.innerHTML = `
+  editor.innerHTML = `
     ${banner}
     <header class="head"><div class="wrap">
-      <div class="client">${client.logo || OB.d.store.logo ? `<img src="${esc(OB.d.store.logo || client.logo)}" alt="" />` : ''}<div><h1>${esc(OB.d.store.name || client.name)}</h1><small>Store setup</small></div></div>
+      <div class="client">${client.logo || OB.d.store.logo ? `<img src="${esc(OB.d.store.logo || client.logo)}" alt="" />` : ''}<div><h1 data-store-heading>${esc(OB.d.store.name || client.name)}</h1><small>Store setup</small></div></div>
       <span class="ob-status" id="ob-status"></span>
     </div></header>
     <main class="wrap ob">
@@ -315,8 +328,58 @@ function renderOnboarding() {
       </div>
       <p class="note">Everything saves automatically. You can close this page and come back with the same link.</p>
     </main>`;
+  restoreImages();
+  if (!document.getElementById('ob-preview-frame')) document.getElementById('ob-preview-host').innerHTML = `
+      <section class="ob-preview" aria-label="Live form preview">
+        <div class="ob-preview-bar"><div><h2>Your customer form</h2><p>Updates as you make choices. Notes to our team stay private.</p></div><label class="ob-bg"><span>Website background</span><input type="color" data-preview-bg value="${esc(OB.previewBg)}" /></label></div>
+        <p class="ob-preview-hint">Try a background like your website. This setting only changes this preview.</p>
+        <div class="ob-preview-stage" id="ob-preview-stage" style="background:${esc(OB.previewBg)}"><iframe id="ob-preview-frame" src="/f/onboarding-preview?preview=1&onboarding=1" title="Your live customer form"></iframe></div>
+        <p class="ob-err" id="ob-preview-error" role="status"></p>
+      </section>`;
+  queueOnboardingPreview();
   obStatus();
 }
+
+function applyOnboardingTheme() {
+  const store = OB.d?.store;
+  if (!store) return;
+  const light = store.theme === 'light';
+  const accent = /^#[0-9a-f]{6}$/i.test(store.accent) ? store.accent : '#35d0c4';
+  const n = parseInt(accent.slice(1), 16);
+  const ink = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 153 ? '#111111' : '#ffffff';
+  const colors = light ? { bg: '#faf7f2', panel: '#ffffff', surface: '#f3eee6', 'surface-2': '#ede6dc', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#6f675b' } : { bg: '#070b0c', panel: '#0d1416', surface: '#121b1e', 'surface-2': '#182327', line: '#213036', 'line-strong': '#36494f', ink: '#eef6f5', 'ink-soft': '#a3b6b4', 'ink-faint': '#80928f' };
+  for (const [k, v] of Object.entries({ ...colors, accent, 'accent-ink': ink })) document.documentElement.style.setProperty(`--${k}`, v);
+  document.documentElement.style.colorScheme = light ? 'light' : 'dark';
+}
+
+function queueOnboardingPreview() {
+  clearTimeout(OB.previewTimer);
+  const seq = ++OB.previewSeq;
+  OB.previewTimer = setTimeout(async () => {
+    if (!OB.d) return;
+    try {
+      const { form } = await api('/api/portal/onboarding/preview', { method: 'POST', body: JSON.stringify({ data: OB.d }), json: true });
+      if (seq !== OB.previewSeq || !OB.d) return;
+      const jump = {};
+      if (OB.previewStep !== OB.step) {
+        const target = OB.step === 2 ? 'style' : OB.step === 3 ? 'design' : 'type';
+        const step = form.steps.findIndex((s) => s.id === target);
+        if (step >= 0) jump.step = step;
+        const type = form.steps.find((s) => s.id === 'type')?.fields.find((f) => f.id === 'type')?.options[0]?.value;
+        if (type) jump.answers = { type };
+        OB.previewStep = OB.step;
+      }
+      document.getElementById('ob-preview-frame')?.contentWindow.postMessage({ type: 'aik:preview', form, admin: false, soft: true, ...jump }, location.origin);
+      const err = document.getElementById('ob-preview-error'); if (err) err.textContent = '';
+    } catch { const err = document.getElementById('ob-preview-error'); if (err) err.textContent = 'Preview could not update. Your answers are still here; keep editing to retry.'; }
+  }, 220);
+}
+addEventListener('message', (e) => {
+  const frame = document.getElementById('ob-preview-frame');
+  if (!frame || e.origin !== location.origin || e.source !== frame.contentWindow) return;
+  if (e.data?.type === 'aik:preview-ready') { OB.previewStep = -1; queueOnboardingPreview(); }
+  if (e.data?.type === 'aik:resize') frame.style.height = `${Math.max(640, Math.min(1800, Number(e.data.height) || 640))}px`;
+});
 
 // Može dalje: radnja treba ime, a "What you make" bar jedan komad.
 function obCan(i) {
@@ -328,7 +391,8 @@ function obCan(i) {
 const obPick = (path, { label = 'Upload photo', cls = '' } = {}) => {
   const v = obGet(path);
   const owner = path === 'store.logo' ? '' : obGet(path.replace(/\.image$/, ''))?.uid || '';
-  return `<label class="ob-photo ${cls} ${v ? 'has' : ''}" title="${v ? 'Change photo' : 'Upload photo'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span>${esc(label)}</span>`}<input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-ob-file="${path}" data-uid="${esc(owner)}" ${readOnly() ? 'disabled' : ''} /></label>`;
+  const busy = OB.uploads.has(owner || path);
+  return `<label class="ob-photo ${cls} ${v ? 'has' : ''} ${busy ? 'jl-uploading' : ''}" title="${v ? 'Change photo or drop a new one' : 'Upload or drop a photo'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span><b>${esc(label)}</b><small>or drag & drop here</small></span>`}<input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-ob-file="${path}" data-uid="${esc(owner)}" ${readOnly() || busy ? 'disabled' : ''} />${busy ? '<span class="jl-upload-progress" role="status"><span class="jl-spinner"></span>Uploading photo…</span>' : ''}</label>`;
 };
 
 function obStepView() {
@@ -351,7 +415,7 @@ function obStepView() {
   }
   if (key === 'pieces') {
     const on = new Set(d.pieces.map((p) => p.value).filter(Boolean));
-    const lib = defs.pieces.map((p) => `<button class="ob-piece ${on.has(p.value) ? 'on' : ''}" data-ob-piece="${p.value}"><img src="${esc(defs.styles[p.value]?.[0]?.image || '')}" alt="" loading="lazy" /><b>${esc(p.label)}</b><i>${on.has(p.value) ? '✓' : '+'}</i></button>`).join('');
+    const lib = defs.pieces.map((p) => `<button class="ob-piece ${on.has(p.value) ? 'on' : ''}" data-ob-piece="${p.value}" aria-pressed="${on.has(p.value)}"><img src="${esc(p.image || defs.styles[p.value]?.[0]?.image || '')}" alt="" /><b>${esc(p.label)}</b>${on.has(p.value) ? '<i class="ob-selected" aria-hidden="true">✓</i>' : ''}</button>`).join('');
     const custom = d.pieces.map((p, i) => (p.value ? '' : `<div class="ob-custom"><input class="in" data-ob="pieces.${i}.label" value="${esc(p.label)}" /><button class="btn small" data-ob-del-piece="${i}">Remove</button></div>`)).join('');
     return `
       <h2>What do you make?</h2>
@@ -370,7 +434,7 @@ function obStepView() {
             <input class="in" data-ob="${path}.label" value="${esc(s.label)}" placeholder="Style name" />
             ${s.custom ? `<textarea class="in" data-ob="${path}.note" rows="2" placeholder="What makes it special? (shape, details)">${esc(s.note || '')}</textarea>` : ''}
             <div class="ob-style-foot">
-              <label class="ob-check"><input type="checkbox" data-ob-keep="${path}" ${s.keep === false ? '' : 'checked'} /> Offer this</label>
+              <label class="ob-check"><span>Offer this</span><input type="checkbox" data-ob-keep="${path}" ${s.keep === false ? '' : 'checked'} /><span class="ob-selected" aria-hidden="true">✓</span></label>
               ${s.custom ? `<button class="link" data-ob-del-style="${i}.${j}">Remove</button>` : ''}
             </div>
           </div>`;
@@ -387,22 +451,21 @@ function obStepView() {
       ${blocks}`;
   }
   if (key === 'materials') {
-    const chip = (list, v, label, sw = '') => `<button class="ob-chip ${list.includes(v) ? 'on' : ''}" data-ob-toggle="${list === d.metals ? 'metals' : 'stones'}" data-v="${esc(v)}">${sw ? `<i style="background:${esc(sw)}"></i>` : ''}${esc(label)}</button>`;
+    const chip = (list, v, label, sw = '') => `<button class="ob-chip ${list.includes(v) ? 'on' : 'off'}" data-ob-toggle="${list === d.metals ? 'metals' : 'stones'}" data-v="${esc(v)}" aria-pressed="${list.includes(v)}">${sw ? `<i style="background:${esc(sw)}"></i>` : ''}${esc(label)}${list.includes(v) ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`;
     return `
       <h2>Materials & budget</h2>
       <p class="ob-lead">Only what you offer will show to customers.</p>
-      <div class="ob-f"><span>Metals</span><div class="ob-chips">${defs.metals.map((m) => chip(d.metals, m.value, m.label, m.swatch)).join('')}</div>
-        <input class="in" data-ob="metalsOther" value="${esc(d.metalsOther || '')}" placeholder="Other metals, comma separated (e.g. Black gold, Silver)" style="margin-top:10px" /></div>
-      <div class="ob-f"><span>Stones</span><div class="ob-chips">${defs.stones.map((s) => chip(d.stones, s.value, s.label)).join('')}</div></div>
+      <div class="ob-f"><span>Metals</span><div class="ob-chips">${[...defs.metals, ...d.customMetals].map((m) => chip(d.metals, m.value, m.label, m.swatch)).join('')}<button class="ob-chip add" data-ob-add-option="metals">+ Add new</button></div></div>
+      <div class="ob-f"><span>Stones</span><div class="ob-chips">${[...defs.stones, ...d.customStones].map((s) => chip(d.stones, s.value, s.label)).join('')}<button class="ob-chip add" data-ob-add-option="stones">+ Add new</button></div></div>
       <div class="ob-f"><span>Budget ranges customers can pick</span>
         ${d.budgets.map((b, i) => `<div class="ob-custom"><input class="in" data-ob="budgets.${i}" value="${esc(b)}" /><button class="btn small" data-ob-del-budget="${i}" ${d.budgets.length < 2 ? 'disabled' : ''}>Remove</button></div>`).join('')}
         <button class="btn small" data-ob-act="add-budget">+ Add range</button></div>`;
   }
   if (key === 'extras') {
     return `
-      <h2>Anything else?</h2>
-      <p class="ob-lead">Optional. Tell us what else you want to know from customers, or anything we should keep in mind.</p>
-      <label class="ob-f"><span>Questions you'd like to ask customers</span><textarea class="in" rows="4" data-ob="questions" placeholder="e.g. Ring size? Do you need it by a date? Is it a gift?">${esc(d.questions || '')}</textarea></label>
+      <h2>Notes for our team</h2>
+      <p class="ob-lead">Optional. Tell our team anything we should keep in mind. These notes will not appear in your customer form.</p>
+      ${d.questions ? `<p class="hint">Your earlier question requests are saved for our team: ${esc(d.questions)}</p>` : ''}
       <label class="ob-f"><span>Notes for our team</span><textarea class="in" rows="4" data-ob="notes" placeholder="e.g. We don't do platinum grillz. Our minimum order is $800.">${esc(d.notes || '')}</textarea></label>`;
   }
   const kept = (p) => (p.styles || []).filter((s) => s.keep !== false && s.label);
@@ -412,23 +475,28 @@ function obStepView() {
     <dl class="ob-review">
       <dt>Store</dt><dd>${esc(d.store.name)}${d.store.website ? ` · ${esc(d.store.website)}` : ''} · ${d.store.theme === 'light' ? 'Light' : 'Dark'} look <i class="ob-dotc" style="background:${esc(d.store.accent)}"></i></dd>
       <dt>Pieces & styles</dt><dd>${d.pieces.map((p) => `<b>${esc(p.label)}</b>: ${kept(p).map((s) => esc(s.label)).join(', ') || '<span class="faint">no styles, customers describe their idea</span>'}`).join('<br />')}</dd>
-      <dt>Metals</dt><dd>${esc([...P.me.onboardingDefaults.metals.filter((m) => d.metals.includes(m.value)).map((m) => m.label), ...String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)].join(', ') || 'All')}</dd>
-      <dt>Stones</dt><dd>${esc(P.me.onboardingDefaults.stones.filter((s) => d.stones.includes(s.value)).map((s) => s.label).join(', ') || 'All')}</dd>
+      <dt>Metals</dt><dd>${esc([...defs.metals, ...d.customMetals].filter((m) => d.metals.includes(m.value)).map((m) => m.label).join(', ') || 'All')}</dd>
+      <dt>Stones</dt><dd>${esc([...defs.stones, ...d.customStones].filter((s) => d.stones.includes(s.value)).map((s) => s.label).join(', ') || 'All')}</dd>
       <dt>Budgets</dt><dd>${esc(d.budgets.filter(Boolean).join(' · '))}</dd>
-      ${d.questions ? `<dt>Questions</dt><dd>${esc(d.questions)}</dd>` : ''}
       ${d.notes ? `<dt>Notes</dt><dd>${esc(d.notes)}</dd>` : ''}
     </dl>
     ${OB.err ? `<p class="ob-err">${esc(OB.err)}</p>` : ''}
-    <button class="btn primary big" data-ob-act="send" ${readOnly() ? 'disabled title="Admin view is read-only"' : ''}>Send to our team</button>`;
+    <button class="btn primary big" data-ob-act="send" ${readOnly() || OB.uploads.size || OB.submitting ? 'disabled' : ''}>${OB.submitting ? '<span class="jl-spinner"></span> Sending…' : OB.uploads.size ? 'Waiting for photo upload…' : 'Send to our team'}</button>`;
 }
 
 // Fotografija: smanji u browseru (logo 600 px PNG, ostalo 1200 px WebP), pa u R2.
 async function obUpload(input) {
   const file = input.files[0];
-  if (!file) return;
+  if (!file || readOnly() || OB.submitting) return;
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return JLUI.alert('Please choose a JPG, PNG or WebP photo.');
+  if (file.size > 20 * 1024 * 1024) return JLUI.alert('Please choose a photo smaller than 20 MB.');
   const isLogo = input.dataset.obFile === 'store.logo';
   const label = input.closest('.ob-photo');
-  label?.classList.add('busy');
+  const owner = input.dataset.uid || input.dataset.obFile;
+  if (OB.uploads.has(owner)) return;
+  OB.uploads.set(owner, true);
+  input.disabled = true;
+  JLUI.uploadBusy(label, true);
   try {
     let blob = file;
     try {
@@ -446,6 +514,8 @@ async function obUpload(input) {
     const res = await fetch('/api/portal/onboarding/upload', { method: 'POST', credentials: 'same-origin', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Upload failed.');
+    const loaded = new Image(); loaded.src = data.url;
+    try { await loaded.decode(); } catch {}
     // Slika ide stilu po njegovom id-ju (ne po rednom broju, koji se može promijeniti dok slika putuje).
     const id = input.dataset.uid;
     if (!id) obSet('store.logo', data.url);
@@ -454,31 +524,35 @@ async function obUpload(input) {
       if (st) st.image = data.url;
     }
     obSave(true);
-    renderOnboarding();
   } catch (e) {
-    alert(e.message);
-    label?.classList.remove('busy');
-  }
+    JLUI.alert(e.message);
+  } finally { OB.uploads.delete(owner); JLUI.uploadBusy(label, false); input.disabled = readOnly(); input.value = ''; if (OB.d) { const y = scrollY; renderOnboarding(); scrollTo(0, y); } }
 }
 
 app.addEventListener('input', (e) => {
   const el = e.target;
+  if (el.dataset.previewBg !== undefined) { OB.previewBg = el.value; const stage = document.getElementById('ob-preview-stage'); if (stage) stage.style.background = el.value; return; }
   if (!OB.d || !el.dataset.ob) return;
+  if (readOnly() || OB.submitting) return;
   obSet(el.dataset.ob, el.value);
-  if (el.dataset.ob === 'store.accent') document.querySelectorAll('.ob-swatch.on').forEach((x) => x.classList.remove('on'));
+  if (el.dataset.ob === 'store.accent') { document.querySelectorAll('.ob-swatch.on').forEach((x) => x.classList.remove('on')); applyOnboardingTheme(); }
+  if (el.dataset.ob === 'store.name') { const heading = document.querySelector('[data-store-heading]'); if (heading) heading.textContent = el.value || P.me.client.name; }
   if (el.dataset.ob === 'store.name' || el.dataset.ob === 'store.accent') { const n = document.querySelector('[data-ob-act="next"]'); if (n) n.disabled = !obCan(OB.step); }
   obSave();
+  queueOnboardingPreview();
 });
 app.addEventListener('change', (e) => {
   const el = e.target;
   if (!OB.d) return;
   if (el.dataset.obFile) obUpload(el);
-  if (el.dataset.obKeep) { obSet(`${el.dataset.obKeep}.keep`, el.checked); el.closest('.ob-style')?.classList.toggle('off', !el.checked); obSave(); }
+  if (el.dataset.obKeep && !readOnly() && !OB.submitting) { obSet(`${el.dataset.obKeep}.keep`, el.checked); el.closest('.ob-style')?.classList.toggle('off', !el.checked); obSave(); queueOnboardingPreview(); }
 });
 app.addEventListener('click', async (e) => {
   if (!OB.d) return;
   const t = e.target.closest('button');
   if (!t) return;
+  if (OB.submitting) return;
+  if (readOnly() && t.dataset.obAct !== 'next' && t.dataset.obAct !== 'back' && t.dataset.obGo === undefined) return;
   const d = OB.d;
   const defs = P.me.onboardingDefaults;
   const redraw = () => { obSave(); const y = scrollY; renderOnboarding(); scrollTo(0, y); };
@@ -488,12 +562,23 @@ app.addEventListener('click', async (e) => {
   if (act === 'back') { OB.step--; obSave(true); renderOnboarding(); scrollTo(0, 0); }
   if (t.dataset.obAccent) { d.store.accent = t.dataset.obAccent; redraw(); }
   if (t.dataset.obTheme) { d.store.theme = t.dataset.obTheme; redraw(); }
+  if (t.dataset.obAddOption) {
+    const kind = t.dataset.obAddOption;
+    const listKey = kind === 'metals' ? 'customMetals' : 'customStones';
+    if (d[listKey].length >= 6) return JLUI.alert('You can add up to 6 custom options.');
+    const label = await JLUI.prompt(kind === 'metals' ? 'Name of the metal (e.g. Silver)' : 'Name of the stone (e.g. Ruby)', { title: kind === 'metals' ? 'Add a metal' : 'Add a stone' });
+    if (!label) return;
+    const existing = [...defs[kind], ...d[listKey]].find((x) => x.label.toLowerCase() === label.toLowerCase());
+    if (existing) { if (!d[kind].includes(existing.value)) d[kind].push(existing.value); }
+    else { const value = `custom-${uid()}`; d[listKey].push({ value, label: label.slice(0, 40) }); d[kind].push(value); }
+    redraw();
+  }
   if (t.dataset.obPiece) {
     const v = t.dataset.obPiece;
     const i = d.pieces.findIndex((p) => p.value === v);
     if (i >= 0) {
       const custom = (d.pieces[i].styles || []).some((s) => s.custom || (s.image && !s.image.startsWith('/library/')));
-      if (custom && !confirm('Remove this piece and the styles and photos you added for it?')) return;
+      if (custom && !(await JLUI.confirm('Remove this piece and the styles and photos you added for it?'))) return;
       d.pieces.splice(i, 1);
     } else {
       const p = defs.pieces.find((x) => x.value === v);
@@ -502,7 +587,7 @@ app.addEventListener('click', async (e) => {
     redraw();
   }
   if (act === 'add-piece') {
-    const name = prompt('What is the piece called? (e.g. Belt buckle)');
+    const name = await JLUI.prompt('What is the piece called? (e.g. Belt buckle)');
     if (!name?.trim()) return;
     d.pieces.push({ uid: uid(), value: '', label: name.trim().slice(0, 60), styles: [] });
     redraw();
@@ -526,25 +611,34 @@ app.addEventListener('click', async (e) => {
   if (act === 'add-budget') { d.budgets.push(''); redraw(); document.querySelectorAll('[data-ob^="budgets."]').forEach((x, k, all) => k === all.length - 1 && x.focus()); }
   if (t.dataset.obDelBudget) { d.budgets.splice(+t.dataset.obDelBudget, 1); redraw(); }
   if (act === 'send') {
-    if (!confirm('Send your answers to our team? You won\'t be able to edit them here after that, but you can always message us changes.')) return;
+    if (OB.uploads.size) return JLUI.alert('Wait for your photos to finish uploading before sending.');
+    if (!(await JLUI.confirm('Send your answers to our team? You won\'t be able to edit them here after that, but you can always message us changes.'))) return;
+    OB.submitting = true;
+    OB.err = '';
     t.disabled = true;
-    t.textContent = 'Sending…';
+    t.innerHTML = '<span class="jl-spinner"></span> Sending…';
     try {
       // Prvo sačekaj čuvanje koje je već krenulo, pa pošalji zadnju verziju, pa tek onda Send.
       clearTimeout(OB.timer);
       clearTimeout(OB.retry);
       if (OB.inflight) await OB.inflight;
-      const r = await api('/api/portal/onboarding', { method: 'PUT', body: JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev }), json: true });
-      OB.rev = r.rev;
+      const r = await api('/api/portal/onboarding/submit', { method: 'POST', body: JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev }), json: true });
+      OB.rev = r.rev ?? OB.rev;
       OB.dirty = false;
-      await api('/api/portal/onboarding/submit', { method: 'POST' });
-      P.me.onboarding.status = 'submitted';
+      clearTimeout(OB.timer); clearTimeout(OB.retry); clearTimeout(OB.previewTimer);
+      P.me.onboarding.status = r.status || 'submitted';
       OB.d = null;
       render();
       scrollTo(0, 0);
     } catch (err) {
-      OB.err = err.message;
+      // Izgubljen odgovor poslije uspješnog upisa: provjeri status prije nego ponudimo ponovno slanje.
+      try {
+        const me = await api('/api/portal/me');
+        if (me.onboarding?.status && me.onboarding.status !== 'draft') { P.me = me; OB.dirty = false; OB.d = null; render(); return; }
+      } catch {}
+      OB.err = err.message === 'Something went wrong. Please try again.' ? 'Your answers are still here. We could not send them just now. Please try Send again.' : err.message;
+      OB.submitting = false;
       renderOnboarding();
-    }
+    } finally { OB.submitting = false; }
   }
 });

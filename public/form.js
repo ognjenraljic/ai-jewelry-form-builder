@@ -22,6 +22,8 @@ const S = {
   a: {},
   contact: { name: '', email: '', phone: '', consent: false },
   files: {}, // polje (ili polje__more) -> { blob, url, name }
+  uploading: new Set(),
+  onboardingPreview: new URLSearchParams(location.search).has('onboarding'),
   test: false, // probni render iz pregleda u builderu (admin, bez upita)
   tryons: [], // grillz na fotografiji kupca: [{ url }]
   tryBusy: false,
@@ -58,9 +60,10 @@ boot();
 
 async function boot() {
   try {
-    const res = await fetch(`/api/forms/${encodeURIComponent(formId)}`);
+    const res = await fetch(S.onboardingPreview ? '/api/portal/onboarding/preview' : `/api/forms/${encodeURIComponent(formId)}`);
     if (!res.ok) throw new Error();
-    S.cfg = await res.json();
+    const data = await res.json();
+    S.cfg = S.onboardingPreview ? data.form : data;
   } catch {
     app.innerHTML = '<section class="step unavailable"><h1>This form is not available</h1><p class="sub">It may have been turned off by the jeweler. Please contact the store directly, or try again later.</p></section>';
     return;
@@ -80,6 +83,12 @@ async function boot() {
       if (e.data?.type !== 'aik:preview' || !e.data.form) return;
       S.adminPreview = !!e.data.admin;
       S.cfg = { ...e.data.form, dev: S.cfg.dev, turnstile: S.cfg.turnstile };
+      if (S.onboardingPreview) {
+        for (const step of S.cfg.steps) for (const field of step.fields) {
+          if (field.options && S.a[field.id] != null && !field.options.some((x) => x.value === S.a[field.id])) delete S.a[field.id];
+        }
+        if (S.a.style && !(S.cfg.styles?.[S.a.type] || []).some((x) => x.value === S.a.style)) delete S.a.style;
+      }
       // Dok probni render traje (ili je prikazan), izmjena u builderu ne prebacuje pregled na drugi korak.
       if (S.test || S.busy) { applyTheme(); return; }
       // Mekani skok (sinhronizacija sa Questions): ne diraj odgovore koje je admin već kliknuo u pregledu.
@@ -94,7 +103,7 @@ async function boot() {
         if (idx >= 0 || !e.data.soft) S.i = Math.max(0, idx);
       }
       S.i = Math.min(S.i, steps().length - 2);
-      S.rendered = -1;
+      if (!S.onboardingPreview) S.rendered = -1;
       render();
       if (e.data.focus) focusField(e.data.focus);
       // Javi builderu na kom je koraku pregled stvarno (skok na korak koji se trenutno ne vidi ostaje na mjestu).
@@ -149,6 +158,7 @@ const optionsOf = (f) => {
 };
 
 function stepValid(step) {
+  if (S.uploading.size) return false;
   if (step.id === '_contact') {
     const c = S.contact;
     return c.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(c.email.trim()) && c.phone.replace(/\D/g, '').length >= 7 && c.consent && (!S.cfg.turnstile || !!S.ts);
@@ -157,6 +167,7 @@ function stepValid(step) {
 }
 
 function render() {
+  const restoreImages = JLUI.images(app);
   prefillTeeth();
   const step = cur();
   const all = steps();
@@ -187,6 +198,7 @@ function render() {
     </header>
     ${body}`;
   if (enter) app.querySelector('.step')?.classList.add('enter');
+  restoreImages();
   bind();
   // Fokus ostaje na onome što je kupac kliknuo (tastatura i čitači ekrana ne gube mjesto).
   if (S.focusKey) { app.querySelector(S.focusKey)?.focus({ preventScroll: true }); S.focusKey = ''; }
@@ -241,7 +253,7 @@ function tryOnView() {
     ? `<div class="tryon-wait"><span class="spin"></span>Putting them on your smile… about 20 to 40 seconds</div>`
     : S.tryLeft > 0
       ? `<label class="check tryon-ok"><input type="checkbox" data-tryok ${S.tryOk ? 'checked' : ''} /><span>I agree that my photo is used only to create this preview. It is deleted after 30 days.</span></label>
-         <label class="btn ghost tryon-btn ${S.tryOk ? '' : 'off'}">${icon('upload')}<span>${S.tryons.length ? 'Try another photo' : 'Upload a smiling photo'}</span><input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-tryon ${S.tryOk ? '' : 'disabled'} /></label>`
+         <label class="btn ghost tryon-btn ${S.tryOk ? '' : 'off'}">${icon('upload')}<span>${S.tryons.length ? 'Try another photo' : 'Upload a smiling photo'}<small>or drag & drop here</small></span><input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-tryon ${S.tryOk ? '' : 'disabled'} /></label>`
       : '<p class="fine">You have used all your try-ons.</p>';
   return `
     <section class="tryon">
@@ -255,7 +267,7 @@ function tryOnView() {
 
 async function doTryOn(file) {
   if (!file || S.tryBusy || !S.lead) return;
-  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { alert('Please choose a JPG, PNG or WebP photo.'); return; }
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { JLUI.alert('Please choose a JPG, PNG or WebP photo.'); return; }
   S.tryBusy = true;
   S.tryErr = '';
   render();
@@ -352,10 +364,12 @@ function followupView(f) {
 
 function uploadView(f, label) {
   const file = S.files[f.id];
+  const busy = S.uploading.has(f.id);
+  const progress = busy ? '<span class="jl-upload-progress" role="status"><span class="jl-spinner"></span>Preparing photo…</span>' : '';
   if (file) {
-    return `<div class="field">${label}<div class="thumb"><img src="${file.url}" alt="" /><div class="meta">${esc(file.name)}</div><button type="button" class="link" data-unfile="${esc(f.id)}">Remove</button></div></div>`;
+    return `<div class="field">${label}<label class="drop thumb ${busy ? 'jl-uploading' : ''}" data-drop="${esc(f.id)}"><img src="${file.url}" alt="" /><span class="meta">${esc(file.name)}<br />Click or drop a photo to replace</span><input type="file" accept="image/jpeg,image/png,image/webp" data-file="${esc(f.id)}" ${busy ? 'disabled' : ''} />${progress}</label><button type="button" class="link" data-unfile="${esc(f.id)}">Remove</button></div>`;
   }
-  return `<div class="field">${label}<label class="drop" data-drop="${esc(f.id)}">${icon('upload')}<p><strong>Upload a photo</strong> or drag it here<br />${esc(f.hint || '')}</p><input type="file" accept="image/jpeg,image/png,image/webp" data-file="${esc(f.id)}" /></label></div>`;
+  return `<div class="field">${label}<label class="drop ${busy ? 'jl-uploading' : ''}" data-drop="${esc(f.id)}">${icon('upload')}<p><strong>Upload a photo</strong> or drag it here<br />${esc(f.hint || '')}</p><input type="file" accept="image/jpeg,image/png,image/webp" data-file="${esc(f.id)}" ${busy ? 'disabled' : ''} />${progress}</label></div>`;
 }
 
 function choiceView(f, label, v) {
@@ -554,7 +568,7 @@ function contactView() {
       ${S.cfg.turnstile ? '<div class="ts" id="ts"></div>' : ''}
       ${S.error ? `<p class="error" role="alert">${esc(S.error)}</p>` : ''}
       <div class="foot">
-        <div class="foot-row">${S.busy ? '' : backBtn()}<button class="btn gold" data-act="submit" ${valid && !S.busy ? '' : 'disabled'}>${S.busy ? 'Sending' : esc(k.button)}</button></div>
+        <div class="foot-row">${S.busy ? '' : backBtn()}<button class="btn gold" data-act="submit" ${valid && !S.busy && !S.onboardingPreview ? '' : 'disabled'}>${S.onboardingPreview ? 'Preview only' : S.busy ? 'Sending' : esc(k.button)}</button></div>
         <p class="hint">We never share your details.</p>
         ${testAllowed() ? '<button type="button" class="btn ghost testbtn" data-act="test" title="Uses this draft and the answers above. Costs one render, no lead is created.">Test render (admin, no lead)</button>' : ''}
       </div>
@@ -668,11 +682,7 @@ function bind() {
   });
   app.querySelectorAll('[data-file]').forEach((file) => {
     const key = file.dataset.file;
-    const drop = file.closest('[data-drop]');
     file.addEventListener('change', () => file.files[0] && takeFile(file.files[0], key));
-    ['dragenter', 'dragover'].forEach((e) => drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.add('over'); }));
-    ['dragleave', 'drop'].forEach((e) => drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.remove('over'); }));
-    drop.addEventListener('drop', (ev) => ev.dataTransfer.files[0] && takeFile(ev.dataTransfer.files[0], key));
   });
   app.querySelectorAll('[data-unfile]').forEach((b) => b.addEventListener('click', () => {
     URL.revokeObjectURL(S.files[b.dataset.unfile].url);
@@ -747,7 +757,11 @@ function go(d) {
 
 // Smanji sliku u browseru prije slanja: manji upload, manje tokena.
 async function takeFile(f, key) {
-  if (!/^image\/(jpeg|png|webp)$/.test(f.type)) { alert('Please choose a JPG, PNG or WebP image.'); return; }
+  if (!/^image\/(jpeg|png|webp)$/.test(f.type)) { JLUI.alert('Please choose a JPG, PNG or WebP image.'); return; }
+  if (S.uploading.has(key)) return;
+  if (f.size > 20 * 1024 * 1024) return JLUI.alert('Please choose a photo smaller than 20 MB.');
+  S.uploading.add(key);
+  render();
   try {
     const bmp = await createImageBitmap(f);
     const scale = Math.min(1, 1536 / Math.max(bmp.width, bmp.height));
@@ -762,11 +776,12 @@ async function takeFile(f, key) {
     if (S.files[key]) URL.revokeObjectURL(S.files[key].url);
     S.files[key] = { blob: f, url: URL.createObjectURL(f), name: f.name };
   }
+  S.uploading.delete(key);
   render();
 }
 
 async function submit() {
-  if (S.busy || !stepValid(cur())) return;
+  if (S.busy || S.onboardingPreview || !stepValid(cur())) return;
   S.test = false;
   S.busy = true;
   S.error = '';
@@ -892,7 +907,7 @@ function doTweak() {
   const el = app.querySelector('[data-tweak]');
   const v = el?.value.trim();
   if (!v) { el?.focus(); return; }
-  if (S.mask.on && !S.mask.strokes.length) { alert('Paint over the part of the image you want to change first.'); return; }
+  if (S.mask.on && !S.mask.strokes.length) { JLUI.alert('Paint over the part of the image you want to change first.'); return; }
   makeRender(v, maskDataUrl());
 }
 

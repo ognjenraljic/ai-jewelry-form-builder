@@ -124,8 +124,10 @@ textarea.in { resize: vertical; line-height: 1.5; }
 .ob-photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .ob-photo.has::after { content: 'Change photo'; position: absolute; inset: auto 0 0; padding: 6px; font-size: 11px; background: rgba(0, 0, 0, 0.55); color: #fff; opacity: 0; transition: opacity 0.2s; }
 .ob-photo.has:hover::after { opacity: 1; }
-.ob-photo.busy { opacity: 0.5; pointer-events: none; }
-.ob-photo.logo { width: 200px; aspect-ratio: 5 / 2; }
+.ob-photo span { text-align: center; padding: 14px; }
+.ob-photo span b, .ob-photo span small { display: block; }
+.ob-photo span small { font-size: 11px; font-weight: 400; margin-top: 5px; }
+.ob-photo.logo { width: min(100%, 340px); min-height: 130px; aspect-ratio: auto; }
 .ob-photo.logo img { object-fit: contain; padding: 10px; }
 .ob-swatch { width: 34px; height: 34px; border-radius: 50%; border: 2px solid transparent; outline: 1px solid var(--line-strong); cursor: pointer; padding: 0; }
 .ob-swatch.on { border-color: var(--bg); outline: 2px solid var(--ink); }
@@ -141,9 +143,12 @@ textarea.in { resize: vertical; line-height: 1.5; }
 .ob-piece:hover { transform: translateY(-2px); border-color: var(--accent); }
 .ob-piece img { width: 100%; aspect-ratio: 1; object-fit: cover; background: var(--bg); }
 .ob-piece b { padding: 10px 12px; font-size: 14px; text-align: left; }
-.ob-piece i { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-weight: 700; background: rgba(0, 0, 0, 0.55); color: #fff; }
+.ob-selected { width: 23px; height: 23px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 13px; font-weight: 800; background: #fff; color: #111; box-shadow: 0 2px 8px #0003; flex: none; }
+.ob-piece .ob-selected { position: absolute; bottom: 9px; right: 9px; }
+.ob-piece:not(.on) img { opacity: 0.45; }
+.ob-piece b { padding-right: 42px; }
 .ob-piece.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.ob-piece.on i { background: var(--accent); color: var(--accent-ink); }
+.ob-piece.on i { background: #fff; color: #111; }
 .ob-custom { display: flex; gap: 8px; margin-bottom: 8px; }
 .ob-custom .in { flex: 1; }
 .ob-block { margin-bottom: 8px; }
@@ -153,13 +158,20 @@ textarea.in { resize: vertical; line-height: 1.5; }
 .ob-style .in { padding: 8px 10px; font-size: 13px; }
 .ob-style-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .ob-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-soft); cursor: pointer; }
-.ob-check input { accent-color: var(--accent); width: 16px; height: 16px; }
+.ob-check input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.ob-check .ob-selected { visibility: hidden; }
+.ob-check input:checked + .ob-selected { visibility: visible; }
+.ob-check input:focus-visible + .ob-selected { outline: 2px solid var(--accent); outline-offset: 3px; visibility: visible; }
+.ob-style-foot .ob-check { display: flex; justify-content: space-between; width: 100%; min-height: 26px; }
 .ob-style.add { align-items: center; justify-content: center; min-height: 220px; border-style: dashed; color: var(--ink-soft); font-weight: 600; cursor: pointer; }
 .ob-style.add span { font-size: 30px; line-height: 1; color: var(--accent); }
 .ob-style.add:hover { border-color: var(--accent); }
 .link { background: none; border: 0; color: var(--accent); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; padding: 2px; }
 .ob-chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.ob-chip { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-soft); font: inherit; font-weight: 600; font-size: 13px; cursor: pointer; }
+.ob-chip { position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 12px 44px 12px 15px; min-height: 46px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-soft); font: inherit; font-weight: 600; font-size: 13px; cursor: pointer; }
+.ob-chip .ob-selected { position: absolute; right: 7px; bottom: 6px; width: 21px; height: 21px; font-size: 12px; }
+.ob-chip.off { opacity: 0.45; }
+.ob-chip.add { padding-right: 15px; border-style: dashed; }
 .ob-chip i { width: 14px; height: 14px; border-radius: 50%; }
 .ob-chip.on { border-color: var(--accent); color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
 .ob-review { display: grid; grid-template-columns: 160px 1fr; gap: 12px 18px; margin: 0 0 24px; padding: 18px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); }
@@ -174,6 +186,18 @@ textarea.in { resize: vertical; line-height: 1.5; }
 .btn.small { padding: 6px 11px; font-size: 12px; }
 .ob-sent { margin: 0 0 18px; padding: 14px 18px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); color: var(--ink-soft); line-height: 1.5; }
 .ob-sent b { color: var(--ink); }
+.ob-preview { margin: 4px 0 64px; }
+.ob-preview-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.ob-preview h2 { font: 500 28px var(--serif); margin: 0 0 5px; }
+.ob-preview-bar p, .ob-preview-hint { color: var(--ink-faint); font-size: 12px; margin: 0; line-height: 1.6; }
+.ob-preview-hint { margin: 12px 0; }
+.ob-bg { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--ink-soft); }
+.ob-bg input { width: 40px; height: 34px; padding: 2px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line-strong); cursor: pointer; }
+.ob-preview-stage { padding: 32px; border-radius: 20px; border: 1px solid var(--line-strong); transition: background .15s; }
+.ob-preview-stage iframe { display: block; width: 100%; max-width: 720px; min-height: 640px; height: 720px; margin: 0 auto; border: 1px solid var(--line); border-radius: 18px; background: var(--bg); }
+.ob-nav + .note { margin-bottom: 26px; }
+.btn[data-ob-act="send"] { display: inline-flex; align-items: center; gap: 12px; }
+@media (max-width: 720px) { .ob-preview-stage { padding: 12px; } .ob-preview-bar { align-items: flex-start; } }
 @media (max-width: 720px) {
   .ob-steps { grid-template-columns: repeat(3, 1fr); }
   .ob-card { padding: 20px 16px; }

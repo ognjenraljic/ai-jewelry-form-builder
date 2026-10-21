@@ -157,7 +157,10 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .pick { display: grid; place-items: center; border: 1px dashed var(--line-strong); border-radius: 8px; background: var(--bg); cursor: pointer; overflow: hidden; color: var(--ink-faint); font-size: 12px; flex: none; }
 .pick:hover { border-color: var(--accent); color: var(--accent); }
 .pick.sm { width: 34px; height: 34px; }
-.pick.logo { width: 160px; height: 56px; padding: 6px; }
+.pick.logo { width: min(100%, 280px); height: 112px; padding: 12px; margin: 0; font: 600 12px var(--sans); text-align: center; }
+.pick.logo small { display: block; margin-top: 6px; font-size: 11px; font-weight: 400; }
+.pick.sm.jl-uploading { min-height: 34px; }
+.pick.sm .jl-upload-progress > span:last-child { display: none; }
 .pick img { width: 100%; height: 100%; object-fit: cover; }
 .pick.logo img { object-fit: contain; }
 .opt2 { display: grid; gap: 4px; padding: 6px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); }
@@ -180,6 +183,11 @@ dialog { width: min(480px, 92vw); }
 .hub { min-height: 100vh; }
 .hub .top { height: 60px; position: sticky; top: 0; z-index: 5; }
 .hub-q { max-width: 320px; }
+.hub .top { height: auto; min-height: 76px; padding: 12px max(20px, calc((100vw - 1080px) / 2)); flex-wrap: wrap; }
+.hub .top .logo { margin-right: 6px; }
+.hub .top .hub-q { flex: 1; min-width: 130px; max-width: 240px; }
+.hub .top .spacer { flex: 1; }
+@media (max-width: 720px) { .hub .top .hub-q { order: 10; flex-basis: 100%; max-width: none; } .hub .top .nav-btn { padding: 0 9px; font-size: 12px; } }
 .hub-main { max-width: 1120px; margin: 0 auto; padding: 28px 20px 80px; }
 .hub-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 22px; }
 .hub-stats div { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
@@ -292,6 +300,7 @@ dialog.choice { width: min(560px, 94vw); }
 
 /* Pregled onboardinga */
 dialog.obr { width: min(760px, 94vw); max-height: 88vh; }
+@media (max-width: 720px) { .hub .top { padding-left: 20px; padding-right: 20px; } }
 .obr-store { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; background: var(--surface); margin-bottom: 14px; }
 .obr-store img { max-height: 44px; max-width: 140px; object-fit: contain; }
 .obr-store small { display: block; color: var(--ink-faint); font-size: 12px; }

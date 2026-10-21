@@ -45,7 +45,7 @@ export default {
     try {
       return withSecurity(await route(request, env, ctx, url));
     } catch (err) {
-      console.error('unhandled', err);
+      console.error('unhandled', request.method, url.pathname, err);
       return withSecurity(json({ error: 'Something went wrong. Please try again.' }, 500));
     }
   },
@@ -1081,8 +1081,9 @@ async function demoHandled(request, env, id) {
 
 // Podaci iz vodiča: samo očekivani oblici, slike samo iz foldera tog klijenta ili biblioteke, boja samo hex.
 function cleanOnboarding(d, clientId) {
+  d = d && typeof d === 'object' && !Array.isArray(d) ? d : {};
   const own = `/media/onboarding/${clientId}/`;
-  const img = (u) => (typeof u === 'string' && !u.includes('..') && (u.startsWith(own) || /^\/library\/[a-z]+\/[\w-]+\.webp$/.test(u)) ? u : '');
+  const img = (u) => (typeof u === 'string' && !u.includes('..') && (u.startsWith(own) || u.startsWith(`/media/clients/${clientId}/`) || /^\/library\/[a-z]+\/[\w-]+\.webp$/.test(u)) ? u : '');
   const str = (v, max) => String(v ?? '').slice(0, max);
   const list = (v, n) => (Array.isArray(v) ? v.slice(0, n) : []);
   const st = d.store || {};
@@ -1097,7 +1098,9 @@ function cleanOnboarding(d, clientId) {
     })),
     metals: list(d.metals, 12).map((x) => str(x, 40)),
     metalsOther: str(d.metalsOther, 200),
-    stones: list(d.stones, 8).map((x) => str(x, 40)),
+    customMetals: list(d.customMetals, 6).filter((x) => x && typeof x === 'object').map((x) => ({ value: str(x.value, 40), label: str(x.label, 40) })).filter((x) => /^custom-[a-z0-9-]+$/.test(x.value) && x.label.trim()),
+    stones: list(d.stones, 12).map((x) => str(x, 40)),
+    customStones: list(d.customStones, 6).filter((x) => x && typeof x === 'object').map((x) => ({ value: str(x.value, 40), label: str(x.label, 40) })).filter((x) => /^custom-[a-z0-9-]+$/.test(x.value) && x.label.trim()),
     budgets: list(d.budgets, 10).map((x) => str(x, 40)),
     questions: str(d.questions, 2000),
     notes: str(d.notes, 2000),
@@ -1107,6 +1110,23 @@ function cleanOnboarding(d, clientId) {
 async function portalOnboarding(request, env, p, client, sess) {
   const ob = await env.DB.prepare('SELECT * FROM onboardings WHERE client_id = ? ORDER BY created_at DESC LIMIT 1').bind(client.id).first();
   if (!ob) return json({ error: 'No onboarding for this store.' }, 404);
+  // Isti renderer i ista konverzija kao stvarna forma, bez čuvanja, upita ili AI troška.
+  if (p === '/api/portal/onboarding/preview' && ['GET', 'POST'].includes(request.method)) {
+    let draft = JSON.parse(ob.data || '{}');
+    if (request.method === 'POST') {
+      const raw = await request.text();
+      if (raw.length > 200_000) return json({ error: 'Too much data.' }, 413);
+      let body;
+      try { body = JSON.parse(raw); } catch { return json({ error: 'Invalid data.' }, 400); }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Invalid data.' }, 400);
+      if (!body.data || typeof body.data !== 'object' || Array.isArray(body.data)) return json({ error: 'Invalid data.' }, 400);
+      draft = body.data;
+    }
+    const d = cleanOnboarding(draft, client.id);
+    if (!d.pieces.some((x) => x.label.trim())) d.pieces = ONBOARDING_DEFAULTS.pieces.map((x) => ({ ...x, styles: ONBOARDING_DEFAULTS.styles[x.value] || [] }));
+    const form = formFromOnboarding(d, { id: 'onboarding-preview', clientId: client.id, brand: d.store.name.trim() || client.name, logo: d.store.logo });
+    return json({ form: publicForm(form) });
+  }
   const open = ob.status === 'draft';
   // Admin pregled (view-as) samo gleda: ne mijenja ni ne šalje klijentove odgovore.
   if (request.method !== 'GET' && sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
@@ -1143,12 +1163,30 @@ async function portalOnboarding(request, env, p, client, sess) {
   }
   if (p === '/api/portal/onboarding/submit' && request.method === 'POST') {
     if (!open) return json({ ok: true, status: ob.status });
-    const d = cleanOnboarding(JSON.parse(ob.data || '{}'), client.id);
+    const raw = await request.text();
+    if (raw.length > 200_000) return json({ error: 'Too much data.' }, 413);
+    let body;
+    try { body = raw ? JSON.parse(raw) : {}; } catch { return json({ error: 'Invalid data.' }, 400); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Invalid data.' }, 400);
+    if (body.data != null && (typeof body.data !== 'object' || Array.isArray(body.data))) return json({ error: 'Invalid data.' }, 400);
+    const d = cleanOnboarding(body.data ?? JSON.parse(ob.data || '{}'), client.id);
+    if (!d.store.name.trim()) return json({ error: 'Please enter your store name.' }, 400);
     if (!d.pieces.some((x) => x.label.trim())) return json({ error: 'Pick at least one piece you make.' }, 400);
+    const rev = body.rev == null ? ob.rev : Number(body.rev);
     const now = Date.now();
-    const r = await env.DB.prepare("UPDATE onboardings SET status = 'submitted', submitted_at = ?, updated_at = ? WHERE id = ? AND status = 'draft'").bind(now, now, ob.id).run();
-    if (r.meta.changes) await notify(env, 'onboarding', `${client.name} sent their onboarding`, ob.id).run();
-    return json({ ok: true, status: 'submitted' });
+    // D1 batch je transakcija: odgovori, status i obavještenje ili svi prođu ili svi ostanu nepromijenjeni.
+    const [r] = await env.DB.batch([
+      env.DB.prepare("UPDATE onboardings SET data = ?, status = 'submitted', submitted_at = ?, updated_at = ?, rev = rev + 1 WHERE id = ? AND status = 'draft' AND rev = ?")
+        .bind(JSON.stringify(d), now, now, ob.id, rev),
+      env.DB.prepare("INSERT OR IGNORE INTO notifications (id, kind, title, ref, created_at) SELECT ?, 'onboarding', ?, id, ? FROM onboardings WHERE id = ? AND status = 'submitted' AND submitted_at = ?")
+        .bind(`onboarding-${ob.id}`, clean(`${client.name} sent their onboarding`, 160), now, ob.id, now),
+    ]);
+    if (!r.meta.changes) {
+      const latest = await env.DB.prepare('SELECT status, data, rev FROM onboardings WHERE id = ?').bind(ob.id).first();
+      if (latest.status !== 'draft') return json({ ok: true, status: latest.status });
+      return json({ error: 'Your answers changed in another tab. Refresh to review the latest answers before sending.', conflict: true, rev: latest.rev, data: JSON.parse(latest.data || '{}') }, 409);
+    }
+    return json({ ok: true, status: 'submitted', rev: rev + 1 });
   }
   return json({ error: 'Not found' }, 404);
 }
