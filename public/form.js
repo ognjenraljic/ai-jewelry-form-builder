@@ -1,4 +1,4 @@
-import { SMILE_TEETH, SMILE_DEFS, SMILE_GUMS, SMILE_LIPS, SMILE_OPENING } from './teeth-art.js';
+import { SMILE_TEETH, SMILE_DEFS } from './teeth-art.js';
 
 // Widget forme: crta korake iz konfiguracije, šalje lead, traži render i doradu.
 const formId = location.pathname.split('/')[2] || 'demo';
@@ -440,11 +440,9 @@ function mouthSvg(f, set) {
     const attrs = selectable ? ` data-tooth="${t.id}" data-tfield="${esc(f.id)}" role="checkbox" aria-checked="${on}" aria-label="${t.row === 'T' ? 'Top' : 'Bottom'} tooth ${t.id.slice(1)}" tabindex="0"` : '';
     return `<g class="tooth ${on ? 'on' : ''} ${selectable ? '' : 'deco'}"${attrs}><path class="crown" d="${t.d}" fill="${on ? selected : `url(#${prefix}-enamel)`}"/><path class="tooth-depth" d="${t.d}" fill="url(#${prefix}-enamelSides)"/></g>`;
   }).join('');
-  return `<svg class="mouth" viewBox="40 100 468 212" role="group" aria-label="Choose teeth">
+  return `<svg class="mouth" viewBox="48 48 578 235" role="group" aria-label="Choose teeth">
     <defs>${scope(SMILE_DEFS)}</defs>
-    <path d="${SMILE_OPENING}" fill="#292627"/>
-    <g clip-path="url(#${prefix}-smileOpening)">${scope(SMILE_GUMS)}<g transform="translate(24.016 86.5) scale(.744)">${teeth}</g></g>
-    ${scope(SMILE_LIPS)}
+    ${teeth}
   </svg>`;
 }
 
