@@ -163,11 +163,11 @@ h1 em { font-style: italic; color: var(--accent); }
 /* Izbor zuba (grillz) */
 .teeth { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(220px, 1fr); gap: 18px; align-items: center; }
 .mouth { width: 100%; height: auto; display: block; }
-.mouth .gum { fill: #a3565a; stroke: #8d4549; stroke-width: 1.2; pointer-events: none; }
-.mouth .tooth { stroke: #b9b0a0; stroke-width: 0.9; cursor: pointer; transition: fill 0.15s; outline: none; }
-.mouth .tooth:not(.deco):not(.on):hover { fill: #fbf8f2 !important; }
-.mouth .tooth.on:hover { filter: brightness(1.06); }
-.mouth .tooth:focus-visible { stroke: var(--accent); stroke-width: 2.5; }
+.mouth .tooth { cursor: pointer; outline: none; }
+.mouth .crown { stroke: #a1a1a1; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: fill .15s; }
+.mouth .tooth-depth { stroke: none; pointer-events: none; }
+.mouth .tooth:not(.deco):hover .crown { filter: brightness(1.05); }
+.mouth .tooth:focus-visible .crown { stroke: var(--accent); stroke-width: 3; }
 .mouth .tooth.deco { cursor: default; }
 .tpanel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 12px; }
 .tcount { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; text-align: center; }
@@ -188,14 +188,13 @@ h1 em { font-style: italic; color: var(--accent); }
 @media (max-width: 620px) { .teeth { grid-template-columns: 1fr; } }
 
 /* Nazad: dugme pored Continue i klik na pređene korake u traci */
-.foot-row { display: flex; gap: 10px; }
-.foot-row .btn { flex: 1; }
-.btn.ghost { flex: 0 0 auto; width: auto; background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); padding-left: 26px; padding-right: 26px; }
+.foot-row { display: flex; justify-content: center; gap: 10px; }
+.foot-row .btn { flex: 1 1 0; width: 0; max-width: 280px; min-height: 54px; padding: 16px 12px; }
+.btn.ghost { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
 .btn.ghost:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-soft); }
 button.seg, button.seg.done { padding: 0; border: 0; border-top: 8px solid transparent; border-bottom: 8px solid transparent; height: 19px; box-sizing: border-box; background-clip: padding-box; cursor: pointer; }
 .progress { align-items: center; }
 button.seg:hover { filter: brightness(1.35); }
-@media (max-width: 560px) { .btn.ghost { padding-left: 18px; padding-right: 18px; } }
 .foot-teeth { color: var(--ink-soft); letter-spacing: 0.02em; font-size: 13px; }
 .foot-teeth b { color: var(--ink); }
 @media (max-width: 560px) {

@@ -215,7 +215,7 @@ app.addEventListener('click', async (e) => {
 // Zlatar popuni radnju, komade, stilove sa slikama, materijale i budžet. Sve se čuva samo; Send šalje adminu.
 const OB_STEPS = [['store', 'Your store'], ['pieces', 'What you make'], ['styles', 'Styles'], ['materials', 'Materials & budget'], ['extras', 'Notes for our team'], ['send', 'Review & send']];
 const ACCENTS = ['#35d0c4', '#d8b46a', '#e7a9a0', '#9b8cff', '#5aa9ff', '#ef6f6f', '#f2f2f2'];
-const OB = { d: null, step: 0, timer: null, saving: false, savedAt: 0, err: '', dirty: false, rev: 0, inflight: null, retry: null, uploads: new Map(), submitting: false, previewBg: '#20262b', previewTimer: null, previewSeq: 0, previewStep: -1 };
+const OB = { d: null, step: 0, timer: null, saving: false, savedAt: 0, err: '', dirty: false, rev: 0, inflight: null, retry: null, uploads: new Map(), submitting: false, previewBg: null, previewTimer: null, previewSeq: 0, previewStep: -1 };
 // Stabilan id za komade i stilove: slika se upiše u pravi stil i kad se u međuvremenu doda ili ukloni neki drugi.
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -227,12 +227,12 @@ function obInit() {
   d.metals = Array.isArray(d.metals) ? d.metals : defs.metals.map((m) => m.value);
   d.stones = Array.isArray(d.stones) ? d.stones : defs.stones.map((s) => s.value);
   d.budgets = Array.isArray(d.budgets) ? d.budgets : [...defs.budgets];
-  d.customMetals = Array.isArray(d.customMetals) ? d.customMetals : [];
+  d.customMetals = Array.isArray(d.customMetals) ? d.customMetals.map((m) => ({ ...m, swatch: /^#[0-9a-f]{6}$/i.test(m.swatch || '') ? m.swatch : '#c0c4c8' })) : [];
   d.customStones = Array.isArray(d.customStones) ? d.customStones : [];
   // Ranije upisani "Other metals" postaju prave opcije, bez gubitka podataka.
   for (const label of String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)) {
     const value = `custom-${uid()}`;
-    d.customMetals.push({ value, label: label.slice(0, 40) }); d.metals.push(value);
+    d.customMetals.push({ value, label: label.slice(0, 40), swatch: '#c0c4c8' }); d.metals.push(value);
   }
   d.metalsOther = '';
   for (const pc of d.pieces) { pc.uid ||= uid(); for (const st of pc.styles || []) st.uid ||= uid(); }
@@ -306,7 +306,6 @@ addEventListener('beforeunload', (e) => { if (OB.d && (OB.dirty || OB.saving) &&
 
 function renderOnboarding() {
   if (!OB.d) obInit();
-  applyOnboardingTheme();
   if (!document.getElementById('ob-editor')) app.innerHTML = '<div id="ob-editor"></div><div class="wrap" id="ob-preview-host"></div>';
   const editor = document.getElementById('ob-editor');
   const restoreImages = JLUI.images(editor);
@@ -331,25 +330,25 @@ function renderOnboarding() {
   restoreImages();
   if (!document.getElementById('ob-preview-frame')) document.getElementById('ob-preview-host').innerHTML = `
       <section class="ob-preview" aria-label="Live form preview">
-        <div class="ob-preview-bar"><div><h2>Your customer form</h2><p>Updates as you make choices. Notes to our team stay private.</p></div><label class="ob-bg"><span>Website background</span><input type="color" data-preview-bg value="${esc(OB.previewBg)}" /></label></div>
+        <div class="ob-preview-bar"><div><h2>Your customer form</h2><p>Updates as you make choices. Notes to our team stay private.</p></div><label class="ob-bg"><span>Your website background</span><input type="color" data-preview-bg value="${esc(obPreviewBackground())}" /></label></div>
         <p class="ob-preview-hint">Try a background like your website. This setting only changes this preview.</p>
-        <div class="ob-preview-stage" id="ob-preview-stage" style="background:${esc(OB.previewBg)}"><iframe id="ob-preview-frame" src="/f/onboarding-preview?preview=1&onboarding=1" title="Your live customer form"></iframe></div>
+        <div class="ob-preview-stage" id="ob-preview-stage" style="background:${esc(obPreviewBackground())}"><iframe id="ob-preview-frame" src="/f/onboarding-preview?preview=1&onboarding=1" title="Your live customer form"></iframe></div>
         <p class="ob-err" id="ob-preview-error" role="status"></p>
       </section>`;
+  syncPreviewBackground();
   queueOnboardingPreview();
   obStatus();
 }
 
-function applyOnboardingTheme() {
-  const store = OB.d?.store;
-  if (!store) return;
-  const light = store.theme === 'light';
-  const accent = /^#[0-9a-f]{6}$/i.test(store.accent) ? store.accent : '#35d0c4';
-  const n = parseInt(accent.slice(1), 16);
-  const ink = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) > 153 ? '#111111' : '#ffffff';
-  const colors = light ? { bg: '#faf7f2', panel: '#ffffff', surface: '#f3eee6', 'surface-2': '#ede6dc', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#6f675b' } : { bg: '#070b0c', panel: '#0d1416', surface: '#121b1e', 'surface-2': '#182327', line: '#213036', 'line-strong': '#36494f', ink: '#eef6f5', 'ink-soft': '#a3b6b4', 'ink-faint': '#80928f' };
-  for (const [k, v] of Object.entries({ ...colors, accent, 'accent-ink': ink })) document.documentElement.style.setProperty(`--${k}`, v);
-  document.documentElement.style.colorScheme = light ? 'light' : 'dark';
+function obPreviewBackground() {
+  return OB.previewBg || (OB.d?.store.theme === 'light' ? '#faf7f2' : '#070b0c');
+}
+function syncPreviewBackground() {
+  const color = obPreviewBackground();
+  const stage = document.getElementById('ob-preview-stage');
+  if (stage) stage.style.background = color;
+  const picker = document.querySelector('[data-preview-bg]');
+  if (picker) picker.value = color;
 }
 
 function queueOnboardingPreview() {
@@ -531,11 +530,11 @@ async function obUpload(input) {
 
 app.addEventListener('input', (e) => {
   const el = e.target;
-  if (el.dataset.previewBg !== undefined) { OB.previewBg = el.value; const stage = document.getElementById('ob-preview-stage'); if (stage) stage.style.background = el.value; return; }
+  if (el.dataset.previewBg !== undefined) { OB.previewBg = el.value; syncPreviewBackground(); return; }
   if (!OB.d || !el.dataset.ob) return;
   if (readOnly() || OB.submitting) return;
   obSet(el.dataset.ob, el.value);
-  if (el.dataset.ob === 'store.accent') { document.querySelectorAll('.ob-swatch.on').forEach((x) => x.classList.remove('on')); applyOnboardingTheme(); }
+  if (el.dataset.ob === 'store.accent') document.querySelectorAll('.ob-swatch.on').forEach((x) => x.classList.remove('on'));
   if (el.dataset.ob === 'store.name') { const heading = document.querySelector('[data-store-heading]'); if (heading) heading.textContent = el.value || P.me.client.name; }
   if (el.dataset.ob === 'store.name' || el.dataset.ob === 'store.accent') { const n = document.querySelector('[data-ob-act="next"]'); if (n) n.disabled = !obCan(OB.step); }
   obSave();
@@ -566,11 +565,14 @@ app.addEventListener('click', async (e) => {
     const kind = t.dataset.obAddOption;
     const listKey = kind === 'metals' ? 'customMetals' : 'customStones';
     if (d[listKey].length >= 6) return JLUI.alert('You can add up to 6 custom options.');
-    const label = await JLUI.prompt(kind === 'metals' ? 'Name of the metal (e.g. Silver)' : 'Name of the stone (e.g. Ruby)', { title: kind === 'metals' ? 'Add a metal' : 'Add a stone' });
+    const answer = kind === 'metals'
+      ? await JLUI.material('Name the metal and choose its circle color.', { title: 'Add a metal' })
+      : await JLUI.prompt('Name of the stone (e.g. Ruby)', { title: 'Add a stone' });
+    const label = typeof answer === 'string' ? answer : answer?.label;
     if (!label) return;
     const existing = [...defs[kind], ...d[listKey]].find((x) => x.label.toLowerCase() === label.toLowerCase());
     if (existing) { if (!d[kind].includes(existing.value)) d[kind].push(existing.value); }
-    else { const value = `custom-${uid()}`; d[listKey].push({ value, label: label.slice(0, 40) }); d[kind].push(value); }
+    else { const value = `custom-${uid()}`; d[listKey].push({ value, label: label.slice(0, 40), ...(kind === 'metals' ? { swatch: answer.swatch } : {}) }); d[kind].push(value); }
     redraw();
   }
   if (t.dataset.obPiece) {

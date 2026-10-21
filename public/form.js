@@ -1,3 +1,5 @@
+import { SMILE_TEETH, SMILE_DEFS, SMILE_GUMS, SMILE_LIPS, SMILE_OPENING } from './teeth-art.js';
+
 // Widget forme: crta korake iz konfiguracije, šalje lead, traži render i doradu.
 const formId = location.pathname.split('/')[2] || 'demo';
 const app = document.getElementById('app');
@@ -425,106 +427,24 @@ function prefillTeeth() {
   }
 }
 
-// Crtež zuba po anatomiji: širine i visine krunica u mm (Wheeler), zubi poredani po luku vilice
-// (parabola gledana odozgo), pa su zadnji zubi skraćeni perspektivom kao na pravoj fotografiji.
-// Obrisi krunica su labijalni pogled u jediničnom kvadratu: u 0 = mezijalno (ka sredini), v 0 = gleđno-cementna granica.
-const CROWN = {
-  central: 'M .22 0 C .1 .15 .02 .45 .02 .74 L .03 .93 Q .04 1 .13 1 C .45 1.02 .74 1 .88 .97 Q .99 .93 .99 .8 C .99 .5 .92 .18 .78 0 Z',
-  lateral: 'M .24 0 C .1 .18 .03 .45 .03 .72 L .05 .9 Q .07 .99 .18 1 C .45 1.01 .66 .98 .8 .93 Q .97 .85 .97 .66 C .97 .42 .9 .16 .76 0 Z',
-  canine: 'M .2 0 C .05 .2 .02 .5 .05 .7 C .12 .86 .28 .97 .45 1 C .62 .98 .82 .88 .94 .7 C .99 .5 .93 .18 .8 0 Z',
-  premolar: 'M .18 0 C .04 .2 .02 .55 .07 .76 C .16 .92 .34 1 .5 1 C .66 1 .84 .92 .93 .76 C .98 .55 .96 .2 .82 0 Z',
-  molar: 'M .12 0 C .02 .3 .01 .62 .07 .82 Q .2 .99 .36 .92 Q .46 .99 .56 .93 Q .72 .99 .86 .92 Q .98 .8 .98 .5 C .98 .25 .94 .1 .88 0 Z',
-  linc: 'M .28 0 C .13 .2 .05 .55 .05 .9 Q .06 1 .16 1 L .84 1 Q .94 1 .95 .9 C .95 .55 .87 .2 .72 0 Z',
-};
-// Od sredine ka nazad: [obris, širina mm, visina mm]; zadnji (molar) je samo dekor, ne bira se.
-const ARCH = {
-  T: { k: 0.031, teeth: [['central', 8.5, 10.5], ['lateral', 6.5, 9], ['canine', 7.5, 10], ['premolar', 7, 8.5], ['premolar', 6.5, 8], ['molar', 10, 7.5]] },
-  B: { k: 0.036, teeth: [['linc', 5, 9], ['linc', 5.5, 9.5], ['canine', 7, 11], ['premolar', 7, 8.5], ['premolar', 7, 8], ['molar', 11, 7.5]] },
-};
-const MM = 10; // px po mm
-// Ravne boje: izabran zub je siv dok kupac ne izabere metal, poslije u boji metala.
+// Smile approved in the visual preview. IDs retain their existing server/prompt meaning.
 const SELECTED_FILL = { 'yellow-gold': '#e3b85a', 'white-gold': '#dfe2e5', platinum: '#d6d9dd', 'rose-gold': '#e2a690', 'two-tone': '#e3b85a' };
-
-// Tačka na luku za dati pređeni put s (mm) od sredine: x ide u stranu, z u dubinu.
-function archPoint(k, sTarget) {
-  let x = 0, s = 0;
-  while (s < sTarget) { const dx = 0.05; s += Math.hypot(dx, 2 * k * x * dx); x += dx; }
-  return { x, z: k * x * x };
-}
-
-// Gotova geometrija oba reda (ne zavisi od izbora), računa se jednom.
-const MOUTH = (() => {
-  const out = [];
-  for (const r of ['T', 'B']) {
-    const { k, teeth } = ARCH[r];
-    let s = 0;
-    teeth.forEach(([shape, w, h], i) => {
-      const p0 = archPoint(k, s), p1 = archPoint(k, s + w);
-      s += w;
-      const zm = (p0.z + p1.z) / 2;
-      const persp = 1 / (1 + zm / 90);
-      const px = (p) => (p.x * MM) / (1 + p.z / 90);
-      for (const side of [-1, 1]) {
-        const xa = 260 + side * px(p0), xb = 260 + side * px(p1);
-        // Linija osmijeha: gornji zubi se prema nazad penju, donji spuštaju; dublje = tamnije.
-        const H = h * MM * persp * (r === 'T' ? 1 : 0.85);
-        const yc = r === 'T' ? 62 + zm * MM * 0.2 : 270 - zm * MM * 0.16;
-        const num = side < 0 ? 5 - i : 6 + i; // 1-10 slijeva nadesno
-        out.push({ r, id: i < 5 ? `${r}${num}` : null, shape, x0: Math.min(xa, xb), x1: Math.max(xa, xb), mirror: side < 0, yc, H, shade: Math.min(0.22, zm / 80) });
-      }
-    });
-  }
-  return out;
-})();
-
-function crownPath(t) {
-  const W = t.x1 - t.x0;
-  const nums = CROWN[t.shape].split(' ');
-  const outp = [];
-  for (let i = 0; i < nums.length; i++) {
-    if (/^[A-Z]$/.test(nums[i])) { outp.push(nums[i]); continue; }
-    const u = +nums[i], v = +nums[i + 1];
-    i++;
-    const x = t.mirror ? t.x1 - u * W : t.x0 + u * W;
-    const y = t.r === 'T' ? t.yc + v * t.H : t.yc - v * t.H;
-    outp.push(`${x.toFixed(1)} ${y.toFixed(1)}`);
-  }
-  return outp.join(' ');
-}
-
-// Desni sa papilama: rub se izvija preko svakog zuba, a između zuba spušta u šiljak.
-function gumPath(r) {
-  const row = MOUTH.filter((t) => t.r === r).sort((a, b) => a.x0 - b.x0);
-  const up = r === 'T';
-  const dir = up ? 1 : -1;
-  let d = `M0 ${row[0].yc - dir * 6} L${row[0].x0} ${row[0].yc + dir * row[0].H * 0.2}`;
-  row.forEach((t, i) => {
-    const pap = (x, tt) => `${x.toFixed(1)} ${(tt.yc + dir * tt.H * 0.2).toFixed(1)}`;
-    const zen = t.yc + dir * t.H * 0.02;
-    d += ` L${pap(t.x0 + 1, t)} Q${((t.x0 + t.x1) / 2).toFixed(1)} ${(zen - dir * t.H * 0.1).toFixed(1)} ${pap(t.x1 - 1, i < row.length - 1 ? row[i + 1] : t)}`;
-  });
-  const last = row.at(-1);
-  d += up ? ` L520 ${last.yc + 6} L520 0 L0 0 L0 ${row[0].yc + 6}Z` : ` L520 ${last.yc - 6} L520 320 L0 320 L0 ${row[0].yc - 6}Z`;
-  return d;
-}
-
 function mouthSvg(f, set) {
-  const sel = SELECTED_FILL[S.a.metal] || '#c8c5bf';
-  const tooth = (t) => {
-    const on = t.id && set.has(t.id);
-    const name = t.id ? `${t.r === 'T' ? 'Top' : 'Bottom'} tooth ${t.id.slice(1)}` : '';
-    const attrs = t.id ? ` data-tooth="${t.id}" data-tfield="${esc(f.id)}" role="checkbox" aria-checked="${on}" aria-label="${name}" tabindex="0"` : '';
-    return `<path class="tooth ${on ? 'on' : ''} ${t.id ? '' : 'deco'}" d="${crownPath(t)}" style="fill:${on ? sel : t.shade > 0.12 ? '#e4ddcf' : '#efe9dd'}"${attrs}/>`;
-  };
-  // Od nazad ka naprijed. Redovi su razmaknuti da se svaki zub može cijeli kliknuti.
-  const order = (r) => MOUTH.filter((t) => t.r === r).sort((a, b) => b.shade - a.shade);
-  return `<svg class="mouth" viewBox="0 18 520 288" role="group" aria-label="Choose teeth">
-    <clipPath id="lips"><path d="M8 160 C24 56 150 22 260 22 C370 22 496 56 512 160 C496 264 370 302 260 302 C150 302 24 264 8 160Z"/></clipPath>
-    <g clip-path="url(#lips)">
-      <rect x="0" y="0" width="520" height="320" fill="#161011"/>
-      ${order('B').map(tooth).join('')}${order('T').map(tooth).join('')}
-      <path class="gum" d="${gumPath('B')}"/><path class="gum" d="${gumPath('T')}"/>
-    </g>
+  const prefix = `mouth-${f.id.replace(/[^a-z0-9_-]/gi, '')}`;
+  const scope = (markup) => markup.replace(/id="([^"]+)"/g, (_, id) => `id="${prefix}-${id}"`).replace(/url\(#([^)]+)\)/g, (_, id) => `url(#${prefix}-${id})`);
+  const custom = S.cfg.steps.flatMap((s) => s.fields).find((x) => x.id === 'metal')?.options?.find((o) => o.value === S.a.metal)?.swatch;
+  const selected = SELECTED_FILL[S.a.metal] || (/^#[0-9a-f]{6}$/i.test(custom || '') ? custom : '#c8c5bf');
+  const teeth = SMILE_TEETH.map((t) => {
+    const selectable = !t.id.includes('decor');
+    const on = selectable && set.has(t.id);
+    const attrs = selectable ? ` data-tooth="${t.id}" data-tfield="${esc(f.id)}" role="checkbox" aria-checked="${on}" aria-label="${t.row === 'T' ? 'Top' : 'Bottom'} tooth ${t.id.slice(1)}" tabindex="0"` : '';
+    return `<g class="tooth ${on ? 'on' : ''} ${selectable ? '' : 'deco'}"${attrs}><path class="crown" d="${t.d}" fill="${on ? selected : `url(#${prefix}-enamel)`}"/><path class="tooth-depth" d="${t.d}" fill="url(#${prefix}-enamelSides)"/></g>`;
+  }).join('');
+  return `<svg class="mouth" viewBox="40 100 468 212" role="group" aria-label="Choose teeth">
+    <defs>${scope(SMILE_DEFS)}</defs>
+    <path d="${SMILE_OPENING}" fill="#292627"/>
+    <g clip-path="url(#${prefix}-smileOpening)">${scope(SMILE_GUMS)}<g transform="translate(24.016 86.5) scale(.744)">${teeth}</g></g>
+    ${scope(SMILE_LIPS)}
   </svg>`;
 }
 

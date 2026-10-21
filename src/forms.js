@@ -430,7 +430,7 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
     field('metal').options = [
       ...field('metal').options.filter((o) => metals.includes(o.value)).map((o) => (mt.add(o.value), o)),
       ...extraMetals.map((m) => opt(uniqOf(slugOf(m), mt), m.slice(0, 40))),
-      ...customMetals.map((m) => opt(uniqOf(slugOf(m.label), mt), String(m.label).slice(0, 40))),
+      ...customMetals.map((m) => opt(uniqOf(slugOf(m.label), mt), String(m.label).slice(0, 40), { swatch: /^#[0-9a-f]{6}$/i.test(m.swatch || '') ? m.swatch : '#c0c4c8' })),
     ];
   }
   // Kamenje: samo izabrano; ako zlatar radi samo bez kamena, pitanja o kamenu se isključe.

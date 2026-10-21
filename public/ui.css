@@ -13,6 +13,11 @@ dialog :focus-visible { outline: 2px solid var(--ink, #fff); outline-offset: 4px
 .jl-dialog h2 { font: 500 28px var(--serif, Georgia); margin: 0 0 12px; }
 .jl-dialog p { color: var(--ink-soft, #a3b6b4); white-space: pre-line; margin: 0 0 20px; }
 .jl-input { box-sizing: border-box; width: 100%; border: 1px solid var(--line-strong, #36494f); border-radius: 12px; padding: 12px; background: var(--bg, #070b0c); color: var(--ink, #fff); font: inherit; }
+.jl-color { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; color: var(--ink-soft, #a3b6b4); }
+.jl-color input { width: 42px; height: 42px; padding: 3px; border: 1px solid var(--line-strong, #36494f); border-radius: 50%; background: var(--bg, #070b0c); cursor: pointer; }
+.jl-color input::-webkit-color-swatch-wrapper { padding: 0; }
+.jl-color input::-webkit-color-swatch { border: 0; border-radius: 50%; }
+.jl-color input::-moz-color-swatch { border: 0; border-radius: 50%; }
 .jl-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
 .jl-button { padding: 10px 17px; border: 1px solid var(--line-strong, #36494f); border-radius: 12px; background: transparent; color: var(--ink, #fff); font: 600 13px var(--sans, system-ui); cursor: pointer; }
 .jl-button.primary { background: var(--accent, #35d0c4); color: var(--accent-ink, #032220); border-color: transparent; }

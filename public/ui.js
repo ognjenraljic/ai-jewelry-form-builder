@@ -1,15 +1,18 @@
 // Zajednički glass dijalozi i prevlačenje fotografija, bez browserovih prompt prozora.
 (() => {
   const escape = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  function dialog(message, { input = false, alert = false, title = input ? 'Add an option' : alert ? 'Please check' : 'Confirm', value = '', ok = input ? 'Add' : alert ? 'Got it' : 'Continue' } = {}) {
+  function dialog(message, { input = false, color = false, alert = false, title = input ? 'Add an option' : alert ? 'Please check' : 'Confirm', value = '', ok = input ? 'Add' : alert ? 'Got it' : 'Continue' } = {}) {
     return new Promise((resolve) => {
       const previous = document.activeElement;
       const el = document.createElement('dialog');
       el.className = 'jl-dialog';
-      el.innerHTML = `<form method="dialog"><h2>${escape(title)}</h2><p>${escape(message)}</p>${input ? `<input class="jl-input" name="answer" value="${escape(value)}" maxlength="80" required autocomplete="off" />` : ''}<div class="jl-actions">${alert ? '' : '<button class="jl-button" value="cancel" formnovalidate>Cancel</button>'}<button class="jl-button primary" value="ok">${escape(ok)}</button></div></form>`;
+      el.innerHTML = `<form method="dialog"><h2>${escape(title)}</h2><p>${escape(message)}</p>${input ? `<input class="jl-input" name="answer" aria-label="${color ? 'Metal name' : 'Option name'}" value="${escape(value)}" maxlength="${color ? 40 : 80}" required autocomplete="off" />` : ''}${color ? '<label class="jl-color"><span>Circle color</span><input type="color" name="swatch" value="#c0c4c8" /></label>' : ''}<div class="jl-actions">${alert ? '' : '<button class="jl-button" value="cancel" formnovalidate>Cancel</button>'}<button class="jl-button primary" value="ok">${escape(ok)}</button></div></form>`;
       let result = input ? null : false;
       el.querySelector('form').addEventListener('submit', (e) => {
-        if (e.submitter?.value === 'ok') result = input ? el.querySelector('input').value.trim() || null : true;
+        if (e.submitter?.value !== 'ok') return;
+        const label = input ? el.querySelector('[name="answer"]').value.trim() : '';
+        if (input && !label) { e.preventDefault(); el.querySelector('[name="answer"]').focus(); return; }
+        result = color ? { label, swatch: el.querySelector('[name="swatch"]').value } : input ? label : true;
       });
       el.addEventListener('close', () => { el.remove(); previous?.focus?.({ preventScroll: true }); resolve(result); }, { once: true });
       document.body.appendChild(el);
@@ -71,5 +74,5 @@
     target.file.files = dt.files;
     target.file.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  window.JLUI = { confirm: (m, o) => dialog(m, o), prompt: (m, o) => dialog(m, { ...o, input: true }), alert: (m) => dialog(m, { alert: true }), uploadBusy, images };
+  window.JLUI = { confirm: (m, o) => dialog(m, o), prompt: (m, o) => dialog(m, { ...o, input: true }), material: (m, o) => dialog(m, { ...o, input: true, color: true }), alert: (m) => dialog(m, { alert: true }), uploadBusy, images };
 })();

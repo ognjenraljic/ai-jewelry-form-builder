@@ -1098,7 +1098,7 @@ function cleanOnboarding(d, clientId) {
     })),
     metals: list(d.metals, 12).map((x) => str(x, 40)),
     metalsOther: str(d.metalsOther, 200),
-    customMetals: list(d.customMetals, 6).filter((x) => x && typeof x === 'object').map((x) => ({ value: str(x.value, 40), label: str(x.label, 40) })).filter((x) => /^custom-[a-z0-9-]+$/.test(x.value) && x.label.trim()),
+    customMetals: list(d.customMetals, 6).filter((x) => x && typeof x === 'object').map((x) => ({ value: str(x.value, 40), label: str(x.label, 40), swatch: /^#[0-9a-f]{6}$/i.test(x.swatch || '') ? x.swatch : '#c0c4c8' })).filter((x) => /^custom-[a-z0-9-]+$/.test(x.value) && x.label.trim()),
     stones: list(d.stones, 12).map((x) => str(x, 40)),
     customStones: list(d.customStones, 6).filter((x) => x && typeof x === 'object').map((x) => ({ value: str(x.value, 40), label: str(x.label, 40) })).filter((x) => /^custom-[a-z0-9-]+$/.test(x.value) && x.label.trim()),
     budgets: list(d.budgets, 10).map((x) => str(x, 40)),

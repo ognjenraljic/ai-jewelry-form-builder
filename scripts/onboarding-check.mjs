@@ -45,7 +45,7 @@ check((await post('/api/portal/onboarding/upload', invalidPhoto, { portal })).st
 const data = {
   store: { name: 'Aurora QA', website: 'https://aurora.example', logo: photo.data.url, accent: '#9b8cff', theme: 'light' },
   pieces: [{ uid: 'piece1', value: 'chain', label: 'Chain', styles: [{ ...defaults.styles.chain[0], uid: 'style1', image: photo.data.url, keep: true }, { uid: 'style2', label: 'Hidden style', keep: false }] }],
-  metals: ['yellow-gold', 'custom-silver'], customMetals: [{ value: 'custom-silver', label: 'Silver' }],
+  metals: ['yellow-gold', 'custom-silver'], customMetals: [{ value: 'custom-silver', label: 'Silver', swatch: '#8b9ca8' }],
   stones: ['none', 'custom-ruby'], customStones: [{ value: 'custom-ruby', label: 'Ruby' }],
   budgets: ['$500 - $1,000', '$1,000+'], notes: 'Private note for the team', questions: 'Legacy request: ring size', step: 5,
 };
@@ -57,6 +57,9 @@ const labels = (f, id) => fields(f).find((x) => x.id === id).options.map((x) => 
 check(p.brand.name === data.store.name && p.brand.logo === photo.data.url, 'preview uses current store name and logo');
 check(p.theme.accent === '#9b8cff' && p.theme.bg === '#faf7f2', 'preview uses selected color and light theme');
 check(labels(p, 'metal').join() === 'Yellow Gold,Silver', 'custom metal appears as an actual customer choice');
+check(fields(p).find((f) => f.id === 'metal').options.find((o) => o.label === 'Silver').swatch === '#8b9ca8', 'custom metal color reaches live preview');
+const unsafeSwatch = await post('/api/portal/onboarding/preview', { data: { ...data, customMetals: [{ ...data.customMetals[0], swatch: 'url(https://example.com)' }] } }, { portal });
+check(fields(unsafeSwatch.data.form).find((f) => f.id === 'metal').options.find((o) => o.label === 'Silver').swatch === '#c0c4c8', 'invalid material color is replaced by a safe default');
 check(labels(p, 'stones').join() === 'No stones,Ruby', 'custom stone appears as an actual customer choice');
 check(p.styles.chain.length === 1 && p.styles.chain[0].image === photo.data.url, 'disabled style excluded and replacement photo used');
 check(!JSON.stringify(p).includes('Private note') && !JSON.stringify(p).includes('Legacy request'), 'team notes and legacy requests stay out of customer form');
@@ -98,6 +101,7 @@ check(built.status === 200, 'admin builds real form from submitted onboarding');
 const publicForm = (await req(`/api/forms/${built.data.form.id}`)).data;
 check(publicForm.theme.accent === p.theme.accent && publicForm.theme.bg === p.theme.bg, 'published-form theme matches preview');
 check(labels(publicForm, 'metal').join() === labels(p, 'metal').join() && labels(publicForm, 'stones').join() === labels(p, 'stones').join(), 'real custom choices match preview');
+check(fields(publicForm).find((f) => f.id === 'metal').options.find((o) => o.label === 'Silver').swatch === '#8b9ca8', 'custom material color survives saving, submission and form creation');
 check(publicForm.styles.chain[0].image.startsWith(`/media/forms/${publicForm.id}/`), 'onboarding photos copied into real form');
 check(!JSON.stringify(publicForm).includes('Final unsaved note'), 'internal notes never become customer-facing fields');
 const savedClient = (await req('/api/admin/forms', { admin: true })).data.clients.find((c) => c.id === client.id);

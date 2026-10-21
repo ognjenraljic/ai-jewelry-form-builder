@@ -14,6 +14,8 @@ Runs entirely on Cloudflare: one Worker, D1 (database), R2 (images).
 - **Leads admin** (`/admin`): leads with every render and its cost, test renders, and demo requests you can mark as handled.
 - **Archive**: archived forms and clients disappear from the lists and stop taking new leads; nothing is deleted.
 - **Onboarding**: New form → **Send onboarding form** gives the client a link to a guided setup in their portal (store, logo and color, pieces, styles with their own photos, metals, stones, budget, notes). It saves as they type; when they press Send you get a notification (bell in the builder) and **Create form from it** builds the form, photos included. The same link then opens their normal portal.
+
+Onboarding color and theme choices apply only to the customer form preview. **Your website background** starts dark or light with the selected form theme and can be overridden for that preview. Custom metals include a color swatch, saved with the onboarding and carried into the real form. The grillz selector uses the approved smile artwork with the same T1–T10/B1–B10 answer IDs as before.
 - **Grillz try-on**: after a grillz render the customer can upload a smiling photo and see themselves wearing the design (2 per lead, photos stay private: customer via their lead token, the jeweler and admin). Turn it off per form in Pieces & styles.
 - **Style library** (`public/library/`): reference images per style, sent to the model with the prompt so the shape comes out right.
 
