@@ -119,7 +119,16 @@ async function boot() {
       if (id) parent.postMessage({ type: 'aik:field', field: id.replace(/__more$/, '') }, location.origin);
     }, true);
   }
-  new ResizeObserver(() => parent.postMessage({ type: 'aik:resize', form: formId, height: document.documentElement.scrollHeight }, '*')).observe(document.body);
+  if (parent !== window) {
+    let lastHeight = 0;
+    // Measure the content, not the iframe viewport, so shorter steps can shrink too.
+    new ResizeObserver(() => {
+      const height = Math.ceil(app.getBoundingClientRect().height);
+      if (height === lastHeight) return;
+      lastHeight = height;
+      parent.postMessage({ type: 'aik:resize', form: formId, height }, '*');
+    }).observe(app);
+  }
 }
 
 // Tema zlatara: svaka vrijednost postaje CSS varijabla (samo boje, ime iz sigurnog skupa znakova).

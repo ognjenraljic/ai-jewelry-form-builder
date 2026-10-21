@@ -377,7 +377,7 @@ addEventListener('message', (e) => {
   const frame = document.getElementById('ob-preview-frame');
   if (!frame || e.origin !== location.origin || e.source !== frame.contentWindow) return;
   if (e.data?.type === 'aik:preview-ready') { OB.previewStep = -1; queueOnboardingPreview(); }
-  if (e.data?.type === 'aik:resize') frame.style.height = `${Math.max(640, Math.min(1800, Number(e.data.height) || 640))}px`;
+  if (e.data?.type === 'aik:resize' && Number.isFinite(e.data.height) && e.data.height > 0) frame.style.height = `${Math.max(640, Math.ceil(e.data.height) + 2)}px`;
 });
 
 // Može dalje: radnja treba ime, a "What you make" bar jedan komad.
@@ -406,8 +406,8 @@ function obStepView() {
         <label class="ob-f"><span>Store name</span><input class="in" data-ob="store.name" value="${esc(d.store.name)}" placeholder="Northstar Jewelers" /></label>
         <label class="ob-f"><span>Website</span><input class="in" data-ob="store.website" value="${esc(d.store.website)}" placeholder="northstarjewelers.com" /></label>
       </div>
-      <div class="ob-f"><span>Logo</span><div class="ob-row">${obPick('store.logo', { label: 'Upload logo', cls: 'logo' })}<p class="hint">PNG with a transparent background looks best. It shows at the top of your form.</p></div></div>
-      <div class="ob-f"><span>Brand color</span><div class="ob-row">${ACCENTS.map((c) => `<button class="ob-swatch ${d.store.accent.toLowerCase() === c ? 'on' : ''}" style="background:${c}" data-ob-accent="${c}" aria-label="${c}"></button>`).join('')}<label class="ob-swatch custom" title="Your own color"><input type="color" data-ob="store.accent" value="${esc(d.store.accent)}" /></label></div></div>
+      <div class="ob-f"><span>Logo</span>${obPick('store.logo', { label: 'Upload logo', cls: 'logo' })}<p class="hint ob-logo-hint">PNG with a transparent background looks best. It shows at the top of your form.</p></div>
+      <div class="ob-f"><span>Brand color</span><div class="ob-row">${ACCENTS.map((c) => `<button class="ob-swatch ${d.store.accent.toLowerCase() === c ? 'on' : ''}" style="background:${c}" data-ob-accent="${c}" aria-label="${c}"></button>`).join('')}<label class="ob-swatch custom" title="Your own color"><input type="color" aria-label="Your own color" data-ob="store.accent" value="${esc(d.store.accent)}" /></label></div></div>
       <div class="ob-f"><span>Look</span><div class="ob-row">
         ${[['dark', 'Dark', 'Elegant, like a jewelry case'], ['light', 'Light', 'Bright and clean']].map(([v, l, h]) => `<button class="ob-theme ${d.store.theme === v ? 'on' : ''} ${v}" data-ob-theme="${v}"><i style="--a:${esc(d.store.accent)}"></i><b>${l}</b><small>${h}</small></button>`).join('')}
       </div></div>`;

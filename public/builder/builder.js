@@ -1370,6 +1370,7 @@ app.addEventListener('pointerdown', (e) => {
 window.addEventListener('message', (e) => {
   const frame = document.getElementById('frame');
   if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow) return;
+  if (e.data?.type === 'aik:resize' && Number.isFinite(e.data.height) && e.data.height > 0) frame.style.height = `${Math.max(640, Math.ceil(e.data.height) + 2)}px`;
   if (e.data?.type === 'aik:at') {
     const i = e.data.step === '_contact' ? B.draft.steps.length : B.draft.steps.findIndex((s) => s.id === e.data.step);
     setPv(i >= 0 ? i : null);

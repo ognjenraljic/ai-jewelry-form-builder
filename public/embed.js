@@ -42,8 +42,8 @@
   window.addEventListener('message', function (e) {
     // Poruke primamo samo od našeg porijekla i samo iz našeg iframe-a.
     if (e.origin !== origin || e.source !== f.contentWindow || !e.data) return;
-    if (e.data.type === 'aik:resize' && typeof e.data.height === 'number') {
-      f.style.height = Math.max(560, Math.min(6000, e.data.height)) + 'px';
+    if (e.data.type === 'aik:resize' && Number.isFinite(e.data.height) && e.data.height > 0) {
+      f.style.height = Math.max(560, Math.ceil(e.data.height)) + 'px';
       queue();
     }
     if (e.data.type === 'aik:step' && f.getBoundingClientRect().top < 0) f.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });

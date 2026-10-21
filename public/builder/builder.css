@@ -42,7 +42,7 @@ a { color: var(--accent); }
 .pbar { display: flex; gap: 8px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .pbar .label { font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; margin-right: 4px; }
 .pstage { overflow: auto; display: flex; justify-content: center; padding: 24px; }
-.pframe { width: 100%; max-width: 860px; height: 100%; min-height: 640px; border: 1px solid var(--line-strong); border-radius: 18px; background: #000; transition: max-width 0.3s; }
+.pframe { width: 100%; max-width: 860px; height: 640px; min-height: 640px; flex: none; align-self: flex-start; border: 1px solid var(--line-strong); border-radius: 18px; background: #000; transition: max-width 0.3s; }
 .pframe.mobile { max-width: 390px; }
 
 /* Controls */
