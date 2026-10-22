@@ -1,7 +1,8 @@
-import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, validateFormDef, fromTemplate, enabledSteps } from './forms.js';
+import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
 import { buildPrompt, buildTweakPrompt } from './prompt.js';
 import { parseTeeth, teethSummary } from './teeth.js';
 import { buildTryOnPrompt } from './tryon.js';
+import { applyPresetTeeth, customTeethVisible } from '../public/grillz-selection.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
   spendBlock, SPEND_MESSAGE, turnstileOn, turnstileOk, flagged, FLAG_MESSAGE, sniffImage, withSecurity,
@@ -26,6 +27,12 @@ function withKey(env, key, geminiFallback) {
 }
 const firstModel = (env) => withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro');
 const tweakModel = (env) => withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash');
+// Precision edits and sparse grillz need stronger count/shape adherence than everyday image generation.
+const grillzModel = (env) => withKey(env, MODELS[env.GRILLZ_MODEL] ? env.GRILLZ_MODEL : 'gptsun', 'pro');
+const tryOnModel = (env) => {
+  const model = MODELS[withKey(env, MODELS[env.TRYON_MODEL] ? env.TRYON_MODEL : 'gptsun', 'pro')];
+  return { ...model, quality: model.id.startsWith('gpt-image-2.5-') ? 'xhigh' : model.quality };
+};
 
 const LEADS_PER_IP_HOUR = 10;
 const MAX_REF_BYTES = 8 * 1024 * 1024;
@@ -132,7 +139,7 @@ async function loadForm(env, id, { live = false } = {}) {
   if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(String(id || ''))) return null;
   const row = await env.DB.prepare('SELECT data, archived_at FROM forms WHERE id = ?').bind(id).first();
   if (row && live && row.archived_at) return null;
-  return row ? JSON.parse(row.data) : FORMS[id] || null;
+  return withStyleTeeth(row ? JSON.parse(row.data) : FORMS[id] || null);
 }
 
 async function getForm(env, id) {
@@ -171,7 +178,7 @@ async function createLead(request, env) {
   // Polje "reference" je inspiracija za AI; ostala upload pitanja i dodatna polja za fajl idu u files.
   const uploads = [];
   for (const f of enabledSteps(form).flatMap((st) => st.fields.filter((x) => x.enabled !== false))) {
-    if (!visible(f, answers)) continue;
+    if (!visible(f, answers, form)) continue;
     if (f.type === 'upload') uploads.push(f.id);
     if (f.followup === 'file' && answers[f.id] != null && answers[f.id] !== '') uploads.push(`${f.id}__more`);
   }
@@ -253,7 +260,7 @@ async function createRender(request, env, leadId, ctx) {
   const isTweak = !!(tweak && ok.length);
   // Prvi render ide na jači model (to je trenutak kad kupac odlučuje), dorade na brži i jeftiniji.
   // U dev modu forma može izabrati model ručno radi poređenja.
-  const modelKey = env.DEV_MODE === '1' && MODELS[body.model] ? body.model : isTweak ? tweakModel(env) : firstModel(env);
+  const modelKey = env.DEV_MODE === '1' && MODELS[body.model] ? body.model : isTweak ? tweakModel(env) : JSON.parse(lead.answers).type === 'grillz' ? grillzModel(env) : firstModel(env);
   const model = MODELS[modelKey];
   // Označeni dio slike (maska) razumije samo OpenAI; ako stigne a ne može se pročitati, bolje reći nego mijenjati cijelu sliku.
   const mask = isTweak && body.mask && model.provider === 'openai' ? maskFrom(body.mask) : null;
@@ -338,7 +345,7 @@ async function createTryOn(request, env, leadId, ctx) {
   const block = await spendBlock(env, lead.form_id);
   if (block) { await budgetNotice(env, block, lead.form_id); return json({ error: SPEND_MESSAGE, paused: true }, 503); }
 
-  const model = MODELS[firstModel(env)];
+  const model = tryOnModel(env);
   const renderId = rid(12);
   if (!(await claimRender(env, { id: renderId, leadId, model, tweak: 'Try-on on the customer photo', kind: 'tryon', maxOk: TRYONS_PER_LEAD, maxAll: TRYONS_PER_LEAD + 2 }))) {
     const busy = (await env.DB.prepare("SELECT 1 FROM renders WHERE lead_id = ? AND status = 'pending'").bind(leadId).first());
@@ -411,7 +418,7 @@ async function renderInputs(env, request, form, answers, { ref = null, tweak = '
   const refs = [];
   const style = styleOf(form, answers);
   // Ugrađeni grillz stilovi govore samo broj zuba; kad kupac izabere tačne zube, njihova slika bi nametnula pogrešan broj.
-  const countOnly = answers.type === 'grillz' && ['top6', 'top8', 'set', 'fangs'].includes(answers.style) && parseTeeth(answers.teeth);
+  const countOnly = answers.type === 'grillz' && parseTeeth(answers.teeth) && /^\/library\/grillz\/(top6|top8|set|fangs)\.webp$/.test(style?.image || '');
   if (style?.image && !countOnly) {
     let img = null;
     if (style.image.startsWith('/media/forms/')) img = await r2Image(env, style.image.slice(7));
@@ -475,7 +482,7 @@ async function testRender(request, env, ctx) {
     base = await r2Image(env, key);
     if (!base) return json({ error: 'Test render not found.' }, 404);
   }
-  const model = MODELS[tweak ? tweakModel(env) : firstModel(env)];
+  const model = MODELS[tweak ? tweakModel(env) : answers.type === 'grillz' ? grillzModel(env) : firstModel(env)];
   const maskFile = fd.get('mask');
   const mask = base && model.provider === 'openai' && maskFile && typeof maskFile === 'object' ? maskFrom(new Uint8Array(await maskFile.arrayBuffer())) : null;
   if (base && model.provider === 'openai' && maskFile && typeof maskFile === 'object' && !mask) return json({ error: 'The marked area could not be read.' }, 400);
@@ -1254,7 +1261,7 @@ function validateAnswers(form, a) {
   }
   for (const f of on.values()) {
     if (f.type === 'upload') continue;
-    if (!visible(f, a)) { delete a[f.id]; delete a[`${f.id}__more`]; continue; }
+    if (!visible(f, a, form)) { delete a[f.id]; delete a[`${f.id}__more`]; continue; }
     const v = a[f.id];
     if (f.required && (v == null || v === '')) return `Please complete: ${f.label || f.id}`;
     if (v == null || v === '') continue;
@@ -1268,10 +1275,12 @@ function validateAnswers(form, a) {
     if (opts && !opts.some((o) => o.value === v)) return 'Invalid choice.';
     if (!opts && v.length > (f.max || 1000)) return 'Text is too long.';
   }
+  applyPresetTeeth(form, a, styleOf(form, a));
   return null;
 }
 
-function visible(field, a) {
+function visible(field, a, form) {
+  if (field.type === 'teeth' && !customTeethVisible(form, a)) return false;
   const c = field.showIf;
   if (!c) return true;
   const v = a[c.field];

@@ -14,7 +14,8 @@ check(bottom.includes("lower central incisor (viewer's left)") && bottom.include
 const mixed = buildTryOnPrompt({ teeth: 'T5,T6,B5,B6' });
 check(mixed.includes('Top row: exactly 2 teeth') && mixed.includes('Bottom row: exactly 2 teeth'), 'two pairs stay separate instead of becoming full rows');
 check(mixed.includes('A plain metal cap must remain plain metal') && mixed.includes('natural enamel'), 'mixed stone and plain caps preserve neighboring enamel');
-check(!mixed.includes('selection takes priority over any reference image') && mixed.includes('transfer only the caps actually visible'), 'refined product render controls the cap inventory');
+check(mixed.includes('at most 2 upper and 2 lower teeth') && mixed.includes('overrides any extra jewelry visible'), 'selected pair prevents surplus reference side caps from reaching the smile');
+check(mixed.includes('contact shadows') && mixed.includes('PHOTOGRAPHIC RELIGHTING') && mixed.includes('tiny identical gold squares'), 'portrait lighting, tooth shape and contact shadows are explicit');
 check(buildTryOnPrompt({ style: 'set' }).includes('Determine the covered tooth positions only from IMAGE 2'), 'legacy answers without a tooth map do not invent a full set');
 
 if (!process.env.BASE) { console.log(`Passed ${checks} prompt checks.`); process.exit(0); }
@@ -29,7 +30,7 @@ async function request(path, body, headers = {}) {
   return data;
 }
 const fd = new FormData();
-for (const [key, value] of Object.entries({ formId: 'landing-demo', name: 'Try-on QA', email: 'tryon@example.com', phone: '555 010 0009', consent: 'yes', answers: JSON.stringify({ type: 'grillz', style: 'set', teeth: 'T5,T6,B5,B6', metal: 'white-gold', karat: '14K', stones: 'lab', coverage: 'full', budget: '$1,500 - $2,500' }) })) fd.set(key, value);
+for (const [key, value] of Object.entries({ formId: 'landing-demo', name: 'Try-on QA', email: 'tryon@example.com', phone: '555 010 0009', consent: 'yes', answers: JSON.stringify({ type: 'grillz', style: 'other', teeth: 'T5,T6,B5,B6', metal: 'white-gold', karat: '14K', stones: 'lab', coverage: 'full', budget: '$1,500 - $2,500' }) })) fd.set(key, value);
 const lead = await request('/api/leads', fd);
 const path = `/api/leads/${lead.leadId}`;
 const renders = [];
@@ -49,7 +50,7 @@ const sent = entries.filter(e => e.path === '/v1/images/edits').at(-1);
 check(sent.images === 2 && sent.imageHashes[0] === hash(selfie), 'first model image is exactly the submitted photograph');
 check(sent.imageHashes[1] === hash(chosen) && hash(chosen) !== hash(latest), 'second model image is exactly the chosen design');
 check(sent.prompt === mixed && sent.size === 'auto', 'placement instructions and original-aspect output reach the model');
-check(sent.model === 'gpt-image-2.5-sunburst', 'try-on uses the primary quality model rather than the cheaper tweak model');
+check(sent.model === 'gpt-image-2.5-sunburst' && sent.quality === 'xhigh', 'try-on uses the precision model at extra-high quality');
 photo.set('base', '3');
 const second = await request(path + '/tryon', photo);
 const both = await request(path, null, { 'x-lead-token': lead.token });

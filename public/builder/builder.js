@@ -775,7 +775,7 @@ function fieldEditor(i, j, f) {
   } else if (f.type === 'upload') {
     extra = inp(`${p}.hint`, 'Hint under the upload');
   } else if (f.type === 'teeth') {
-    extra = '<p class="hint">Customers tap the teeth they want or pick a set (Single, 2 Piece, Classic 6, 8 Top, 6 on 6, Full Set). The AI gets the exact teeth.</p>';
+    extra = '<p class="hint">Shown after Something else in Choose a style. Preset styles use their own layout; customers choosing Something else tap individual teeth or pick a set.</p>';
   } else if (f.type !== 'yesno') {
     const chips = f.type === 'chips';
     const rows = (f.options || []).map((o, k) => `

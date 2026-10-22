@@ -91,7 +91,8 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
   // Poznata polja važe samo ako je pitanje uključeno (type i style dolaze i iz isključenog koraka kao default).
   const on = new Set(allFields.map((f) => f.id));
   a = Object.fromEntries(Object.entries(a).filter(([k]) => k === 'type' || k === 'style' || on.has(k.replace(/__more$/, ''))));
-  const g = a.type === 'grillz' ? grillzPlan(a) : null;
+  const photoPreset = style && a.style !== 'other' && !a.teeth && !style.teeth && !['top6', 'top8', 'set', 'fangs'].includes(a.style);
+  const g = a.type === 'grillz' && !photoPreset ? grillzPlan(a) : null;
   // Opis komada: iz buildera (opcija tipa ima "subject"), inače ugrađeni za poznate tipove.
   const typeOpt = ((form.steps || []).flatMap((st) => st.fields).find((f) => f.id === 'type')?.options || []).find((o) => o.value === a.type);
   let subject = clean(typeOpt?.subject, 300) || SUBJECT[a.type] || `a custom ${clean(typeOpt?.label || 'piece of jewelry', 60).toLowerCase()}`;
@@ -99,6 +100,8 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
     subject = `a single custom tooth cap (a one-tooth grill), front view, displayed on its own without a mouth or face`;
   } else if (g && (g.rows === 'top' || g.rows === 'bottom')) {
     subject = `a single custom ${g.rows} grill: ONE row of ${g.rows === 'top' ? 'upper' : 'lower'}-teeth jewelry only, front view, displayed on its own without a mouth or face`;
+  } else if (g?.lines) {
+    subject = `exactly ${g.top + g.bottom} individual dental jewelry caps ONLY: ${g.top} upper-tooth caps and ${g.bottom} lower-tooth caps, front view, displayed on their own without a mouth or face`;
   }
   // Opcija koju je zlatar dodao (npr. "Black gold") nema ugrađen opis, pa ide njen natpis.
   const metal = METAL[a.metal] || (optLabel('metal') ? `polished ${optLabel('metal')}` : 'polished gold');
@@ -106,7 +109,7 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
 
   lines.push(`Create a photorealistic high-end jewelry product photograph of ${subject}.`);
   // Kod grillza stil govori samo broj zuba; tačan izbor zuba ga zamjenjuje.
-  if (style?.shape && !g?.lines) lines.push(`Design style: ${style.shape}.`);
+  if (style?.shape && (!g?.lines || style.teeth === a.teeth)) lines.push(`Design style: ${style.shape}.`);
   if (fieldOf('metal') || a.metal) lines.push(`Metal: ${metal}${karat}.`);
   if (a.metal === 'two-tone') {
     // Flash je bez ovoga pravio sve u jednoj boji.
@@ -172,7 +175,9 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
   refs.forEach((kind, i) => {
     const n = `Reference image ${i + 1}`;
     if (kind === 'style') {
-      lines.push(
+      lines.push(g?.lines ?
+        `${n} is a SURFACE DESIGN reference only. Borrow its stone setting, decorative motif and finish for the selected caps. ` +
+          'Do not copy its arch, number of teeth, side caps, backing, connectors, wings, silhouette or overall width. The selected tooth map determines the only physical caps to generate. Apply the chosen metal and stones instead of copying the reference materials.' :
         `${n} shows the required SHAPE and construction for this style. Match its silhouette, proportions and number of elements closely. ` +
           'It is a plain neutral reference: ignore its metal color, its background and any letters on it, and apply the metal, stones and text described here instead.'
       );
@@ -188,6 +193,14 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
     `Style: luxury catalog photography, soft studio lighting with crisp reflections, sharp macro detail, on a seamless ${form.background || 'neutral'} background. ` +
       'Square composition, the piece fills about 70% of the frame. No people, no hands, no props, no watermark, no brand logos or trademarks.'
   );
+  if (g?.lines) {
+    lines.push(
+      'FINAL PHYSICAL CAP INVENTORY (overrides style photos, inspiration, presets, budget and design descriptions):',
+      ...g.lines,
+      'Selected teeth means the COMPLETE physical jewelry, not just which teeth get diamonds. Every object made of metal or stones in the image must belong to a selected tooth. Do not add plain gold teeth beside the decorated teeth, partial neighboring crowns, lateral wings, stabilizer teeth, support caps, backing arches or a full-mouth framework. Unselected positions must be empty background, never gold placeholders.',
+      `The full product consists of ${g.top + g.bottom} tooth-shaped caps in total, not ${g.top + g.bottom} decorated caps inside a larger grill. End each row immediately at the outer edge of its last selected cap; no metal may extend sideways onto another tooth. Keep ordinary tooth-sized proportions; a higher budget increases craftsmanship, not the number of caps.`
+    );
+  }
   return lines.join('\n');
 }
 

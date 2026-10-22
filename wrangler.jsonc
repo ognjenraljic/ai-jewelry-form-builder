@@ -21,6 +21,7 @@
   ],
   "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "konfigurator-media" }],
   // First render and refinement model keys (see MODELS in src/worker.js): flash, pro, gptflare, gptsun, gpt2
+  // Grillz generation and smile edits default to gptsun; GRILLZ_MODEL / TRYON_MODEL optionally override them.
   // Budžet i pauza se podešavaju u Cloudflare dashboardu (Variables), bez deploya; keep_vars ih čuva:
   // DAILY_BUDGET_USD (podrazumijevano 30), FORM_DAILY_BUDGET_USD (15), RENDERS_PAUSED = "1" gasi sve rendere odmah.
   "vars": { "FIRST_MODEL": "gptflare", "TWEAK_MODEL": "gptflare" },

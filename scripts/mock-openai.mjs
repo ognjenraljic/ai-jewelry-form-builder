@@ -41,7 +41,7 @@ createServer((req, res) => {
     if (req.url === '/v1/images/edits') {
       const p = parts(buf, req.headers['content-type'] || '');
       const mask = p.find((x) => x.name === 'mask');
-      entry = { ...entry, images: p.filter((x) => x.name === 'image[]').length, imageHashes: p.filter((x) => x.name === 'image[]').map((x) => x.sha256), model: p.find((x) => x.name === 'model')?.value, size: p.find((x) => x.name === 'size')?.value, mask: mask ? mask.size : 0, prompt: p.find((x) => x.name === 'prompt')?.value || '' };
+      entry = { ...entry, images: p.filter((x) => x.name === 'image[]').length, imageHashes: p.filter((x) => x.name === 'image[]').map((x) => x.sha256), model: p.find((x) => x.name === 'model')?.value, quality: p.find((x) => x.name === 'quality')?.value, size: p.find((x) => x.name === 'size')?.value, mask: mask ? mask.size : 0, prompt: p.find((x) => x.name === 'prompt')?.value || '' };
     } else {
       const j = JSON.parse(buf.toString() || '{}');
       entry = { ...entry, images: 0, mask: 0, prompt: j.prompt || '' };

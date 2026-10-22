@@ -1,4 +1,5 @@
 import { SMILE_TEETH, SMILE_DEFS } from './teeth-art.js';
+import { applyPresetTeeth, customTeethVisible } from './grillz-selection.js';
 
 // Widget forme: crta korake iz konfiguracije, šalje lead, traži render i doradu.
 const formId = location.pathname.split('/')[2] || 'demo';
@@ -143,6 +144,7 @@ function applyTheme() {
 // Podrazumijevane vrijednosti (npr. komad "grillz" kad je korak izbora komada isključen).
 function applyDefaults() {
   for (const st of S.cfg.steps) for (const f of st.fields) if (f.default != null && (st.enabled === false || S.a[f.id] == null)) S.a[f.id] = f.default;
+  applyPresetTeeth(S.cfg, S.a);
 }
 
 // Koraci: uključeni konfigurisani + kontakt + rezultat
@@ -151,6 +153,7 @@ const cur = () => steps()[S.i];
 
 function visible(f) {
   if (f.enabled === false) return false;
+  if (f.type === 'teeth' && !customTeethVisible(S.cfg, S.a)) return false;
   const c = f.showIf;
   if (!c) return true;
   const v = S.a[c.field];
@@ -220,11 +223,12 @@ function render() {
 function stepView(step) {
   const fields = step.fields.filter(visible).map(fieldView).join('');
   const valid = stepValid(step);
+  const subtitle = S.a.type === 'grillz' && step.fields.some(f => f.id === 'style') ? 'Pick a style, or choose Something else to select individual teeth.' : step.subtitle;
   return `
     <section class="step">
       <p class="eyebrow">Step ${S.i + 1} of ${steps().length - 1}</p>
       <h1>${esc(step.title)}</h1>
-      <p class="sub">${esc(step.subtitle || '')}</p>
+      <p class="sub">${esc(subtitle || '')}</p>
       ${fields}
       <div class="foot">
         <div class="foot-row">${backBtn()}<button class="btn" data-act="next" ${valid ? '' : 'disabled'}>Continue</button></div>
@@ -578,6 +582,7 @@ function bind() {
       // Promjena tipa poništava stil (opcije stila zavise od tipa)
       if (changed) for (const st of S.cfg.steps) for (const f of st.fields) if (f.optionsFrom?.field === b.dataset.pick) delete S.a[f.id];
       if (changed && b.dataset.pick === 'style') for (const st of S.cfg.steps) for (const f of st.fields) if (f.type === 'teeth') delete S.a[f.id];
+      applyPresetTeeth(S.cfg, S.a);
       S.focusKey = `[data-pick="${CSS.escape(b.dataset.pick)}"][data-val="${CSS.escape(b.dataset.val)}"]`;
       render();
       // Ne idi dalje sam ako polje ima dodatno pitanje (kupac možda želi da doda detalje).

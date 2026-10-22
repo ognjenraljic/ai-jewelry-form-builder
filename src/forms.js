@@ -3,19 +3,30 @@
 // ne brišu se, AI ih razumije po ID-ju); pitanja koja zlatar doda su "custom" (sve se mijenja).
 // Koraci su podaci, ne kod: widget ih crta generički.
 import LIBRARY from './library.json' with { type: 'json' };
+import { PRESET_TEETH, presetTeeth } from '../public/grillz-selection.js';
+import { parseTeeth } from './teeth.js';
 
 // Početni stilovi po tipu iz src/library.json. Slika ide i u karticu i modelu kao referenca oblika.
 export const DEFAULT_STYLES = Object.fromEntries(
   Object.entries(LIBRARY)
     .filter(([k]) => !k.startsWith('_'))
-    .map(([type, items]) => [type, items.map((i) => ({ value: i.value, label: i.label, image: `/library/${type}/${i.value}.webp`, shape: i.shape }))])
+    .map(([type, items]) => [type, items.map((i) => ({ value: i.value, label: i.label, image: `/library/${type}/${i.value}.webp`, shape: i.shape, ...(type === 'grillz' ? { teeth: PRESET_TEETH[i.value] } : {}) }))])
 );
 
 const OTHER_STYLE = { value: 'other', label: 'Something else', icon: 'gem' };
 export const CHOICE_TYPES = ['cards', 'chips', 'yesno', 'dropdown'];
 
 export function styleOf(form, a) {
-  return (form.styles?.[a.type] || []).find((s) => s.value === a.style) || null;
+  const style = (form.styles?.[a.type] || []).find((s) => s.value === a.style) || null;
+  if (a.type !== 'grillz' || !style) return style;
+  // Older onboardings renamed preset IDs and sometimes copied their library photo into R2.
+  const original = DEFAULT_STYLES.grillz.find(s => s.shape && s.shape === style.shape);
+  const teeth = presetTeeth(style) || original?.teeth;
+  return teeth ? { ...style, teeth } : style;
+}
+export function withStyleTeeth(form) {
+  if (!form?.styles?.grillz) return form;
+  return { ...form, styles: { ...form.styles, grillz: form.styles.grillz.map(s => styleOf(form, { type: 'grillz', style: s.value })) } };
 }
 
 // Opcije polja: obične, ili stilovi izabranog tipa (+ "Something else") za polje sa optionsFrom.styles.
@@ -250,7 +261,10 @@ export function publicForm(form) {
     ...s,
     fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => o) } : f)),
   }));
-  const styles = Object.fromEntries(Object.entries(form.styles || {}).map(([t, list]) => [t, list.map(({ value, label, image }) => ({ value, label, image }))]));
+  const styles = Object.fromEntries(Object.entries(form.styles || {}).map(([t, list]) => [t, list.map(({ value, label, image }) => {
+    const teeth = t === 'grillz' ? styleOf(form, { type: t, style: value })?.teeth : null;
+    return { value, label, image, ...(teeth ? { teeth } : {}) };
+  })]));
   return { id, brand, theme, maxRenders, steps, styles, contact, result, tryOn };
 }
 
@@ -350,6 +364,7 @@ export function validateFormDef(f, id) {
       vals.add(s.value);
       str(s.label, 40, `Style ${s.value}`, true);
       str(s.shape, 300, `Shape of ${s.value}`);
+      if (s.teeth != null && !parseTeeth(s.teeth)) err(`Style ${s.value}: invalid tooth selection`);
       if (!imgOk(s.image)) err(`Style ${s.value}: image must come from the library or this form`);
     }
   }
@@ -411,7 +426,8 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
       .slice(0, 24)
       .map((s) => {
         const shape = String(s.note || '').trim().slice(0, 300) || lib.find((x) => x.value === s.value)?.shape || '';
-        return { value: uniqOf(slugOf(s.label), st), label: String(s.label).trim().slice(0, 40), image: s.image ? img(s.image) : '', shape };
+        const teeth = p.value === 'grillz' ? lib.find(x => x.value === s.value)?.teeth : null;
+        return { value: uniqOf(slugOf(s.label), st), label: String(s.label).trim().slice(0, 40), image: s.image ? img(s.image) : '', shape, ...(teeth ? { teeth } : {}) };
       });
   }
   typeField.options = options;
