@@ -10,7 +10,9 @@
   var f = document.createElement('iframe');
   f.src = origin + '/f/' + encodeURIComponent(form);
   f.title = 'Design your custom piece';
-  f.loading = 'lazy';
+  // Start loading when mounted, including on sites that embed the form below the fold.
+  // A deferred cross-origin frame can otherwise remain blank until a later navigation.
+  f.loading = 'eager';
   f.allow = 'fullscreen';
   f.style.cssText = 'width:100%;border:0;display:block;height:760px;transition:height .25s ease;background:transparent';
 
