@@ -1,6 +1,7 @@
 import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, validateFormDef, fromTemplate, enabledSteps } from './forms.js';
 import { buildPrompt, buildTweakPrompt } from './prompt.js';
 import { parseTeeth, teethSummary } from './teeth.js';
+import { buildTryOnPrompt } from './tryon.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
   spendBlock, SPEND_MESSAGE, turnstileOn, turnstileOk, flagged, FLAG_MESSAGE, sniffImage, withSecurity,
@@ -337,29 +338,25 @@ async function createTryOn(request, env, leadId, ctx) {
   const block = await spendBlock(env, lead.form_id);
   if (block) { await budgetNotice(env, block, lead.form_id); return json({ error: SPEND_MESSAGE, paused: true }, 503); }
 
-  const model = MODELS[tweakModel(env)];
+  const model = MODELS[firstModel(env)];
   const renderId = rid(12);
   if (!(await claimRender(env, { id: renderId, leadId, model, tweak: 'Try-on on the customer photo', kind: 'tryon', maxOk: TRYONS_PER_LEAD, maxAll: TRYONS_PER_LEAD + 2 }))) {
     const busy = (await env.DB.prepare("SELECT 1 FROM renders WHERE lead_id = ? AND status = 'pending'").bind(leadId).first());
     return busy ? json({ error: 'Your preview is still being created.' }, 409) : json({ error: 'You have used all your try-ons. Our team will follow up with you.' }, 429);
   }
+  await env.DB.prepare('UPDATE renders SET base_render_id = ? WHERE id = ?').bind(pick.id, renderId).run();
   const job = (async () => {
     // Selfi je privatan i briše se poslije SELFIE_DAYS dana (noćno čišćenje).
     await env.MEDIA.put(`refs/${leadId}-selfie-${rid(8)}.${type.split('/')[1]}`, buf, { httpMetadata: { contentType: type } });
     const base = await r2Image(env, pick.image_key);
-    const prompt = [
-      'Image 1 is a photo of a customer smiling. Image 2 is the custom grillz (teeth jewelry) they designed.',
-      'Create a photorealistic photo of the same person wearing exactly these grillz on their teeth: same metal color, stones, shape, rows and number of covered teeth as image 2, fitted naturally to their teeth and gums.',
-      "Keep the person's face, identity, skin, expression, hair, clothing, lighting, camera angle and background exactly as in image 1. Change only the teeth area.",
-      'No text, no watermark, no extra people.',
-    ].join('\n');
+    const prompt = buildTryOnPrompt(answers);
     try {
       const out = await runModel(env, model, prompt, [selfie, base], null, model.provider === 'openai' ? 'auto' : '1024x1024');
       const key = `refs/${leadId}-tryon-${rid(8)}.${out.mime.split('/')[1] || 'png'}`;
       await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
       await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ? WHERE id = ?')
         .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, renderId).run();
-      return json({ url: await signMedia(env, key), remaining: TRYONS_PER_LEAD - (tries.filter((r) => r.status === 'ok').length + 1) });
+      return json({ url: await signMedia(env, key), base: pick.n, remaining: TRYONS_PER_LEAD - (tries.filter((r) => r.status === 'ok').length + 1) });
     } catch (err) {
       console.error('try-on failed', model.id, err.message);
       await env.DB.prepare('UPDATE renders SET status = ?, error = ?, prompt = ? WHERE id = ?').bind('error', String(err.message).slice(0, 500), prompt, renderId).run();
@@ -376,13 +373,13 @@ async function leadStatus(request, env, leadId) {
   const token = request.headers.get('x-lead-token');
   if (!lead || !token || !safeEqual(token, lead.token)) return json({ error: 'Not allowed.' }, 403);
   const form = await loadForm(env, lead.form_id);
-  const rows = (await env.DB.prepare("SELECT n, image_key, kind, status FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL ORDER BY created_at").bind(leadId).all()).results;
+  const rows = (await env.DB.prepare("SELECT id, n, image_key, kind, status, base_render_id FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL ORDER BY created_at").bind(leadId).all()).results;
   const design = rows.filter((r) => r.kind !== 'tryon');
   const tries = rows.filter((r) => r.kind === 'tryon');
   return json({
     answers: JSON.parse(lead.answers),
     renders: design.map((r) => ({ url: `/media/${r.image_key}` })),
-    tryons: await Promise.all(tries.map(async (r) => ({ url: await signMedia(env, r.image_key) }))),
+    tryons: await Promise.all(tries.map(async (r) => ({ url: await signMedia(env, r.image_key), base: design.find((d) => d.id === r.base_render_id)?.n ?? null }))),
     maxRenders: form?.maxRenders || 4,
     tryLeft: Math.max(0, TRYONS_PER_LEAD - tries.length),
   });

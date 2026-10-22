@@ -27,7 +27,7 @@ const S = {
   uploading: new Set(),
   onboardingPreview: new URLSearchParams(location.search).has('onboarding'),
   test: false, // probni render iz pregleda u builderu (admin, bez upita)
-  tryons: [], // grillz na fotografiji kupca: [{ url }]
+  tryons: [], // grillz na fotografiji kupca: [{ url, base }], base = product preview number
   tryBusy: false,
   tryLeft: 2,
   testInfo: null,
@@ -259,17 +259,20 @@ function focusField(id) {
 // Grillz na osmijehu kupca: poslije rendera kupac ubaci svoju fotografiju i vidi sebe sa tim grillzima.
 function tryOnView() {
   if (S.cfg.tryOn === false || S.a.type !== 'grillz' || !S.lead || S.test || !S.renders.length || S.busy) return '';
-  const imgs = S.tryons.map((t) => `<figure><img src="${esc(t.url)}" alt="You wearing your grillz" /><figcaption>On your smile</figcaption></figure>`).join('');
+  const current = S.tryons.filter((t) => t.base === S.shown + 1);
+  const earlier = S.tryons.filter((t) => t.base == null);
+  const imgs = [...current, ...earlier].map((t) => `<figure><img src="${esc(t.url)}" alt="You wearing your grillz" /><figcaption>${t.base == null ? 'Earlier try-on' : 'On your smile'}</figcaption></figure>`).join('');
   const action = S.tryBusy
     ? `<div class="tryon-wait"><span class="spin"></span>Putting them on your smile… about 20 to 40 seconds</div>`
     : S.tryLeft > 0
       ? `<label class="check tryon-ok"><input type="checkbox" data-tryok ${S.tryOk ? 'checked' : ''} /><span>I agree that my photo is used only to create this preview. It is deleted after 30 days.</span></label>
-         <label class="btn ghost tryon-btn ${S.tryOk ? '' : 'off'}">${icon('upload')}<span>${S.tryons.length ? 'Try another photo' : 'Upload a smiling photo'}<small>or drag & drop here</small></span><input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-tryon ${S.tryOk ? '' : 'disabled'} /></label>`
+         <label class="btn ghost tryon-btn ${S.tryOk ? '' : 'off'}">${icon('upload')}<span>${current.length ? 'Try another photo' : 'Upload a smiling photo'}<small>or drag & drop here</small></span><input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-tryon ${S.tryOk ? '' : 'disabled'} /></label>`
       : '<p class="fine">You have used all your try-ons.</p>';
   return `
     <section class="tryon">
       <div class="tryon-head"><b>See them on your smile</b><span>Upload a photo of you smiling with your teeth showing. We will show you wearing the design above.</span></div>
       ${imgs ? `<div class="tryon-imgs">${imgs}</div>` : ''}
+      ${!imgs && S.tryons.length ? '<p class="fine">Choose another design preview above to see its try-on.</p>' : ''}
       ${action}
       ${S.tryErr ? `<p class="error">${esc(S.tryErr)}</p>` : ''}
       <p class="fine">Shared only with ${esc(S.cfg.brand?.name || 'the jeweler')}.</p>
@@ -279,6 +282,7 @@ function tryOnView() {
 async function doTryOn(file) {
   if (!file || S.tryBusy || !S.lead) return;
   if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { JLUI.alert('Please choose a JPG, PNG or WebP photo.'); return; }
+  const base = S.shown + 1;
   S.tryBusy = true;
   S.tryErr = '';
   render();
@@ -296,13 +300,13 @@ async function doTryOn(file) {
     } catch {}
     const fd = new FormData();
     fd.set('token', S.lead.token);
-    fd.set('base', String(S.shown + 1));
+    fd.set('base', String(base));
     fd.set('photo', blob, 'smile.jpg');
     fd.set('consent', 'yes');
     const res = await fetch(`/api/leads/${S.lead.leadId}/tryon`, { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-    S.tryons.push({ url: data.url });
+    S.tryons.push({ url: data.url, base: data.base });
     S.tryLeft = data.remaining;
     parent.postMessage({ type: 'aik:tryon', form: formId }, '*');
   } catch (e) {

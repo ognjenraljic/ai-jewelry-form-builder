@@ -3,6 +3,7 @@
 // Vraća jednu od slika iz galerije i u izlaz.json upisuje šta je stiglo (slike, maska, prompt).
 import { createServer } from 'node:http';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 const port = +(process.argv[2] || 8899);
 const out = process.argv[3] || 'mock-openai-log.json';
@@ -18,7 +19,7 @@ function parts(buf, type) {
   return text.split(`--${boundary}`).slice(1, -1).map((chunk) => {
     const [head, ...rest] = chunk.split('\r\n\r\n');
     const body = rest.join('\r\n\r\n').replace(/\r\n$/, '');
-    return { name: head.match(/name="([^"]+)"/)?.[1], file: head.match(/filename="([^"]+)"/)?.[1] || null, size: Buffer.byteLength(body, 'latin1'), value: head.includes('filename=') ? null : body };
+    return { name: head.match(/name="([^"]+)"/)?.[1], file: head.match(/filename="([^"]+)"/)?.[1] || null, size: Buffer.byteLength(body, 'latin1'), sha256: head.includes('filename=') ? createHash('sha256').update(Buffer.from(body, 'latin1')).digest('hex') : null, value: head.includes('filename=') ? null : body };
   });
 }
 
@@ -40,7 +41,7 @@ createServer((req, res) => {
     if (req.url === '/v1/images/edits') {
       const p = parts(buf, req.headers['content-type'] || '');
       const mask = p.find((x) => x.name === 'mask');
-      entry = { ...entry, images: p.filter((x) => x.name === 'image[]').length, mask: mask ? mask.size : 0, prompt: p.find((x) => x.name === 'prompt')?.value || '' };
+      entry = { ...entry, images: p.filter((x) => x.name === 'image[]').length, imageHashes: p.filter((x) => x.name === 'image[]').map((x) => x.sha256), model: p.find((x) => x.name === 'model')?.value, size: p.find((x) => x.name === 'size')?.value, mask: mask ? mask.size : 0, prompt: p.find((x) => x.name === 'prompt')?.value || '' };
     } else {
       const j = JSON.parse(buf.toString() || '{}');
       entry = { ...entry, images: 0, mask: 0, prompt: j.prompt || '' };
