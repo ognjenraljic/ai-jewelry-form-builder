@@ -28,7 +28,9 @@ async function boot() {
   } catch (e) {
     return ended('Your portal', 'Open the portal link your JewelryLead team sent you.');
   }
-  if (P.me.onboarding?.status !== 'draft') await loadLeads();
+  // A new setup draft must not hide a client's existing forms or enquiries.
+  P.tab = hasDraftOnboarding() && !P.me.forms.length && !P.me.stats.leads ? 'onboarding' : 'leads';
+  await loadLeads();
   document.title = `${P.me.client.name} · JewelryLead`;
   render();
   setInterval(tick, 30_000);
@@ -69,10 +71,16 @@ function tick() {
 // Slike kupaca: pristup preko kolačića portala (bez tokena u adresi).
 const media = (key) => `/media/${key}`;
 
+const hasDraftOnboarding = () => P.me.onboarding?.status === 'draft';
+function portalTabs() {
+  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ...(hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
+  return `<nav class="tabs" aria-label="Client portal">${tabs.map(([key, label]) => `<button class="tab ${P.tab === key ? 'on' : ''}" data-tab="${key}" ${P.tab === key ? 'aria-current="page"' : ''}>${label}</button>`).join('')}</nav>`;
+}
+
 function render() {
   const { client, forms, stats, session } = P.me;
-  // Onboarding u toku: portal je vodič dok zlatar ne pošalje odgovore.
-  if (P.me.onboarding?.status === 'draft') return renderOnboarding();
+  if (hasDraftOnboarding() && P.tab === 'onboarding') return renderOnboarding();
+  if (P.tab === 'onboarding') P.tab = 'forms';
   const banner = session.kind === 'view-as'
     ? `<div class="viewas"><div class="wrap"><span>Admin view</span><span class="grow">Viewing as <b>${esc(client.name)}</b>, read-only. Ends in <b id="left">${minsLeft()} min</b>.</span><button class="btn warn" data-act="exit">Exit view</button></div></div>`
     : '';
@@ -84,7 +92,7 @@ function render() {
       ${session.kind === 'client' ? '<button class="btn" data-act="signout" title="Remove the portal from this device">Sign out</button>' : ''}
     </div></header>
     <main class="wrap">
-      <nav class="tabs"><button class="tab ${P.tab === 'leads' ? 'on' : ''}" data-tab="leads">Leads</button><button class="tab ${P.tab === 'forms' ? 'on' : ''}" data-tab="forms">Forms</button></nav>
+      ${portalTabs()}
       <div class="stats">
         <div class="stat">Leads<b>${stats.leads}</b></div>
         <div class="stat">Last 30 days<b>${stats.recent}</b></div>
@@ -305,6 +313,8 @@ addEventListener('pagehide', () => {
 addEventListener('beforeunload', (e) => { if (OB.d && (OB.dirty || OB.saving) && !readOnly()) { e.preventDefault(); e.returnValue = ''; } });
 
 function renderOnboarding() {
+  // Late saves and uploads may finish after the client has opened another tab.
+  if (P.tab !== 'onboarding' || !hasDraftOnboarding()) return;
   if (!OB.d) obInit();
   if (!document.getElementById('ob-editor')) app.innerHTML = '<div id="ob-editor"></div><div class="wrap" id="ob-preview-host"></div>';
   const editor = document.getElementById('ob-editor');
@@ -319,6 +329,7 @@ function renderOnboarding() {
       <span class="ob-status" id="ob-status"></span>
     </div></header>
     <main class="wrap ob">
+      ${portalTabs()}
       <nav class="ob-steps">${steps}</nav>
       <section class="ob-card">${obStepView()}</section>
       <div class="ob-nav">
