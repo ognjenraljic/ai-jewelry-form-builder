@@ -32,7 +32,9 @@ a { color: var(--accent); text-decoration: none; }
 .client h1 { font-family: var(--serif); font-weight: 500; font-size: 28px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .client small { display: block; color: var(--ink-faint); font-size: 12px; }
 .powered { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
-.powered b { font-family: var(--serif); font-size: 16px; color: var(--ink-soft); }
+.powered a { font-family: var(--serif); font-size: 16px; color: var(--ink-soft); }
+
+.powered a:hover, .powered a:focus-visible { color: var(--accent); text-decoration: underline; }
 
 .tabs { display: flex; gap: 4px; margin: 22px 0 18px; }
 .tab { background: none; border: 1px solid transparent; border-radius: 999px; padding: 8px 16px; color: var(--ink-soft); font-weight: 600; cursor: pointer; }
@@ -79,7 +81,8 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
   .lead { grid-template-columns: 1fr; }
   .lead .shot { max-width: 320px; }
   .stats { grid-template-columns: 1fr 1fr; }
-  .powered { display: none; }
+  .head .wrap { flex-wrap: wrap; padding-top: 12px; padding-bottom: 12px; gap: 10px; }
+  .powered { order: 3; flex-basis: 100%; text-align: right; }
   .client h1 { font-size: 22px; }
 }
 

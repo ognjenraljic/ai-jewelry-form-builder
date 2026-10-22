@@ -1,4 +1,6 @@
-// Portal klijenta: njegovi upiti (renderi, odgovori, fotografije, status), forme sa embed kodom i onboarding.
+import { createLeadStore } from './leads.js';
+
+// Portal klijenta: njegovi upiti, aktivne forme i odvojeni onboarding.
 // Prijava: link klijenta (/portal#k=...) ili admin pregled (/portal#v=...) se jednom zamijeni za HttpOnly kolačić
 // i odmah obriše iz adrese. Token se više ne čuva u browseru niti ide u adrese slika.
 const app = document.getElementById('app');
@@ -6,10 +8,12 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const safe = (fn) => { try { return fn(); } catch { return null; } };
 
 const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
-const P = { me: null, leads: [], tab: 'leads', form: '', status: '', q: '', next: null, counts: {}, loadingMore: false };
+const P = { me: null, leads: [], tab: 'leads', form: '', status: '', q: '', next: null, counts: {}, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
 const day = (t) => new Date(t).toLocaleDateString('en-US', { dateStyle: 'medium' });
 const readOnly = () => P.me?.session.kind === 'view-as';
 
+const leadStore = createLeadStore(api);
+let leadRequest = 0;
 boot();
 async function boot() {
   app.innerHTML = '<div class="center"><p class="faint">Loading your portal…</p></div>';
@@ -17,7 +21,8 @@ async function boot() {
   const hash = location.hash;
   const legacyView = safe(() => JSON.parse(sessionStorage.getItem('aik_portal') || 'null'))?.token || safe(() => JSON.parse(localStorage.getItem('aik_view_as') || 'null'))?.token;
   const token = hash.match(/[#&]k=([a-z0-9]{20,})/)?.[1] || hash.match(/[#&]v=([a-z0-9]{20,})/)?.[1] || legacyView || safe(() => localStorage.getItem('aik_client'));
-  if (hash) history.replaceState(null, '', location.pathname);
+  const onboardingRequested = new URLSearchParams(location.search).get('onboarding') === '1';
+  if (hash) history.replaceState(null, '', location.pathname + location.search);
   safe(() => { sessionStorage.removeItem('aik_portal'); localStorage.removeItem('aik_view_as'); localStorage.removeItem('aik_client'); });
   if (token) {
     try { await api('/api/portal/session', { method: 'POST', body: JSON.stringify({ token }), json: true }); }
@@ -29,7 +34,8 @@ async function boot() {
     return ended('Your portal', 'Open the portal link your JewelryLead team sent you.');
   }
   // A new setup draft must not hide a client's existing forms or enquiries.
-  P.tab = hasDraftOnboarding() && !P.me.forms.length && !P.me.stats.leads ? 'onboarding' : 'leads';
+  P.onboardingFlow = hasDraftOnboarding() && (onboardingRequested || (!P.me.forms.length && !P.me.stats.leads));
+  P.tab = P.onboardingFlow ? 'onboarding' : 'leads';
   await loadLeads();
   document.title = `${P.me.client.name} · JewelryLead`;
   render();
@@ -43,16 +49,27 @@ async function api(path, opts = {}) {
   return data;
 }
 
-// Upiti po stranicama od 50, sa filterom statusa i pretragom (rade na serveru, ne samo na učitanima).
+// Render the selected filter immediately; only its current request may update the cards.
 async function loadLeads(more = false) {
-  const qs = new URLSearchParams();
-  if (more && P.next) qs.set('before', P.next);
-  if (P.status) qs.set('status', P.status);
-  if (P.q) qs.set('q', P.q);
-  const r = await api(`/api/portal/leads?${qs}`);
-  P.leads = more ? [...P.leads, ...r.leads] : r.leads;
-  P.next = r.next;
-  P.counts = r.counts || {};
+  const seq = ++leadRequest;
+  P.loading = !more;
+  P.loadingMore = more;
+  P.loadError = '';
+  const result = leadStore.load({ status: P.status, q: P.q, before: more ? P.next : null, previous: P.leads });
+  if (P.me) render();
+  try {
+    const r = await result;
+    if (seq !== leadRequest || !r) return false;
+    P.leads = r.leads;
+    P.next = r.next;
+    P.counts = r.counts;
+  } catch (error) {
+    if (seq !== leadRequest) return false;
+    P.loadError = 'Could not load leads. Please try again.';
+  }
+  if (seq !== leadRequest) return false;
+  P.loading = P.loadingMore = false;
+  return true;
 }
 
 function ended(title, text) {
@@ -73,13 +90,19 @@ const media = (key) => `/media/${key}`;
 
 const hasDraftOnboarding = () => P.me.onboarding?.status === 'draft';
 function portalTabs() {
-  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ...(hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
+  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ...(P.onboardingFlow && hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
   return `<nav class="tabs" aria-label="Client portal">${tabs.map(([key, label]) => `<button class="tab ${P.tab === key ? 'on' : ''}" data-tab="${key}" ${P.tab === key ? 'aria-current="page"' : ''}>${label}</button>`).join('')}</nav>`;
 }
 
 function render() {
   const { client, forms, stats, session } = P.me;
-  if (hasDraftOnboarding() && P.tab === 'onboarding') return renderOnboarding();
+  if (!hasDraftOnboarding()) {
+    P.onboardingFlow = false;
+    if (new URLSearchParams(location.search).has('onboarding')) {
+      const url = new URL(location.href); url.searchParams.delete('onboarding'); history.replaceState(null, '', url.pathname + url.search);
+    }
+  }
+  if (P.onboardingFlow && hasDraftOnboarding() && P.tab === 'onboarding') return renderOnboarding();
   if (P.tab === 'onboarding') P.tab = 'forms';
   const banner = session.kind === 'view-as'
     ? `<div class="viewas"><div class="wrap"><span>Admin view</span><span class="grow">Viewing as <b>${esc(client.name)}</b>, read-only. Ends in <b id="left">${minsLeft()} min</b>.</span><button class="btn warn" data-act="exit">Exit view</button></div></div>`
@@ -88,7 +111,7 @@ function render() {
     ${banner}
     <header class="head"><div class="wrap">
       <div class="client">${client.logo ? `<img src="${esc(client.logo)}" alt="" />` : ''}<div><h1>${esc(client.name)}</h1><small>${esc(client.website || 'Client portal')}</small></div></div>
-      <span class="powered">Powered by <b>JewelryLead</b></span>
+      <span class="powered">Powered by <a href="https://jewelrylead.com/" target="_blank" rel="noopener">JewelryLead</a></span>
       ${session.kind === 'client' ? '<button class="btn" data-act="signout" title="Remove the portal from this device">Sign out</button>' : ''}
     </div></header>
     <main class="wrap">
@@ -107,7 +130,7 @@ function render() {
 
 function leadsView() {
   const total = Object.values(P.counts).reduce((a, b) => a + b, 0);
-  if (!total && !P.q) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
+  if (!total && !P.q && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
   const forms = P.me.forms.filter((f) => f.leads);
   const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}</div>`;
   const formChips = forms.length > 1
@@ -115,7 +138,7 @@ function leadsView() {
     : '';
   const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email or phone" value="${esc(P.q)}" /></label>`;
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
-  const cards = list.map((l) => {
+  const cards = P.loading ? '<p class="empty" role="status">Loading leads…</p>' : P.loadError ? `<p class="empty" role="alert">${esc(P.loadError)} <button class="btn" data-act="retry-leads">Try again</button></p>` : list.map((l) => {
     const last = l.renders[l.renders.length - 1];
     const photos = l.photos.map((p) => `<figure><img src="${media(p.key)}" alt="${esc(p.label)}" width="64" height="64" loading="lazy" data-zoom tabindex="0" /><figcaption>${esc(p.label)}</figcaption></figure>`).join('');
     const strip = l.renders.length > 1 ? l.renders.map((r, k) => `<figure><img src="${esc(r.url)}" alt="${k === 0 ? 'First render' : esc(r.tweak || `Render ${k + 1}`)}" width="64" height="64" loading="lazy" data-zoom tabindex="0" /><figcaption>${k === 0 ? 'First render' : esc(r.tweak || `Render ${k + 1}`)}</figcaption></figure>`).join('') : '';
@@ -133,20 +156,16 @@ function leadsView() {
         </div>
       </article>`;
   }).join('') || '<p class="empty">No leads match.</p>';
-  const more = P.next ? `<div class="more"><button class="btn" data-act="more" ${P.loadingMore ? 'disabled' : ''}>${P.loadingMore ? 'Loading…' : 'Show older leads'}</button></div>` : '';
+  const more = P.next && !P.loading && !P.loadError ? `<div class="more"><button class="btn" data-act="more" ${P.loadingMore ? 'disabled' : ''}>${P.loadingMore ? 'Loading…' : 'Show older leads'}</button></div>` : '';
   return `<div class="filters">${search}${statusChips}${formChips}</div>${cards}${more}`;
 }
 
 function formsView() {
-  const o = location.origin.replace('//builder.', '//');
   return P.me.forms.map((f) => {
-    const snippet = `<div id="jewelrylead-${f.id}"></div>\n<script src="${o}/embed.js" data-form="${f.id}" data-target="jewelrylead-${f.id}" async></script>`;
     return `
       <div class="form-card">
-        <div class="row"><h2>${esc(f.name)}</h2><span class="pill">${esc(f.label)}</span><a class="btn" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open form ↗</a></div>
+        <div class="row"><h2>${esc(f.name)}</h2><span class="pill">${esc(f.label)}</span><span class="pill">Active</span><a class="btn" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open form ↗</a></div>
         <div class="fstats"><span><b>${f.leads}</b> lead${f.leads === 1 ? '' : 's'}</span><span><b>${f.renders}</b> AI render${f.renders === 1 ? '' : 's'}</span><span>Last lead: <b>${f.lastLead ? esc(day(f.lastLead)) : 'none yet'}</b></span>${f.leads ? `<button class="btn" data-see="${esc(f.id)}">See leads</button>` : ''}</div>
-        <pre>${esc(snippet)}</pre>
-        <button class="btn" data-copy="${esc(snippet)}">Copy embed code</button>
       </div>`;
   }).join('') || '<p class="empty">No forms yet.</p>';
 }
@@ -171,7 +190,7 @@ app.addEventListener('input', (e) => {
   const el = e.target;
   if (el.dataset.search !== undefined) {
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(async () => { P.q = el.value.trim(); await loadLeads(); render(); const s = app.querySelector('[data-search]'); s?.focus(); s?.setSelectionRange(s.value.length, s.value.length); }, 350);
+    searchTimer = setTimeout(async () => { P.q = el.value.trim(); if (!await loadLeads()) return; render(); const s = app.querySelector('[data-search]'); s?.focus(); s?.setSelectionRange(s.value.length, s.value.length); }, 350);
   }
 });
 app.addEventListener('change', async (e) => {
@@ -183,11 +202,13 @@ app.addEventListener('change', async (e) => {
       await api(`/api/portal/leads/${id}`, { method: 'PATCH', body: JSON.stringify({ status: el.value }), json: true });
       const l = P.leads.find((x) => x.id === id);
       if (l) { P.counts[prev] = Math.max(0, (P.counts[prev] || 1) - 1); P.counts[el.value] = (P.counts[el.value] || 0) + 1; l.status = el.value; }
+      leadStore.update(id, { status: el.value }, P.counts);
+      if (await loadLeads()) render();
       el.className = `status-sel s-${el.value}`;
     } catch (err) { JLUI.alert(err.message); el.value = prev; }
   }
   if (el.dataset.leadNote) {
-    try { await api(`/api/portal/leads/${el.dataset.leadNote}`, { method: 'PATCH', body: JSON.stringify({ note: el.value }), json: true }); const l = P.leads.find((x) => x.id === el.dataset.leadNote); if (l) l.note = el.value; el.classList.add('saved'); setTimeout(() => el.classList.remove('saved'), 1200); }
+    try { await api(`/api/portal/leads/${el.dataset.leadNote}`, { method: 'PATCH', body: JSON.stringify({ note: el.value }), json: true }); const l = P.leads.find((x) => x.id === el.dataset.leadNote); if (l) l.note = el.value; leadStore.update(el.dataset.leadNote, { note: el.value }, P.counts); el.classList.add('saved'); setTimeout(() => el.classList.remove('saved'), 1200); }
     catch (err) { JLUI.alert(err.message); }
   }
 });
@@ -199,18 +220,13 @@ app.addEventListener('click', async (e) => {
   const t = e.target.closest('button, img[data-zoom]') || e.target;
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
-  if (t.dataset.status !== undefined) { P.status = t.dataset.status; await loadLeads(); render(); }
+  if (t.dataset.status !== undefined) { P.status = t.dataset.status; if (await loadLeads()) render(); }
   if (t.dataset.see) { P.tab = 'leads'; P.form = t.dataset.see; render(); }
-  if (t.dataset.act === 'more') { P.loadingMore = true; render(); try { await loadLeads(true); } finally { P.loadingMore = false; render(); } }
+  if (t.dataset.act === 'more' || t.dataset.act === 'retry-leads') { if (await loadLeads(t.dataset.act === 'more')) render(); }
   if (t.dataset.act === 'signout') {
     if (!(await JLUI.confirm('Sign out on this device? You can come back with your portal link.'))) return;
     try { await api('/api/portal/logout', { method: 'POST' }); } catch {}
     ended('Signed out', 'Open your portal link again to come back.');
-  }
-  if (t.dataset.copy) {
-    const label = t.textContent;
-    try { await navigator.clipboard.writeText(t.dataset.copy); t.textContent = 'Copied'; } catch { t.textContent = 'Copy failed'; }
-    setTimeout(() => { t.textContent = label; }, 1500);
   }
   if (t.dataset.act === 'exit') {
     try { await api('/api/portal/exit', { method: 'POST' }); } catch {}
@@ -314,7 +330,7 @@ addEventListener('beforeunload', (e) => { if (OB.d && (OB.dirty || OB.saving) &&
 
 function renderOnboarding() {
   // Late saves and uploads may finish after the client has opened another tab.
-  if (P.tab !== 'onboarding' || !hasDraftOnboarding()) return;
+  if (P.tab !== 'onboarding' || !P.onboardingFlow || !hasDraftOnboarding()) return;
   if (!OB.d) obInit();
   if (!document.getElementById('ob-editor')) app.innerHTML = '<div id="ob-editor"></div><div class="wrap" id="ob-preview-host"></div>';
   const editor = document.getElementById('ob-editor');

@@ -322,6 +322,9 @@ async function sendOnboarding(cid, existingDialog = null) {
   d.addEventListener('cancel', (e) => { if (d.dataset.busy === 'true') e.preventDefault(); });
   try {
     const r = await api(`/api/admin/clients/${cid}/onboarding`, { method: 'POST' });
+    const onboardingUrl = new URL(r.url);
+    onboardingUrl.searchParams.set('onboarding', '1');
+    r.url = onboardingUrl.href;
     B.overview.links[cid] = { createdAt: r.createdAt };
     await refreshLists();
     if (B.view === 'hub') renderHubList();
@@ -330,7 +333,7 @@ async function sendOnboarding(cid, existingDialog = null) {
       <h2>Onboarding link</h2>
       <p class="lead">Send this link to ${esc(c.name)}. They set up their store, pieces, styles with photos, metals and budget. Everything saves as they go, and you get a notification when they press Send. The same link later opens their portal with leads.</p>
       <div class="pick-row"><input class="in" id="ob-url" readonly value="${esc(r.url)}" /><button class="btn small primary" data-ob="copy">Copy</button></div>
-      <p class="hint">This is their permanent portal link. It does not expire. You can copy it again from Portal link at any time.</p>
+      <p class="hint">This onboarding link does not expire. Portal link opens their regular portal with leads and active forms.</p>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Open as client ↗</a><button class="btn primary" data-ob="close">Done</button></div>`;
     d.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-ob]');
