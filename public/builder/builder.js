@@ -279,7 +279,7 @@ const latestOb = (cid) => (B.onboardings || []).filter((o) => o.client_id === ci
 function obPill(cid) {
   const o = latestOb(cid);
   if (!o) return '';
-  if (o.status === 'draft') return `<span class="pill" title="Last saved ${esc(day(o.updated_at))}">Onboarding: waiting for client</span><button class="btn small ghost" data-act="ob-link" data-cid="${esc(cid)}" title="New link (the old one stops working)">Resend link</button>`;
+  if (o.status === 'draft') return `<span class="pill" title="Last saved ${esc(day(o.updated_at))}">Onboarding: waiting for client</span><button class="btn small ghost" data-act="ob-link" data-cid="${esc(cid)}" title="Copy the same portal link for onboarding">Resend link</button>`;
   if (o.status === 'submitted') return `<button class="btn small primary" data-act="ob-review" data-obid="${esc(o.id)}">Review onboarding</button>`;
   return '';
 }
@@ -311,11 +311,10 @@ function newFormChoice(clientId) {
   d.showModal();
 }
 
-// Onboarding link: novi portal link klijenta (stari prestaje da radi); prikazuje se jednom, za kopiranje.
+// Onboarding and the owner's portal share the same permanent link.
 async function sendOnboarding(cid, existingDialog = null) {
   const c = B.clients.find((x) => x.id === cid);
   if (!c) return;
-  if (B.overview.links[cid] && !(await JLUI.confirm(`${c.name} already has a portal link. Sending onboarding creates a new link and the old one stops working. Continue?`))) return;
   const d = existingDialog || document.createElement('dialog');
   if (!existingDialog) { document.body.appendChild(d); d.addEventListener('close', () => d.remove()); d.showModal(); }
   d.dataset.busy = 'true';
@@ -331,7 +330,7 @@ async function sendOnboarding(cid, existingDialog = null) {
       <h2>Onboarding link</h2>
       <p class="lead">Send this link to ${esc(c.name)}. They set up their store, pieces, styles with photos, metals and budget. Everything saves as they go, and you get a notification when they press Send. The same link later opens their portal with leads.</p>
       <div class="pick-row"><input class="in" id="ob-url" readonly value="${esc(r.url)}" /><button class="btn small primary" data-ob="copy">Copy</button></div>
-      <p class="hint">For safety the link is shown only once. Valid for one year.</p>
+      <p class="hint">This is their permanent portal link. It does not expire. You can copy it again from Portal link at any time.</p>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Open as client ↗</a><button class="btn primary" data-ob="close">Done</button></div>`;
     d.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-ob]');
@@ -450,33 +449,48 @@ setInterval(async () => {
   } catch {}
 }, 60_000);
 
-// Link za portal klijenta: vidi se samo jednom; novi link gasi stari.
+// Admin can retrieve the same permanent owner link; replacement is explicit.
 function portalLink(cid) {
   const c = B.clients.find((x) => x.id === cid);
   if (!c) return;
   const d = document.createElement('dialog');
+  let info = null;
+  let busy = true;
+  let error = '';
   const body = () => {
-    const link = B.overview.links[cid];
     return `<h2>Portal link</h2>
       <p class="lead">${esc(c.name)} opens their own portal with this link: leads, renders, photos and their forms with embed code. No AI costs. No password, so anyone with the link sees their leads: send it only to the client.</p>
-      <p class="hint" id="pl-state">${link ? `A link is active since ${esc(day(link.createdAt))}. For safety it is shown only once. If it was lost, create a new one: the old one stops working.` : 'No active link yet.'}</p>
-      <div id="pl-out"></div>
-      <p class="err-text"></p>
+      <p class="hint" id="pl-state">${busy ? 'Loading portal link…' : info?.url ? 'Permanent link. It does not expire. You can come back and copy this same link whenever the client needs it.' : info?.legacy ? 'This existing link is still active. Open it once in the owner portal, then return here to copy it again. You can also explicitly replace it below.' : info ? 'No active link yet.' : 'The portal link could not be loaded.'}</p>
+      <div id="pl-out">${info?.url ? `<div class="pick-row" style="margin-top:10px"><input class="in" id="pl-url" readonly aria-label="Client portal link" value="${esc(info.url)}" /><button class="btn small primary" data-pl="copy" ${busy ? 'disabled' : ''}>Copy</button></div>` : ''}</div>
+      <p class="err-text" role="status">${esc(error)}</p>
       <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px">
-        ${link ? '<button class="btn danger" data-pl="off">Turn off link</button>' : ''}
+        ${info?.active ? `<button class="btn danger" data-pl="off" ${busy ? 'disabled' : ''}>Turn off link</button>` : ''}
         <button class="btn" data-pl="close">Close</button>
-        <button class="btn primary" data-pl="new">${link ? 'New link' : 'Create link'}</button>
+        ${!info && !busy ? '<button class="btn" data-pl="reload">Try again</button>' : `<button class="btn ${info?.active ? '' : 'primary'}" data-pl="new" ${busy || !info ? 'disabled' : ''}>${info?.active ? 'Replace link' : 'Create link'}</button>`}
       </div>`;
   };
   d.innerHTML = body();
   document.body.appendChild(d);
   const after = () => { if (B.view === 'hub') renderHubList(); else if (B.tab === 'client') renderPane(); };
+  const show = () => { if (d.isConnected) d.innerHTML = body(); };
+  const sync = () => {
+    if (info?.active) B.overview.links[cid] = { createdAt: info.createdAt };
+    else delete B.overview.links[cid];
+    after();
+  };
+  const load = async () => {
+    busy = true; error = ''; show();
+    try { info = await api(`/api/admin/clients/${cid}/portal-link`); sync(); }
+    catch (e) { error = e.message; }
+    finally { busy = false; show(); }
+  };
   d.addEventListener('click', async (e) => {
     const b = e.target.closest('[data-pl]');
     if (!b) return;
-    const err = d.querySelector('.err-text');
     try {
       if (b.dataset.pl === 'close') return d.close();
+      if (busy) return;
+      if (b.dataset.pl === 'reload') return load();
       if (b.dataset.pl === 'copy') { await navigator.clipboard.writeText(d.querySelector('#pl-url').value); b.textContent = 'Copied'; return; }
       if (b.dataset.pl === 'off') {
         if (!(await JLUI.confirm(`Turn off ${c.name}'s portal link? It stops working right away.`))) return;
@@ -486,19 +500,18 @@ function portalLink(cid) {
         return d.close();
       }
       if (b.dataset.pl === 'new') {
-        if (B.overview.links[cid] && !(await JLUI.confirm('Create a new link? The old link stops working right away.'))) return;
-        const r = await api(`/api/admin/clients/${cid}/portal-link`, { method: 'POST' });
-        B.overview.links[cid] = { createdAt: r.createdAt };
-        d.innerHTML = body();
-        d.querySelector('#pl-state').textContent = 'New link, valid for one year. Copy it now and send it to the client: it is not shown again.';
-        d.querySelector('#pl-out').innerHTML = `<div class="pick-row" style="margin-top:10px"><input class="in" id="pl-url" readonly value="${esc(r.url)}" /><button class="btn small primary" data-pl="copy">Copy</button></div>`;
-        d.querySelector('#pl-url').select();
-        after();
+        if (info?.active && !(await JLUI.confirm('Replace this portal link? The old link stops working right away. Share the new link with the client.'))) return;
+        busy = true; error = ''; show();
+        try {
+          info = await api(`/api/admin/clients/${cid}/portal-link`, { method: 'POST', body: JSON.stringify({ replace: !!info?.active }) });
+          sync();
+        } finally { busy = false; show(); }
       }
-    } catch (x) { err.textContent = x.message; }
+    } catch (x) { error = x.message; show(); }
   });
   d.addEventListener('close', () => d.remove());
   d.showModal();
+  load();
 }
 
 // ---------- Okvir ----------

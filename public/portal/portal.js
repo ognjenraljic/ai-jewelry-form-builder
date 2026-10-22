@@ -61,7 +61,7 @@ function ended(title, text) {
 
 const minsLeft = () => Math.max(0, Math.round((P.me.session.expiresAt - Date.now()) / 60000));
 function tick() {
-  if (Date.now() > P.me.session.expiresAt) {
+  if (P.me.session.expiresAt && Date.now() > P.me.session.expiresAt) {
     return P.me.session.kind === 'client' ? ended('This link has expired', 'Ask your JewelryLead team for a new portal link.') : ended('Session ended', 'The admin view lasts one hour. Open it again from the builder.');
   }
   const el = document.getElementById('left');

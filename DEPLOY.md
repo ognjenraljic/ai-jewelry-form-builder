@@ -111,6 +111,10 @@ Do **not** add `DEV_MODE`. It is only for local testing.
 
 ## Changing a key later
 
+`PORTAL_LINK_KEY` encrypts retrievable owner portal links. The GitHub deploy workflow generates it once if missing and preserves it on later deploys. Keep this key stable and back it up before moving the Worker to another account. For a manual deployment, first run `node scripts/ensure-portal-key.mjs` with the correct Cloudflare account configured. Local `DEV_MODE` can use the local admin token instead.
+
+Owner links do not expire; browser sign-in cookies last 30 days. Admins can retrieve the same link whenever needed; explicit replacement, disabling or archiving a client revokes access. Older hash-only links become retrievable after the owner's next authenticated visit, without changing their URL. Re-sending onboarding reuses the same portal link.
+
 1. Create a new key with the provider.
 2. Cloudflare → your Worker → **Settings** → **Variables and Secrets** → the secret → **Edit**, paste the new value, save. (Secret values can never be viewed, only replaced.)
 3. Make one test render.

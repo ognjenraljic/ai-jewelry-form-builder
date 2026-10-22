@@ -3,6 +3,7 @@ import { buildPrompt, buildTweakPrompt } from './prompt.js';
 import { parseTeeth, teethSummary } from './teeth.js';
 import { buildTryOnPrompt } from './tryon.js';
 import { applyPresetTeeth, customTeethVisible } from '../public/grillz-selection.js';
+import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
   spendBlock, SPEND_MESSAGE, turnstileOn, turnstileOk, flagged, FLAG_MESSAGE, sniffImage, withSecurity,
@@ -88,7 +89,7 @@ async function route(request, env, ctx, url) {
   if (p.startsWith('/api/portal/')) return portalApi(request, env, p, secure);
   if (p === '/api/admin/view-as-log' && request.method === 'GET') return viewAsLog(request, env);
   if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/view-as$/)) && request.method === 'POST') return startViewAs(request, env, m[1]);
-  if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/portal-link$/)) && (request.method === 'POST' || request.method === 'DELETE')) return clientLink(request, env, m[1]);
+  if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/portal-link$/)) && ['GET', 'POST', 'DELETE'].includes(request.method)) return clientLink(request, env, m[1]);
   if (p === '/api/admin/overview' && request.method === 'GET') return adminOverview(request, env);
   if (p === '/api/admin/test-render' && request.method === 'POST') return testRender(request, env, ctx);
   if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/onboarding$/)) && request.method === 'POST') return startOnboarding(request, env, m[1]);
@@ -805,9 +806,9 @@ async function viewAsLog(request, env) {
   return json({ sessions: rows });
 }
 
-// Stalni link klijenta za njegov portal (bez lozinke). Novi link gasi stari, DELETE gasi link.
-// Čuvamo samo hash, pa se link vidi samo jednom, kad se napravi.
-const CLIENT_LINK_MS = 365 * 86400_000;
+// Permanent owner access: hash for authentication, encrypted token for admin retrieval.
+const CLIENT_COOKIE_S = 30 * 86400;
+const LEGACY_LINK_MESSAGE = 'This existing link is still active. Open it once in the owner portal to make it available here, or explicitly replace it.';
 async function clientLink(request, env, clientId) {
   if (!(await isAdmin(request, env))) return json({ error: 'Not allowed.' }, 403);
   const client = await env.DB.prepare('SELECT id, name, archived_at FROM clients WHERE id = ?').bind(clientId).first();
@@ -817,20 +818,54 @@ async function clientLink(request, env, clientId) {
     await env.DB.prepare("UPDATE portal_sessions SET ended_at = ? WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL").bind(Date.now(), client.id).run();
     return json({ ok: true });
   }
-  return json(await makeClientLink(request, env, client.id));
+  if (request.method === 'GET') return json(await readClientLink(request, env, client.id));
+  const body = await request.json().catch(() => ({}));
+  const link = await makeClientLink(request, env, client.id, { replace: body?.replace === true });
+  return link.url ? json(link) : json({ error: LEGACY_LINK_MESSAGE, legacy: true }, 409);
 }
 
-// Novi stalni link klijenta (stari prestaje da radi). Koriste ga i portal link i onboarding.
-async function makeClientLink(request, env, clientId) {
+async function readClientLink(request, env, clientId) {
+  const session = await env.DB.prepare("SELECT * FROM portal_sessions WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL AND (expires_at = 0 OR expires_at > ?) ORDER BY started_at DESC LIMIT 1")
+    .bind(clientId, Date.now()).first();
+  if (!session) return { active: false, url: null };
+  const info = { active: true, createdAt: session.started_at, expiresAt: session.expires_at || null };
+  try {
+    const token = await openPortalToken(env, session);
+    if (!safeEqual(await sha256(token), session.token_hash)) throw new Error('Invalid retained link.');
+    const origin = new URL(request.url).origin.replace('//builder.', '//');
+    return { ...info, url: `${origin}/portal#k=${token}` };
+  } catch {
+    // Legacy hash-only links cannot be reversed. Keep them active until their owner visits.
+    return { ...info, url: null, legacy: true };
+  }
+}
+
+// Reuse the same owner link for onboarding and future visits; only an explicit replacement revokes it.
+async function makeClientLink(request, env, clientId, { replace = false } = {}) {
+  if (!replace) {
+    const current = await readClientLink(request, env, clientId);
+    if (current.active) return current;
+  }
   const now = Date.now();
-  const token = rid(40);
+  const session = { id: rid(12), client_id: clientId };
+  const token = rid(40), cipher = await sealPortalToken(env, session, token);
   await env.DB.batch([
-    env.DB.prepare("UPDATE portal_sessions SET ended_at = ? WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL").bind(now, clientId),
-    env.DB.prepare('INSERT INTO portal_sessions (id, token_hash, client_id, kind, ip, started_at, expires_at) VALUES (?,?,?,?,?,?,?)')
-      .bind(rid(12), await sha256(token), clientId, 'client', request.headers.get('cf-connecting-ip') || 'local', now, now + CLIENT_LINK_MS),
+    env.DB.prepare(`UPDATE portal_sessions SET ended_at = ? WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL${replace ? '' : ' AND expires_at != 0 AND expires_at <= ?'}`)
+      .bind(now, clientId, ...(replace ? [] : [now])),
+    env.DB.prepare("INSERT INTO portal_sessions (id, token_hash, client_id, kind, ip, started_at, expires_at, token_cipher) SELECT ?,?,?,?,?,?,0,? WHERE NOT EXISTS (SELECT 1 FROM portal_sessions WHERE client_id = ? AND kind = 'client' AND ended_at IS NULL)")
+      .bind(session.id, await sha256(token), clientId, 'client', request.headers.get('cf-connecting-ip') || 'local', now, cipher, clientId),
   ]);
-  const origin = new URL(request.url).origin.replace('//builder.', '//');
-  return { url: `${origin}/portal#k=${token}`, createdAt: now, expiresAt: now + CLIENT_LINK_MS };
+  return readClientLink(request, env, clientId);
+}
+
+async function retainClientLink(env, session, token) {
+  if (session.kind !== 'client') return;
+  if (!session.token_cipher || session.expires_at !== 0) {
+    const cipher = await sealPortalToken(env, session, token);
+    await env.DB.prepare("UPDATE portal_sessions SET token_cipher = ?, expires_at = 0 WHERE id = ? AND ended_at IS NULL")
+      .bind(cipher, session.id).run();
+    session.expires_at = 0;
+  }
 }
 
 const notify = (env, kind, title, ref) => env.DB.prepare('INSERT INTO notifications (id, kind, title, ref, created_at) VALUES (?,?,?,?,?)').bind(rid(12), kind, clean(title, 160), ref || null, Date.now());
@@ -842,6 +877,8 @@ async function startOnboarding(request, env, clientId) {
   const client = await env.DB.prepare('SELECT id, name, data, archived_at FROM clients WHERE id = ?').bind(clientId).first();
   if (!client) return json({ error: 'Client not found' }, 404);
   if (client.archived_at) return json({ error: 'This client is archived. Restore it first.' }, 409);
+  const link = await makeClientLink(request, env, client.id);
+  if (!link.url) return json({ error: LEGACY_LINK_MESSAGE, legacy: true }, 409);
   let ob = await env.DB.prepare("SELECT id, status FROM onboardings WHERE client_id = ? AND status != 'done' ORDER BY created_at DESC LIMIT 1").bind(client.id).first();
   if (!ob) {
     const cd = JSON.parse(client.data || '{}');
@@ -850,7 +887,7 @@ async function startOnboarding(request, env, clientId) {
     await env.DB.prepare('INSERT INTO onboardings (id, client_id, data, status, created_at, updated_at) VALUES (?,?,?,?,?,?)')
       .bind(ob.id, client.id, JSON.stringify({ store: { name: client.name, website: cd.website || '', logo: cd.logo || '' } }), 'draft', now, now).run();
   }
-  return json({ ...(await makeClientLink(request, env, client.id)), onboarding: ob });
+  return json({ ...link, onboarding: ob });
 }
 
 async function adminOnboardings(request, env, p) {
@@ -927,7 +964,7 @@ async function adminOverview(request, env) {
   const [leads, renders, links, tests] = await env.DB.batch([
     env.DB.prepare('SELECT form_id, COUNT(*) AS leads, MAX(created_at) AS last_lead FROM leads GROUP BY form_id'),
     env.DB.prepare("SELECT l.form_id, SUM(CASE WHEN r.status = 'ok' THEN 1 ELSE 0 END) AS renders, SUM(r.cost_usd) AS cost FROM renders r JOIN leads l ON l.id = r.lead_id GROUP BY l.form_id"),
-    env.DB.prepare("SELECT client_id, MAX(started_at) AS created_at FROM portal_sessions WHERE kind = 'client' AND ended_at IS NULL AND expires_at > ? GROUP BY client_id").bind(Date.now()),
+    env.DB.prepare("SELECT client_id, MAX(started_at) AS created_at FROM portal_sessions WHERE kind = 'client' AND ended_at IS NULL AND (expires_at = 0 OR expires_at > ?) GROUP BY client_id").bind(Date.now()),
     env.DB.prepare("SELECT form_id, COUNT(*) AS tests, SUM(cost_usd) AS cost FROM test_renders WHERE status = 'ok' GROUP BY form_id"),
   ]);
   const stats = {};
@@ -945,7 +982,8 @@ async function portalSession(request, env) {
   const token = request.headers.get('x-portal-token') || c.aik_viewas || c.aik_portal;
   if (!token || token.length < 20) return null;
   const s = await env.DB.prepare('SELECT * FROM portal_sessions WHERE token_hash = ?').bind(await sha256(token)).first();
-  if (!s || s.ended_at || s.expires_at < Date.now()) return null;
+  if (!activePortalSession(s)) return null;
+  await retainClientLink(env, s, token);
   return s;
 }
 
@@ -968,12 +1006,13 @@ function leadDetails(form, a) {
 // Link klijenta (#k=...) ili admin pregled se jednom razmijene za HttpOnly kolačić; token više ne ide u adrese slika.
 async function portalLogin(request, env, secure) {
   const b = await request.json().catch(() => ({}));
-  const token = String(b.token || '');
+  const token = String(b?.token || '');
   if (token.length < 20) return json({ error: 'Invalid link.' }, 400);
   const s = await env.DB.prepare('SELECT * FROM portal_sessions WHERE token_hash = ?').bind(await sha256(token)).first();
-  if (!s || s.ended_at || s.expires_at < Date.now()) return json({ error: 'This link no longer works.' }, 401);
+  if (!activePortalSession(s)) return json({ error: 'This link no longer works.' }, 401);
+  await retainClientLink(env, s, token);
   const name = s.kind === 'view-as' ? 'aik_viewas' : 'aik_portal';
-  const maxAge = Math.max(60, Math.floor((s.expires_at - Date.now()) / 1000));
+  const maxAge = s.kind === 'client' ? CLIENT_COOKIE_S : Math.max(60, Math.floor((s.expires_at - Date.now()) / 1000));
   const h = new Headers({ 'content-type': 'application/json', 'cache-control': 'no-store' });
   h.append('set-cookie', setCookie(name, token, { maxAge, secure }));
   if (name === 'aik_portal') h.append('set-cookie', clearCookie('aik_viewas', secure));
@@ -1011,7 +1050,7 @@ async function portalApi(request, env, p, secure) {
       FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? GROUP BY l.form_id`).bind(client.id).all()).results.map((r) => [r.form_id, r]));
     const ob = await env.DB.prepare('SELECT id, status, data, updated_at, submitted_at, rev FROM onboardings WHERE client_id = ? ORDER BY created_at DESC LIMIT 1').bind(client.id).first();
     return json({
-      session: { kind: sess.kind, expiresAt: sess.expires_at },
+      session: { kind: sess.kind, expiresAt: sess.expires_at || null },
       client: { id: client.id, name: client.name, logo: d.logo || null, website: d.website || '' },
       onboarding: ob ? { id: ob.id, status: ob.status, rev: ob.rev, data: JSON.parse(ob.data || '{}'), updatedAt: ob.updated_at, submittedAt: ob.submitted_at } : null,
       ...(ob && ob.status === 'draft' ? { onboardingDefaults: ONBOARDING_DEFAULTS } : {}),

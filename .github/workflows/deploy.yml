@@ -60,4 +60,5 @@ jobs:
           if ! printf '%s' "$CLOUDFLARE_API_TOKEN" | grep -Eq '^[A-Za-z0-9_-]{30,60}$'; then
             echo "CLOUDFLARE_API_TOKEN does not look like a single Cloudflare API token (paste only the token, nothing else)."; exit 1
           fi
+          node scripts/ensure-portal-key.mjs
           npm run deploy
