@@ -612,6 +612,23 @@ async function adminForms(request, env, p) {
   const method = request.method;
   let m;
 
+  // Built-in catalogue and this form's uploads. Customer references/selfies are
+  // deliberately outside this prefix and are never offered as reusable images.
+  if ((m = p.match(/^\/api\/admin\/forms\/([a-z0-9-]+)\/images$/)) && method === 'GET') {
+    if (!(await loadForm(env, m[1]))) return json({ error: 'Form not found' }, 404);
+    const cursor = new URL(request.url).searchParams.get('cursor') || undefined;
+    if (cursor?.length > 2048) return json({ error: 'Invalid cursor' }, 400);
+    const list = await env.MEDIA.list({ prefix: `forms/${m[1]}/`, limit: 60, cursor, include: ['customMetadata'] });
+    const images = list.objects.filter((o) => /\.(png|jpe?g|webp)$/i.test(o.key)).map((o) => ({
+      image: `/media/${o.key}`, label: o.customMetadata?.name || 'Uploaded image', category: 'uploads',
+    }));
+    const library = cursor ? [] : [
+      ...ONBOARDING_DEFAULTS.pieces.filter((p) => p.value === 'chain').map((p) => ({ image: p.image, label: 'Chain', category: p.value })),
+      ...Object.entries(ONBOARDING_DEFAULTS.styles).flatMap(([category, styles]) => styles.map(({ image, label }) => ({ image, label, category }))),
+    ];
+    return json({ images: [...library, ...images], next: list.truncated ? list.cursor : null });
+  }
+
   // Sve odjednom za builder: klijenti, forme (grupisane po client_id) i šabloni.
   if (p === '/api/admin/forms' && method === 'GET') {
     const clients = (await env.DB.prepare('SELECT id, name, data, created_at, archived_at FROM clients ORDER BY name').all()).results.map((c) => ({ id: c.id, name: c.name, ...JSON.parse(c.data || '{}'), archivedAt: c.archived_at || null }));
@@ -722,7 +739,7 @@ async function adminForms(request, env, p) {
     const type = await sniffImage(file);
     if (!type) return json({ error: 'Image must be JPG, PNG or WebP' }, 400);
     const key = `${m[1]}/${m[2]}/${rid(10)}.${type.split('/')[1]}`;
-    await env.MEDIA.put(key, file.stream(), { httpMetadata: { contentType: type } });
+    await env.MEDIA.put(key, file.stream(), { httpMetadata: { contentType: type }, customMetadata: { name: clean(fd.get('name') || file.name, 80) } });
     return json({ url: `/media/${key}` });
   }
   return json({ error: 'Not found' }, 404);

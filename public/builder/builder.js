@@ -13,6 +13,10 @@ const ICONS = {
 };
 // Male ikonice za dugmad u zaglavlju (24x24, linija).
 const NAV = {
+  image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="M3 17l5-5 4 4 4-6 5 7"/>',
+  desktop: '<rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>',
+  mobile: '<rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 18h4"/>',
+  play: '<path d="M9 5l11 7-11 7z"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
@@ -569,14 +573,18 @@ function renderTabs() {
 }
 
 function renderPbar() {
-  const steps = B.draft.steps.map((s, i) => `<button class="btn small ${s.enabled === false ? 'off' : ''} ${B.pv === i ? 'on' : ''}" data-act="jump" data-i="${i}" ${s.enabled === false ? 'disabled title="Step is off"' : ''}>${i + 1}. ${esc(s.label || s.title)}</button>`).join('');
+  const stepButton = (i, label, disabled = false) => `<button class="preview-step ${B.pv === i ? 'on' : ''}" data-act="jump" data-i="${i}" ${B.pv === i ? 'aria-current="step"' : ''} ${disabled ? 'disabled title="Step is off"' : ''}><span class="step-index">${i + 1}</span><span>${esc(label)}</span></button>`;
+  const steps = B.draft.steps.map((s, i) => stepButton(i, s.label || s.title, s.enabled === false)).join('');
   document.getElementById('pbar').innerHTML = `
-    <span class="label">Preview</span>
-    <button class="btn small ${B.device === 'desktop' ? 'on' : ''}" data-act="device" data-d="desktop">Desktop</button>
-    <button class="btn small ${B.device === 'mobile' ? 'on' : ''}" data-act="device" data-d="mobile">Mobile</button>
-    <span class="label" style="margin-left:10px">Jump to</span>${steps}
-    <button class="btn small ${B.pv === B.draft.steps.length ? 'on' : ''}" data-act="jump" data-i="${B.draft.steps.length}">Contact</button>
-    <button class="btn small primary" data-act="test-render" title="Renders this draft with the answers you clicked in the preview. Costs one render, no lead is created.">Test render</button>`;
+    <div class="preview-toolbar">
+      <div class="preview-heading"><b>Form preview</b><small>Try each step of your form</small></div>
+      <div class="preview-devices" role="group" aria-label="Preview device">
+        <button class="btn small ${B.device === 'desktop' ? 'on' : ''}" data-act="device" data-d="desktop" aria-pressed="${B.device === 'desktop'}">${nav('desktop')}Desktop</button>
+        <button class="btn small ${B.device === 'mobile' ? 'on' : ''}" data-act="device" data-d="mobile" aria-pressed="${B.device === 'mobile'}">${nav('mobile')}Mobile</button>
+      </div>
+      <button class="btn small primary preview-test" data-act="test-render" title="Renders this draft with the answers you clicked in the preview. Costs one render, no lead is created.">${nav('play')}Test render</button>
+    </div>
+    <div class="preview-navigation"><span class="label">Form steps</span><nav class="preview-steps" aria-label="Preview form steps">${steps}${stepButton(B.draft.steps.length, 'Contact')}</nav></div>`;
 }
 
 function renderPane() {
@@ -608,6 +616,84 @@ const imgPick = (path, { scope = 'forms', size = 'sm', empty = 'Image' } = {}) =
   const v = getP(path);
   return `<label class="pick ${size}" title="${v ? 'Replace image or drag a new photo here' : 'Upload or drop an image'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span>${esc(empty)}${size === 'logo' ? '<small>or drag & drop here</small>' : ''}</span>`}<input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="${path}" data-scope="${scope}" /></label>${v ? `<button class="icon-btn danger" title="Remove image" data-act="unset" data-path="${path}">✕</button>` : ''}`;
 };
+// Card art is selected from the catalogue or this form's own uploaded images.
+const cardImagePick = (path) => {
+  const image = getP(path);
+  return `<button class="card-image-select" aria-label="Select image" data-act="image-library" data-path="${esc(path)}">${image ? `<img src="${esc(image)}" alt="Selected card image" />` : `<span class="card-image-placeholder">${nav('image')}</span>`}<span><b>Select image</b><small>Browse library or add your own</small></span>${nav('plus')}</button>${image ? `<button class="icon-btn danger" title="Remove image" aria-label="Remove card image" data-act="unset" data-path="${esc(path)}">✕</button>` : ''}`;
+};
+
+async function openImageLibrary(path) {
+  const formId = B.id;
+  const previous = document.activeElement;
+  const selected = getP(path);
+  const d = document.createElement('dialog');
+  d.className = 'image-library';
+  d.setAttribute('aria-labelledby', 'image-library-title');
+  let images = [], next = null, category = selected?.startsWith('/media/') ? 'uploads' : selected?.match(/^\/library\/([a-z]+)\//)?.[1] || B.piece || '', search = '', busy = false;
+  const controller = new AbortController();
+  d.innerHTML = `<div class="image-library-head"><div><h2 id="image-library-title">Select image</h2><p class="hint">Choose from the library or upload an image for this form.</p></div><button class="icon-btn" data-library-close aria-label="Close image library">✕</button></div>
+    <div class="image-library-upload" data-upload-box><button type="button" data-library-add aria-label="Add new image">${nav('plus')}<b>Add new</b></button><small>Choose a JPG, PNG or WebP, or drag & drop here</small><input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="${esc(path)}" data-scope="forms" /></div>
+    <label class="image-library-search"><span class="sr-only">Search images</span><input class="in" type="search" placeholder="Search images…" aria-label="Search images" /></label>
+    <div class="image-library-filters" role="group" aria-label="Image categories"></div>
+    <p class="image-library-error" role="alert" hidden></p>
+    <div class="image-library-results" aria-live="polite"></div>
+    <div class="image-library-footer"><span class="hint">Selecting an image updates your draft. Save the form to publish.</span><button class="btn small" data-library-more hidden>Load more uploads</button></div>`;
+  const results = d.querySelector('.image-library-results');
+  const error = d.querySelector('.image-library-error');
+  const filters = d.querySelector('.image-library-filters');
+  const show = () => {
+    filters.innerHTML = [['', 'All images'], ...B.pieces.map((p) => [p.value, p.label]), ['uploads', 'Your uploads']].map(([value, label]) => `<button class="btn small ${category === value ? 'on' : ''}" data-category="${esc(value)}" aria-pressed="${category === value}">${esc(label)}</button>`).join('');
+    const filtered = images.filter((image) => (!category || image.category === category) && `${image.label} ${image.category}`.toLowerCase().includes(search));
+    results.innerHTML = busy && !images.length ? '<div class="jl-loading" role="status"><span class="jl-spinner"></span>Loading images…</div>' : filtered.length ? `<div class="image-library-grid">${filtered.map((image) => `<button class="library-image ${image.image === selected ? 'selected' : ''}" data-library-image="${esc(image.image)}" aria-label="Select ${esc(image.label)}" aria-pressed="${image.image === selected}"><span class="library-image-art"><img src="${esc(image.image)}" alt="" loading="lazy" />${image.image === selected ? '<span class="library-image-check" aria-hidden="true">✓</span>' : ''}</span><b>${esc(image.label)}</b><small>${esc(image.category === 'uploads' ? 'Your upload' : B.pieces.find((p) => p.value === image.category)?.label || image.category)}</small></button>`).join('')}</div>` : '<p class="image-library-empty">No images here yet. Choose another category or add a new image above.</p>';
+    const more = d.querySelector('[data-library-more]');
+    more.hidden = !next || !!(category && category !== 'uploads'); more.disabled = busy; more.textContent = busy ? 'Loading…' : 'Load more uploads';
+  };
+  const load = async (more = false) => {
+    busy = true; error.hidden = true; show();
+    try {
+      const r = await api(`/api/admin/forms/${formId}/images${more && next ? `?cursor=${encodeURIComponent(next)}` : ''}`, { signal: controller.signal });
+      if (!d.isConnected) return;
+      const known = new Set(images.map((image) => image.image));
+      images.push(...r.images.filter((image) => !known.has(image.image)));
+      next = r.next;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      error.textContent = 'Could not load images. Close this window and try again.'; error.hidden = false;
+    } finally { busy = false; if (d.isConnected) show(); }
+  };
+  d.addEventListener('click', (e) => {
+    const button = e.target.closest('button');
+    if (!button || d.dataset.uploading === 'true') return;
+    if (button.hasAttribute('data-library-close')) return d.close();
+    if (button.dataset.category !== undefined) { category = button.dataset.category; show(); }
+    if (button.hasAttribute('data-library-more') && !busy) load(true);
+    if (button.dataset.libraryImage && images.some((image) => image.image === button.dataset.libraryImage)) {
+      if (B.id !== formId) return d.close();
+      setP(path, button.dataset.libraryImage); changed(true); d.close();
+    }
+  });
+  d.querySelector('[type="search"]').addEventListener('input', (e) => { search = e.target.value.trim().toLowerCase(); show(); });
+  d.querySelector('[data-upload-box]').addEventListener('click', (e) => { if (e.target.tagName !== 'INPUT' && d.dataset.uploading !== 'true') d.querySelector('[type="file"]').click(); });
+  d.querySelector('[type="file"]').addEventListener('change', async (e) => {
+    d.dataset.uploading = 'true';
+    d.querySelector('[data-library-close]').disabled = true;
+    d.querySelector('[type="search"]').disabled = true;
+    d.setAttribute('aria-busy', 'true');
+    error.hidden = true;
+    const url = await upload(e.target);
+    d.dataset.uploading = 'false';
+    d.querySelector('[data-library-close]').disabled = false;
+    d.querySelector('[type="search"]').disabled = false;
+    d.setAttribute('aria-busy', 'false');
+    if (url) d.close();
+    else { error.textContent = B.status || 'Choose a JPG, PNG or WebP photo to upload.'; error.hidden = false; }
+  });
+  d.addEventListener('cancel', (e) => { if (d.dataset.uploading === 'true') e.preventDefault(); });
+  d.addEventListener('close', () => { controller.abort(); d.remove(); if (previous?.isConnected) previous.focus(); else app.querySelector('[data-act="image-library"]')?.focus(); }, { once: true });
+  document.body.appendChild(d); d.showModal();
+  await load();
+}
+
 const snippetFor = (id) => {
   const o = location.origin.replace('//builder.', '//');
   return `<div id="jewelrylead-${id}"></div>\n<script src="${o}/embed.js" data-form="${id}" data-target="jewelrylead-${id}" async></script>`;
@@ -722,7 +808,7 @@ function piecesView() {
     editor = `
       <div class="card sel" style="margin-top:16px">
         <div class="row">${inp(`${op}.label`, 'Name shown to customers')}<label class="f"><span>Icon</span><select class="sel" data-bind="${op}.icon" data-rerender>${iconSel}</select></label></div>
-        <div class="f"><span>Card image (optional, replaces the icon)</span><div class="pick-row">${imgPick(`${op}.image`)}</div></div>
+        <div class="f"><span>Card image (optional, replaces the icon)</span><div class="pick-row">${cardImagePick(`${op}.image`)}</div></div>
         ${area(`${op}.subject`, 'How the AI should describe this piece', { ph: 'e.g. a custom western belt buckle, oval, front view', hint: 'Optional for built-in pieces (pendant, chain, ring, grillz, bracelet, earrings, watch). Needed for new ones.' })}
       </div>
       ${o.value === 'grillz' ? `<div class="toggles" style="margin:14px 0 4px">${toggle('tryOn', 'Offer "See them on your smile" after the render (customer uploads a smiling photo)', { invert: true, title: 'The AI shows the customer wearing the grillz. The photo stays private.' })}</div>` : ''}
@@ -1003,6 +1089,7 @@ app.addEventListener('click', async (e) => {
   const i = +el.dataset.i;
   if (act === 'tab') { B.tab = el.dataset.tab; store.set('aik_builder_tab', B.tab); renderTabs(); renderPane(); }
   if (act === 'save') save();
+  if (act === 'image-library') openImageLibrary(el.dataset.path);
   if (act === 'save-client') saveClient();
   if (act === 'new-form') newFormChoice(el.dataset.cid || B.client?.id);
   if (act === 'notifs') toggleNotifs(el);
@@ -1129,8 +1216,8 @@ app.addEventListener('click', async (e) => {
 async function upload(input) {
   const file = input.files[0];
   if (!file) return;
-  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return toast('Please choose a JPG, PNG or WebP photo.');
-  if (file.size > 20 * 1024 * 1024) return toast('Please choose a photo smaller than 20 MB.');
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) { setStatus('Please choose a JPG, PNG or WebP photo.', 'err'); toast(B.status); return; }
+  if (file.size > 20 * 1024 * 1024) { setStatus('Please choose a photo smaller than 20 MB.', 'err'); toast(B.status); return; }
   // Forma, klijent i polje se zapamte prije slanja: ako se u međuvremenu otvori druga forma, slika ne završi u njoj.
   const formId = B.id;
   const path = input.dataset.upload;
@@ -1138,7 +1225,7 @@ async function upload(input) {
   const clientId = B.client?.id;
   if (clientScope && !clientId) return setStatus('Pick a client first.', 'err');
   const isLogo = /logo$/.test(path);
-  const box = input.closest('label');
+  const box = input.closest('label, [data-upload-box]');
   if (input.disabled) return;
   input.disabled = true;
   JLUI.uploadBusy(box, true);
@@ -1157,12 +1244,14 @@ async function upload(input) {
     } catch {}
     const fd = new FormData();
     fd.set('file', blob, isLogo ? 'logo.png' : 'image.webp');
+    fd.set('name', file.name);
     const scope = clientScope ? `clients/${clientId}` : `forms/${formId}`;
     const { url } = await api(`/api/admin/${scope}/upload`, { method: 'POST', body: fd });
     if (B.id !== formId || (clientScope && B.client?.id !== clientId)) return setStatus('Upload finished for a form you closed; it was not added.', 'err');
     setP(path, url);
     setStatus('');
     changed(true);
+    return url;
   } catch (err) {
     setStatus(err.message, 'err');
   } finally { JLUI.uploadBusy(box, false); input.disabled = false; input.value = ''; }
@@ -1347,7 +1436,11 @@ function pushPreview(step, { soft = false, focus = null } = {}) {
 // Korak koji pregled trenutno pokazuje: isto dugme u "Jump to" je označeno (null = rezultat ili nepoznato).
 function setPv(i) {
   B.pv = i;
-  document.querySelectorAll('#pbar [data-act="jump"]').forEach((b) => b.classList.toggle('on', +b.dataset.i === i));
+  document.querySelectorAll('#pbar [data-act="jump"]').forEach((b) => {
+    const active = +b.dataset.i === i;
+    b.classList.toggle('on', active);
+    if (active) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+  });
 }
 
 // ---------- Questions <-> pregled ----------
