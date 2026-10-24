@@ -16,6 +16,10 @@ check(mixed.includes('Top row: exactly 2 teeth') && mixed.includes('Bottom row: 
 check(mixed.includes('A plain metal cap must remain plain metal') && mixed.includes('natural enamel'), 'mixed stone and plain caps preserve neighboring enamel');
 check(mixed.includes('at most 2 upper and 2 lower teeth') && mixed.includes('overrides any extra jewelry visible'), 'selected pair prevents surplus reference side caps from reaching the smile');
 check(mixed.includes('contact shadows') && mixed.includes('PHOTOGRAPHIC RELIGHTING') && mixed.includes('tiny identical gold squares'), 'portrait lighting, tooth shape and contact shadows are explicit');
+const sixOnSix = buildTryOnPrompt({ teeth: 'T3,T4,T5,T6,T7,T8,B3,B4,B5,B6,B7,B8' });
+check(sixOnSix.includes('at most 6 upper and 6 lower teeth') && sixOnSix.includes('VISIBILITY BEFORE DISPLAY') && sixOnSix.includes('original upper/lower overlap'), 'six-on-six coverage does not force hidden lower caps into view');
+check(sixOnSix.includes('FIT PRIORITY') && sixOnSix.includes('Adapt its contour') && !sixOnSix.includes('silhouette and distinctive details must stay'), 'portrait anatomy takes priority over the detached product silhouette');
+check(sixOnSix.includes('convex tooth') && sixOnSix.includes('dark oral-cavity reflections') && sixOnSix.includes('focus, grain and sharpness'), 'caps have volume, local reflections and portrait-scale detail');
 check(buildTryOnPrompt({ style: 'set' }).includes('Determine the covered tooth positions only from IMAGE 2'), 'legacy answers without a tooth map do not invent a full set');
 
 if (!process.env.BASE) { console.log(`Passed ${checks} prompt checks.`); process.exit(0); }
