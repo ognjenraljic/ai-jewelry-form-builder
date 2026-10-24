@@ -92,6 +92,16 @@ h3 { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: 
 .in:focus, .ta:focus, .sel:focus { border-color: var(--accent); }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.icon-picker { position: relative; min-width: 0; }
+.icon-picker summary { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); cursor: pointer; list-style: none; }
+.icon-picker summary::-webkit-details-marker { display: none; }
+.icon-picker svg { width: 25px; height: 25px; flex: none; color: var(--accent); }
+.icon-picker-arrow, .icon-picker-check { margin-left: auto; }
+.icon-picker[open] summary { border-color: var(--accent); }
+.icon-picker-options { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 20; max-height: 340px; overflow-y: auto; padding: 5px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); box-shadow: 0 16px 35px #0006; }
+.icon-picker-options button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 41px; padding: 7px 9px; border: 0; border-radius: 8px; background: transparent; text-align: left; }
+.icon-picker-options button:hover, .icon-picker-options button[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.icon-picker summary:focus-visible, .icon-picker-options button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .check { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-soft); font-size: 13px; cursor: pointer; }
 .check input { accent-color: var(--accent); width: 16px; height: 16px; }
 

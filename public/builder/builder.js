@@ -766,6 +766,14 @@ function contrastNote(t) {
   return bad.length ? `<p class="note warn">Hard to read: ${esc(bad.join(' · '))}. Aim for at least 4.5:1.</p>` : '';
 }
 
+function iconPicker(path, selected) {
+  const current = Object.hasOwn(ICONS, selected) ? selected : 'gem';
+  return `<div class="f"><span>Icon</span><details class="icon-picker" data-icon-picker>
+    <summary aria-label="Icon: ${esc(current)}" aria-haspopup="listbox" aria-expanded="false">${icon(current)}<span>${esc(current)}</span><span class="icon-picker-arrow" aria-hidden="true">⌄</span></summary>
+    <div class="icon-picker-options" role="listbox" aria-label="Icons">${Object.keys(ICONS).map((name) => `<button type="button" role="option" aria-selected="${current === name}" data-act="pick-icon" data-path="${esc(path)}" data-v="${name}">${icon(name)}<span>${name}</span><span class="icon-picker-check" aria-hidden="true">${current === name ? '✓' : ''}</span></button>`).join('')}</div>
+  </details></div>`;
+}
+
 function piecesView() {
   const loc = typeLoc();
   if (!loc) return '<p class="note">This form has no piece question ("type").</p>';
@@ -788,7 +796,6 @@ function piecesView() {
     const op = `${loc.path}.options.${k}`;
     const o = opts[k];
     const styles = B.draft.styles?.[o.value] || [];
-    const iconSel = Object.keys(ICONS).map((n) => `<option ${o.icon === n ? 'selected' : ''}>${n}</option>`).join('');
     const cards = styles.map((s, j) => `
       <div class="style">
         <label class="img" title="Upload image">
@@ -807,7 +814,7 @@ function piecesView() {
       </div>`).join('');
     editor = `
       <div class="card sel" style="margin-top:16px">
-        <div class="row">${inp(`${op}.label`, 'Name shown to customers')}<label class="f"><span>Icon</span><select class="sel" data-bind="${op}.icon" data-rerender>${iconSel}</select></label></div>
+        <div class="row">${inp(`${op}.label`, 'Name shown to customers')}${iconPicker(`${op}.icon`, o.icon)}</div>
         <div class="f"><span>Card image (optional, replaces the icon)</span><div class="pick-row">${cardImagePick(`${op}.image`)}</div></div>
         ${area(`${op}.subject`, 'How the AI should describe this piece', { ph: 'e.g. a custom western belt buckle, oval, front view', hint: 'Optional for built-in pieces (pendant, chain, ring, grillz, bracelet, earrings, watch). Needed for new ones.' })}
       </div>
@@ -1072,6 +1079,10 @@ app.addEventListener('change', async (e) => {
 
 app.addEventListener('toggle', (e) => {
   const d = e.target;
+  if (d.matches?.('[data-icon-picker]')) {
+    d.querySelector('summary').setAttribute('aria-expanded', String(d.open));
+    if (d.open) app.querySelectorAll('[data-icon-picker][open]').forEach((other) => { if (other !== d) other.open = false; });
+  }
   if (d.matches?.('details.step')) {
     const i = +d.dataset.step;
     if (d.open) B.open.add(i); else B.open.delete(i);
@@ -1080,6 +1091,26 @@ app.addEventListener('toggle', (e) => {
     delete d.dataset.silent;
   }
 }, true);
+
+document.addEventListener('click', (e) => {
+  app.querySelectorAll('[data-icon-picker][open]').forEach((picker) => { if (!picker.contains(e.target)) picker.open = false; });
+});
+
+app.addEventListener('keydown', (e) => {
+  const picker = e.target.closest('[data-icon-picker]');
+  if (!picker) return;
+  const summary = picker.querySelector('summary');
+  const options = [...picker.querySelectorAll('[role="option"]')];
+  if (e.key === 'Escape' && picker.open) { e.preventDefault(); picker.open = false; summary.focus(); }
+  if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+    e.preventDefault();
+    const index = options.indexOf(document.activeElement);
+    picker.open = true;
+    const selected = options.findIndex((option) => option.getAttribute('aria-selected') === 'true');
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1 : index < 0 ? Math.max(0, selected) : (index + (e.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
+    options[next]?.focus();
+  }
+});
 
 app.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-act]');
@@ -1090,6 +1121,11 @@ app.addEventListener('click', async (e) => {
   if (act === 'tab') { B.tab = el.dataset.tab; store.set('aik_builder_tab', B.tab); renderTabs(); renderPane(); }
   if (act === 'save') save();
   if (act === 'image-library') openImageLibrary(el.dataset.path);
+  if (act === 'pick-icon' && Object.hasOwn(ICONS, el.dataset.v)) {
+    setP(el.dataset.path, el.dataset.v);
+    changed(true);
+    app.querySelector('[data-icon-picker] summary')?.focus();
+  }
   if (act === 'save-client') saveClient();
   if (act === 'new-form') newFormChoice(el.dataset.cid || B.client?.id);
   if (act === 'notifs') toggleNotifs(el);
