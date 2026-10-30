@@ -86,26 +86,32 @@ async function boot() {
       if (e.data?.type !== 'aik:preview' || !e.data.form) return;
       S.adminPreview = !!e.data.admin;
       S.cfg = { ...e.data.form, dev: S.cfg.dev, turnstile: S.cfg.turnstile };
-      if (S.onboardingPreview) {
+      // Odgovori koji u novoj verziji forme (ili za drugi komad) više ne postoje se brišu.
+      const prune = () => {
         for (const step of S.cfg.steps) for (const field of step.fields) {
-          if (field.options && S.a[field.id] != null && !field.options.some((x) => x.value === S.a[field.id])) delete S.a[field.id];
+          if (field.options && field.id !== 'type' && S.a[field.id] != null && !optionsOf(field).some((x) => x.value === S.a[field.id])) delete S.a[field.id];
         }
         if (S.a.style && !(S.cfg.styles?.[S.a.type] || []).some((x) => x.value === S.a.style)) delete S.a.style;
-      }
+      };
+      if (S.onboardingPreview) prune();
       // Dok probni render traje (ili je prikazan), izmjena u builderu ne prebacuje pregled na drugi korak.
       if (S.test || S.busy) { applyTheme(); return; }
       // Mekani skok (sinhronizacija sa Questions): ne diraj odgovore koje je admin već kliknuo u pregledu.
       if (e.data.answers) {
         if (e.data.soft) { for (const [k, v] of Object.entries(e.data.answers)) if (S.a[k] == null) S.a[k] = v; }
         else Object.assign(S.a, e.data.answers);
+        prune();
       }
       applyTheme();
       applyDefaults();
-      if (typeof e.data.step === 'number') {
-        const idx = steps().findIndex((st) => st === S.cfg.steps[e.data.step] || (e.data.step >= S.cfg.steps.length && st.id === '_contact'));
+      // Pregled preporuka (kartica Shop products): kraj forme bez pravog rendera.
+      if (e.data.products) { S.productsPreview = true; S.i = steps().length - 1; }
+      else if (typeof e.data.step === 'number' || e.data.stepId) {
+        S.productsPreview = false;
+        const idx = steps().findIndex((st) => st === S.cfg.steps[e.data.step] || st.id === e.data.stepId || (e.data.step >= S.cfg.steps.length && st.id === '_contact'));
         if (idx >= 0 || !e.data.soft) S.i = Math.max(0, idx);
       }
-      S.i = Math.min(S.i, steps().length - 2);
+      if (!S.productsPreview) S.i = Math.min(S.i, steps().length - 2);
       if (!S.onboardingPreview) S.rendered = -1;
       render();
       if (e.data.focus) focusField(e.data.focus);
@@ -153,6 +159,8 @@ const cur = () => steps()[S.i];
 
 function visible(f) {
   if (f.enabled === false) return false;
+  // Pitanje koje zlatar za ovaj komad ne nudi (perPiece: []) se preskače.
+  if (Array.isArray(f.perPiece?.[S.a.type]) && !f.perPiece[S.a.type].length) return false;
   if (f.type === 'teeth' && !customTeethVisible(S.cfg, S.a)) return false;
   const c = f.showIf;
   if (!c) return true;
@@ -168,7 +176,9 @@ const optionsOf = (f) => {
     const list = (S.cfg.styles?.[S.a[f.optionsFrom.field]] || []).map(({ value, label, image }) => ({ value, label, image }));
     return f.other === false ? list : [...list, { value: 'other', label: 'Something else', icon: 'gem' }];
   }
-  return f.options || [];
+  // Svaki komad ima svoje opcije (npr. grillz bez platine, svoj budžet).
+  const allow = f.perPiece?.[S.a.type];
+  return Array.isArray(allow) ? allow.map((v) => (f.options || []).find((o) => o.value === v)).filter(Boolean) : f.options || [];
 };
 
 function stepValid(step) {
@@ -536,29 +546,46 @@ function resultView() {
     : '';
   const testNote = S.test && S.testInfo && !S.busy ? `<p class="fine testnote">Test render, no lead saved · ${esc(S.testInfo.model)} · ${(S.testInfo.ms / 1000).toFixed(1)} s · $${(S.testInfo.costUsd || 0).toFixed(3)}</p>` : '';
   const dev = S.cfg.dev ? devView() : '';
-  const failed = !S.busy && !S.renders.length;
+  const failed = !S.busy && !S.renders.length && !S.productsPreview;
   const head = S.test && !S.busy && !failed
     ? ['Test render', 'Here it <em>is</em>', 'This is how customers will see it. Nothing was saved as a lead.']
     : S.busy
     ? ['Creating your preview', 'Bringing it <em>to life</em>', 'This takes about 15 to 30 seconds.']
     : failed
       ? ['Your design', 'Almost <em>there</em>', 'Your details are saved. We hit a snag creating the preview.']
-      : ['Your design', 'Here it <em>is</em>', esc(r.done)];
+      : S.productsPreview && !S.renders.length
+        ? ['Your design', 'Here it <em>is</em>', 'Preview: the customer\'s AI render appears here, with your shop products under it.']
+        : ['Your design', 'Here it <em>is</em>', esc(r.done)];
   return `
     <section class="step">
       <p class="eyebrow">${head[0]}</p>
       <h1>${head[1]}</h1>
       <p class="sub">${head[2]}</p>
-      ${failed ? '' : `<div class="stage">${stage}</div>`}
+      ${failed ? '' : `<div class="stage">${stage || (S.productsPreview ? `<div class="forge"><div class="forge-inner">${icon('gem').replace('<svg', '<svg class="gem"')}<div class="forge-msg">AI preview</div></div></div>` : '')}</div>`}
       ${strip}
       ${S.error ? `<p class="error">${esc(S.error)}</p>${!S.renders.length && !S.busy ? '<div class="foot"><button class="btn gold" data-act="retry">Try again</button></div>' : ''}` : ''}
       ${tweak}
       ${!S.busy && S.renders.length ? `<p class="fine">${esc(r.disclaimer)}</p>` : ''}
       ${testNote}
       ${tryOnView()}
+      ${productsView()}
       ${!S.test && S.lead && !S.busy && S.renders.length ? '<p class="fine restart"><button type="button" class="link" data-act="restart">Start a new design</button></p>' : ''}
       ${dev}
     </section>`;
+}
+
+// Preporuke iz radnje zlatara ispod rendera: prvo proizvodi za komad kupca, pa oni za sve komade (do 6).
+function productsView() {
+  if (S.busy && !S.productsPreview) return '';
+  const all = S.cfg.products || [];
+  const mine = all.filter((x) => x.pieces?.includes(S.a.type));
+  const list = [...mine, ...all.filter((x) => !x.pieces?.length)].slice(0, 6);
+  if (!list.length) return '';
+  const card = (x) => {
+    const inner = `${x.image ? `<img src="${esc(x.image)}" alt="" loading="lazy" />` : `<span class="noimg">${icon('gem')}</span>`}<span class="pinfo"><b>${esc(x.name)}</b>${x.price ? `<span class="price">${esc(x.price)}</span>` : ''}${x.description ? `<small>${esc(x.description)}</small>` : ''}${x.url ? '<span class="plink">View in shop</span>' : ''}</span>`;
+    return x.url ? `<a class="pcard" href="${esc(x.url)}" target="_blank" rel="noopener">${inner}</a>` : `<div class="pcard">${inner}</div>`;
+  };
+  return `<div class="products"><h2>${esc(S.cfg.result?.productsTitle || 'Recommended from our shop')}</h2><div class="pgrid">${list.map(card).join('')}</div></div>`;
 }
 
 function devView() {
@@ -581,6 +608,8 @@ function bind() {
       for (const f of cur().fields) if (!visible(f)) delete S.a[f.id];
       // Promjena tipa poništava stil (opcije stila zavise od tipa)
       if (changed) for (const st of S.cfg.steps) for (const f of st.fields) if (f.optionsFrom?.field === b.dataset.pick) delete S.a[f.id];
+      // Novi komad: odgovori koje taj komad ne nudi (metal, budžet...) se brišu.
+      if (changed && b.dataset.pick === 'type') for (const st of S.cfg.steps) for (const f of st.fields) if (f.perPiece && S.a[f.id] != null && !optionsOf(f).some((o) => o.value === S.a[f.id])) delete S.a[f.id];
       if (changed && b.dataset.pick === 'style') for (const st of S.cfg.steps) for (const f of st.fields) if (f.type === 'teeth') delete S.a[f.id];
       applyPresetTeeth(S.cfg, S.a);
       S.focusKey = `[data-pick="${CSS.escape(b.dataset.pick)}"][data-val="${CSS.escape(b.dataset.val)}"]`;

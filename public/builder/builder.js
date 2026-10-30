@@ -52,7 +52,7 @@ const PRESETS = {
   Rose: { accent: '#e7a9a0', 'accent-ink': '#2a1210', bg: '#0d0a0a', surface: '#171112', 'surface-2': '#201819', line: '#302526', 'line-strong': '#4d3c3d', ink: '#f6eeec', 'ink-soft': '#b3a2a0', 'ink-faint': '#93807e' },
   Light: { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#6f675b' },
 };
-const TABS = [['client', 'Client'], ['brand', 'Brand'], ['pieces', 'Pieces & styles'], ['questions', 'Questions'], ['texts', 'Texts'], ['embed', 'Embed'], ['history', 'History'], ['json', 'JSON']];
+const TABS = [['client', 'Client'], ['brand', 'Brand'], ['pieces', 'Pieces & styles'], ['questions', 'Questions'], ['products', 'Shop products'], ['texts', 'Texts'], ['embed', 'Embed'], ['history', 'History'], ['json', 'JSON']];
 const FIELD_TYPES = [['chips', 'Choice (chips)'], ['cards', 'Choice (big cards)'], ['yesno', 'Yes / No'], ['dropdown', 'Dropdown'], ['text', 'Short text'], ['textarea', 'Long text'], ['upload', 'Photo upload'], ['teeth', 'Teeth picker (grillz)']];
 
 const app = document.getElementById('app');
@@ -361,21 +361,33 @@ async function reviewOnboarding(obid) {
   const d = ob.data || {};
   const s = d.store || {};
   const kept = (p) => (p.styles || []).filter((x) => x.keep !== false && x.label);
+  const materialName = (value) => [...(d.customMetals || []), ...(d.customStones || [])].find((x) => x.value === value)?.label || nice(value);
+  // Novi onboarding ima materijale, budžet i detalje po komadu; stariji samo zajedničke liste ispod.
+  const perPiece = (d.pieces || []).some((p) => Array.isArray(p.metals));
+  const pieceLines = (p) => !Array.isArray(p.metals) ? '' : `<dl class="obr-list">
+      <dt>Metals</dt><dd>${esc(p.metals.map(materialName).join(', ') || 'Not asked')}${p.karats?.length ? ` · ${esc(p.karats.join(', '))}` : ''}</dd>
+      <dt>Stones</dt><dd>${esc((p.stones || []).map(materialName).join(', ') || 'Not asked')}</dd>
+      <dt>Budgets</dt><dd>${esc((p.budgets || []).filter(Boolean).join(' · ') || 'Not asked')}</dd>
+      ${Object.entries(p.specs || {}).length ? `<dt>Details</dt><dd>${esc(Object.entries(p.specs).map(([k, v]) => `${nice(k)}: ${v.length ? v.length : 'off'}`).join(', '))}</dd>` : ''}
+      ${(p.questions || []).some((q) => q.label) ? `<dt>Own questions</dt><dd>${esc(p.questions.filter((q) => q.label).map((q) => q.options ? `${q.label} (${q.options})` : q.label).join(' · '))}</dd>` : ''}
+    </dl>`;
   const pieces = (d.pieces || []).map((p) => `
     <div class="obr-piece"><b>${esc(p.label)}</b>
-      <div class="obr-styles">${kept(p).map((x) => `<figure>${x.image ? `<img src="${esc(x.image)}" alt="" />` : '<span></span>'}<figcaption>${esc(x.label)}</figcaption></figure>`).join('') || '<p class="hint">No styles: customers describe their idea.</p>'}</div></div>`).join('');
+      <div class="obr-styles">${kept(p).map((x) => `<figure>${x.image ? `<img src="${esc(x.image)}" alt="" />` : '<span></span>'}<figcaption>${esc(x.label)}</figcaption></figure>`).join('') || '<p class="hint">No styles: customers describe their idea.</p>'}</div>
+      ${pieceLines(p)}</div>`).join('');
+  const products = (d.products || []).filter((x) => x.name);
   const dlg = document.createElement('dialog');
   dlg.className = 'obr';
-  const materialName = (value) => [...(d.customMetals || []), ...(d.customStones || [])].find((x) => x.value === value)?.label || nice(value);
   dlg.innerHTML = `
     <h2>${esc(ob.name || 'Onboarding')}</h2>
     <p class="lead">${ob.status === 'submitted' ? `Sent ${esc(day(ob.submitted_at))}.` : ob.status === 'done' ? 'A form was already created from this onboarding.' : 'Still in progress (not sent yet).'}</p>
     <div class="obr-store">${s.logo ? `<img src="${esc(s.logo)}" alt="" />` : ''}<div><b>${esc(s.name || '')}</b><small>${esc(s.website || '')} · ${s.theme === 'light' ? 'Light' : 'Dark'} look <i style="background:${esc(s.accent || '#35d0c4')}"></i></small></div></div>
     ${pieces}
     <dl class="obr-list">
-      <dt>Metals</dt><dd>${esc([...(d.metals || []).map(materialName), ...String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)].join(', ') || 'All')}</dd>
+      ${perPiece ? '' : `<dt>Metals</dt><dd>${esc([...(d.metals || []).map(materialName), ...String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)].join(', ') || 'All')}</dd>
       <dt>Stones</dt><dd>${esc((d.stones || []).map(materialName).join(', ') || 'All')}</dd>
-      <dt>Budgets</dt><dd>${esc((d.budgets || []).filter(Boolean).join(' · '))}</dd>
+      <dt>Budgets</dt><dd>${esc((d.budgets || []).filter(Boolean).join(' · '))}</dd>`}
+      ${products.length ? `<dt>Shop products</dt><dd>${products.map((x) => `${esc(x.name)}${x.price ? ` (${esc(x.price)})` : ''}`).join(', ')}</dd>` : ''}
       ${d.questions ? `<dt>Questions</dt><dd>${esc(d.questions)}</dd>` : ''}
       ${d.notes ? `<dt>Notes</dt><dd>${esc(d.notes)}</dd>` : ''}
     </dl>
@@ -590,7 +602,7 @@ function renderPbar() {
 function renderPane() {
   const pane = document.getElementById('pane');
   const top = pane.scrollTop;
-  const views = { client: clientView, brand: brandView, pieces: piecesView, questions: questionsView, texts: textsView, embed: embedView, history: historyView, json: jsonView };
+  const views = { client: clientView, brand: brandView, pieces: piecesView, questions: questionsView, products: productsView, texts: textsView, embed: embedView, history: historyView, json: jsonView };
   pane.innerHTML = (views[B.tab] || brandView)();
   pane.scrollTop = top;
   renderPbar();
@@ -823,7 +835,8 @@ function piecesView() {
       <p class="hint" style="margin:-6px 0 12px">Customers pick one of these. The picture also guides the AI's shape, so photos of the jeweler's own pieces work best. "Something else" is added automatically.</p>
       <div class="styles">${cards}</div>
       <button class="btn small" style="margin-top:12px" data-act="add-style">+ Add style</button>
-      ${(() => { const si = styleStepIndex(); const sj = si >= 0 ? B.draft.steps[si].fields.findIndex((f) => f.optionsFrom?.styles) : -1; return sj >= 0 ? `<div class="toggles" style="margin-top:14px">${otherToggle(si, sj)}</div>` : ''; })()}`;
+      ${(() => { const si = styleStepIndex(); const sj = si >= 0 ? B.draft.steps[si].fields.findIndex((f) => f.optionsFrom?.styles) : -1; return sj >= 0 ? `<div class="toggles" style="margin-top:14px">${otherToggle(si, sj)}</div>` : ''; })()}
+      ${perPieceView(o)}`;
   }
   const single = opts.length === 1 ? `<p class="note">One piece only, so the piece step is ${loc.step.enabled === false ? 'hidden and the piece is picked automatically' : 'shown'}. Turn it on or off in Questions.</p>` : '';
   return `
@@ -833,6 +846,78 @@ function piecesView() {
     <div class="pieces">${list}</div>
     <button class="btn small" style="margin-top:10px" data-act="add-piece">+ Add piece</button>
     ${editor}`;
+}
+
+// Svaki komad za sebe: koje opcije zajedničkih pitanja nudi (perPiece) i pitanja samo za njega (showIf na komadu).
+function perPieceView(o) {
+  const pv = o.value;
+  const shared = [];
+  const own = [];
+  B.draft.steps.forEach((s, si) => s.fields.forEach((f, fj) => {
+    if (f.showIf?.field === 'type') { if ((f.showIf.in || []).includes(pv)) own.push({ si, s, f }); return; }
+    if (f.id !== 'type' && !f.optionsFrom && CHOICE.includes(f.type) && f.options?.length) shared.push({ si, fj, f, s });
+  }));
+  const rows = shared.map(({ si, fj, f, s }) => {
+    const allow = f.perPiece?.[pv];
+    const limited = Array.isArray(allow);
+    return `
+      <div class="pp ${limited && !allow.length ? 'is-off' : ''}">
+        <div class="pp-head"><b>${esc(f.label || s.label || s.title || f.id)}</b><small>${limited ? (allow.length ? `${allow.length} of ${f.options.length} for this piece` : 'Not asked for this piece') : 'All options'}</small></div>
+        <div class="cond-vals">${f.options.map((op) => `<label class="check"><input type="checkbox" data-pp="steps.${si}.fields.${fj}" data-piece="${esc(pv)}" value="${esc(op.value)}" ${!limited || allow.includes(op.value) ? 'checked' : ''} /> ${esc(op.label)}</label>`).join('')}</div>
+      </div>`;
+  }).join('');
+  const ownRows = own.map(({ si, s, f }) => `
+    <div class="pp-q"><span class="grow"><b>${esc(f.label || s.title || f.id)}</b><small>${esc(FIELD_TYPES.find(([v]) => v === f.type)?.[1] || f.type)} · step "${esc(s.label || s.title)}"${f.showIf.in.length > 1 ? ' · also for other pieces' : ''}${f.enabled === false ? ' · off' : ''}</small></span>
+      <button class="btn small" data-act="edit-field" data-i="${si}" data-fid="${esc(f.id)}">Edit</button></div>`).join('');
+  return `
+    <h3>Options for ${esc(o.label)}</h3>
+    <p class="hint" style="margin:-6px 0 12px">Tick what this piece offers. Customers who pick ${esc(o.label.toLowerCase())} see only these; untick everything and the question is skipped for it.</p>
+    ${rows || '<p class="note">This form has no shared choice questions.</p>'}
+    <h3>Questions only for ${esc(o.label)}</h3>
+    <p class="hint" style="margin:-6px 0 12px">Asked only when a customer picks this piece, e.g. chain length or ring size.</p>
+    ${ownRows || '<p class="note">None yet.</p>'}
+    <button class="btn small" data-act="add-piece-question" data-v="${esc(pv)}">+ Add question for ${esc(o.label)}</button>`;
+}
+
+// Proizvodi iz radnje zlatara: kupac ih vidi ispod AI pregleda, prvo one za svoj komad (do 6).
+function productsView() {
+  const list = B.draft.products || [];
+  const pieces = typeLoc()?.field.options || [];
+  const cards = list.map((x, k) => {
+    const p = `products.${k}`;
+    return `
+      <div class="card prod">
+        <div class="prod-row">
+          <div class="prod-img"><span class="pick-row">${imgPick(`${p}.image`, { size: 'prod', empty: 'Add photo' })}</span></div>
+          <div class="grow">
+            <div class="row">${inp(`${p}.name`, 'Name')}${inp(`${p}.price`, 'Price', { ph: '$1,250' })}</div>
+            ${inp(`${p}.url`, 'Link to the product in the shop', { ph: 'https://yourstore.com/products/...', type: 'url' })}
+            ${area(`${p}.description`, 'Short description', { ph: 'e.g. 14K yellow gold, 8 mm, lifetime warranty' })}
+            ${pieces.length > 1 ? `<div class="f"><span>Recommend with</span><div class="cond-vals">${pieces.map((o) => `<label class="check"><input type="checkbox" data-prod-piece="${k}" value="${esc(o.value)}" ${(x.pieces || []).includes(o.value) ? 'checked' : ''} /> ${esc(o.label)}</label>`).join('')}</div><p class="hint">${x.pieces?.length ? 'Shown only to customers who design one of these.' : 'Nothing ticked: shown with every piece.'}</p></div>` : ''}
+          </div>
+        </div>
+        <div class="tools"><span><button class="icon-btn" title="Move up" data-act="move" data-path="products" data-i="${k}" data-d="-1">↑</button><button class="icon-btn" title="Move down" data-act="move" data-path="products" data-i="${k}" data-d="1">↓</button></span>
+          <button class="icon-btn danger" title="Remove product" data-act="del" data-path="products" data-i="${k}" data-confirm="Remove this product?">✕</button></div>
+      </div>`;
+  }).join('');
+  return `
+    <h2>Shop products</h2>
+    <p class="lead">Products from the jeweler's online shop, shown under the customer's AI preview with the price and a link. Products tied to the customer's piece come first; up to 6 are shown.</p>
+    ${inp('result.productsTitle', 'Title above the products', { ph: 'Recommended from our shop' })}
+    ${cards || '<p class="note">No products yet. The section stays hidden until you add one.</p>'}
+    ${list.length < 24 ? '<button class="btn small" data-act="add-product">+ Add product</button>' : ''}`;
+}
+
+// Prije čuvanja: opcije po komadu i proizvodi pokazuju samo na komade i opcije koji još postoje.
+function tidyDraft() {
+  const pieces = new Set((typeLoc()?.field.options || []).map((o) => o.value));
+  for (const s of B.draft.steps) for (const f of s.fields) {
+    if (!f.perPiece) continue;
+    const vals = new Set((f.options || []).map((o) => o.value));
+    for (const [pc, list] of Object.entries(f.perPiece)) { if (!pieces.has(pc) || !Array.isArray(list)) delete f.perPiece[pc]; else f.perPiece[pc] = list.filter((v) => vals.has(v)); }
+    if (!Object.keys(f.perPiece).length || !CHOICE.includes(f.type)) delete f.perPiece;
+  }
+  for (const x of B.draft.products || []) if (x.pieces) x.pieces = x.pieces.filter((v) => pieces.has(v));
 }
 
 // "Something else" na kraju liste stilova: kupac opisuje svoj stil. Uključeno dok se ne isključi.
@@ -1072,6 +1157,21 @@ app.addEventListener('change', async (e) => {
     if (el.checked) set.add(el.value); else set.delete(el.value);
     f.showIf[k] = [...set];
     changed();
+  } else if (el.dataset.pp) {
+    // Opcije pitanja za jedan komad: sve štiklirano = bez ograničenja, ništa = pitanje se za taj komad preskače.
+    const f = getP(el.dataset.pp);
+    const pv = el.dataset.piece;
+    const list = [...el.closest('.cond-vals').querySelectorAll('input')].filter((x) => x.checked).map((x) => x.value);
+    f.perPiece = { ...(f.perPiece || {}) };
+    if (list.length === f.options.length) delete f.perPiece[pv]; else f.perPiece[pv] = list;
+    if (!Object.keys(f.perPiece).length) delete f.perPiece;
+    changed(true);
+  } else if (el.dataset.prodPiece !== undefined) {
+    const x = B.draft.products[+el.dataset.prodPiece];
+    const set = new Set(x.pieces || []);
+    if (el.checked) set.add(el.value); else set.delete(el.value);
+    x.pieces = [...set];
+    changed(true);
   } else if (el.dataset.upload) {
     await upload(el);
   }
@@ -1118,7 +1218,40 @@ app.addEventListener('click', async (e) => {
   const act = el.dataset.act;
   if (el.closest('summary') && el.tagName === 'BUTTON') e.preventDefault();
   const i = +el.dataset.i;
-  if (act === 'tab') { B.tab = el.dataset.tab; store.set('aik_builder_tab', B.tab); renderTabs(); renderPane(); }
+  if (act === 'tab') { B.tab = el.dataset.tab; store.set('aik_builder_tab', B.tab); renderTabs(); renderPane(); if (B.tab === 'products') pushPreview('products'); }
+  if (act === 'edit-field') { B.tab = 'questions'; store.set('aik_builder_tab', B.tab); B.open.add(i); renderTabs(); renderPane(); revealLeft(i, el.dataset.fid); previewTo(i, el.dataset.fid); }
+  if (act === 'add-piece-question') {
+    const pv = el.dataset.v;
+    const o = typeLoc().field.options.find((x) => x.value === pv);
+    const name = await askText(`New question for ${o.label}`, { placeholder: 'e.g. Chain length' });
+    if (!name?.trim()) return;
+    const field = { id: uniq(key(`${pv} ${name}`), allFieldIds()), type: 'chips', label: name.trim().slice(0, 120), required: false, options: [{ value: 'option-1', label: 'Option 1' }], showIf: { field: 'type', in: [pv] } };
+    // Korak "<komad> details": postojeći (samo pitanja ovog komada) ili nov, poslije koraka sa materijalima.
+    let si = B.draft.steps.findIndex((s) => s.id.startsWith('d-') && s.fields.length < 10 && s.fields.every((f) => f.showIf?.field === 'type' && f.showIf.in?.length === 1 && f.showIf.in[0] === pv));
+    if (si < 0) {
+      if (B.draft.steps.length >= 24) return toast('A form can have up to 24 steps.');
+      const after = Math.max(...B.draft.steps.map((s, k) => (['type', 'style', 'teeth', 'design'].includes(s.id) || s.id.startsWith('d-') ? k : -1)));
+      si = after + 1;
+      B.draft.steps.splice(si, 0, { id: uniq(`d-${pv}`.slice(0, 40), new Set(B.draft.steps.map((s) => s.id))), label: 'Details', title: `${o.label} details`.slice(0, 120), subtitle: 'A few specifics so we get it just right.', fields: [] });
+      B.open = new Set();
+    }
+    B.draft.steps[si].fields.push(field);
+    B.open.add(si);
+    B.tab = 'questions';
+    store.set('aik_builder_tab', B.tab);
+    renderTabs();
+    changed(true);
+    revealLeft(si, field.id);
+    previewTo(si, field.id);
+  }
+  if (act === 'add-product') {
+    const name = await askText('New product', { placeholder: 'e.g. Miami Cuban chain 18"' });
+    if (!name?.trim()) return;
+    const list = (B.draft.products ||= []);
+    list.push({ id: uniq(slug(name), new Set(list.map((x) => x.id))), name: name.trim().slice(0, 80), image: '', pieces: [] });
+    changed(true);
+    pushPreview('products');
+  }
   if (act === 'save') save();
   if (act === 'image-library') openImageLibrary(el.dataset.path);
   if (act === 'pick-icon' && Object.hasOwn(ICONS, el.dataset.v)) {
@@ -1182,9 +1315,18 @@ app.addEventListener('click', async (e) => {
   if (act === 'del-piece') {
     const loc = typeLoc();
     if (loc.field.options.length < 2) return toast('A form needs at least one piece.');
-    if (!(await JLUI.confirm('Remove this piece and its styles?'))) return;
-    loc.field.options = loc.field.options.filter((o) => o.value !== el.dataset.v);
-    if (B.draft.styles) delete B.draft.styles[el.dataset.v];
+    if (!(await JLUI.confirm('Remove this piece, its styles and the questions only for it?'))) return;
+    const pv = el.dataset.v;
+    loc.field.options = loc.field.options.filter((o) => o.value !== pv);
+    if (B.draft.styles) delete B.draft.styles[pv];
+    // Pitanja samo za taj komad nestaju sa njim; prazan korak detalja takođe.
+    for (const s of B.draft.steps) {
+      s.fields = s.fields.filter((f) => !(f.showIf?.field === 'type' && f.showIf.in?.length === 1 && f.showIf.in[0] === pv));
+      for (const f of s.fields) if (f.showIf?.field === 'type' && f.showIf.in) f.showIf.in = f.showIf.in.filter((v) => v !== pv);
+    }
+    B.draft.steps = B.draft.steps.filter((s) => s.fields.length);
+    B.open = new Set();
+    tidyDraft();
     if (loc.field.options.length === 1) loc.field.default = loc.field.options[0].value;
     changed(true);
   }
@@ -1299,6 +1441,7 @@ async function save(opts = {}) {
   const btn = document.getElementById('save-btn');
   btn.disabled = true;
   setStatus('Saving…', '');
+  tidyDraft();
   // Snimak prije slanja: ono što se otkuca dok čuvanje traje ostaje "nesačuvano", ne gubi se tiho.
   const snap = JSON.stringify(B.draft);
   const id = B.id;
@@ -1465,7 +1608,8 @@ function schedulePreview() { clearTimeout(pt); pt = setTimeout(() => pushPreview
 // soft: skok iz Questions (sinhronizacija) ne mijenja kupčeve odgovore u pregledu, samo dopuni komad ako ga nema.
 function pushPreview(step, { soft = false, focus = null } = {}) {
   const frame = document.getElementById('frame');
-  const jump = typeof step === 'number' ? { step, answers: { type: B.piece || typeLoc()?.field.options[0]?.value }, soft, focus } : {};
+  const type = B.piece || typeLoc()?.field.options[0]?.value;
+  const jump = step === 'products' ? { products: true, answers: { type } } : typeof step === 'number' ? { step, answers: { type }, soft, focus } : {};
   frame?.contentWindow?.postMessage({ type: 'aik:preview', form: B.draft, admin: true, ...jump }, location.origin);
 }
 

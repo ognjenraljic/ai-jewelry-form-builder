@@ -30,14 +30,19 @@ export function withStyleTeeth(form) {
 }
 
 // Opcije polja: obične, ili stilovi izabranog tipa (+ "Something else") za polje sa optionsFrom.styles.
+// perPiece: { komad: [vrijednosti] } suzi opcije za izabrani komad (npr. grillz bez platine); prazna lista = pitanje se za taj komad ne postavlja.
 export function optionsOf(field, a, form) {
   if (field.optionsFrom?.styles) {
     const list = (form.styles?.[a[field.optionsFrom.field]] || []).map(({ value, label, image }) => ({ value, label, image }));
     // "Something else" je uključen dok ga zlatar ne isključi (other: false na pitanju stila).
     return field.other === false ? list : [...list, OTHER_STYLE];
   }
-  return field.options;
+  // Redoslijed je redoslijed komada (npr. njegovi rasponi budžeta od najmanjeg).
+  const allow = field.perPiece?.[a.type];
+  return Array.isArray(allow) && field.options ? allow.map((v) => field.options.find((o) => o.value === v)).filter(Boolean) : field.options;
 }
+// Pitanje koje za izabrani komad nema nijednu opciju se preskače.
+export const offeredFor = (field, a) => !Array.isArray(field.perPiece?.[a.type]) || field.perPiece[a.type].length > 0;
 
 // Koraci i polja koja su uključena (isključeni se ne prikazuju i ne idu u lead ni AI).
 export const enabledSteps = (form) => (form.steps || []).filter((s) => s.enabled !== false);
@@ -109,6 +114,7 @@ const texts = (brand) => ({
     loading: ['Sketching your piece', 'Choosing the metal', 'Setting the stones', 'Polishing the details', 'Adjusting the light'],
     done: 'Our team will reach out within 24 hours with a quote.',
     disclaimer: 'AI concept preview. Your final piece is handcrafted and may differ in detail.',
+    productsTitle: 'Recommended from our shop',
   },
 });
 const base = (brand) => ({ brand: { name: brand }, theme: { ...THEME }, maxRenders: 4, background: 'deep charcoal black', ...texts(brand) });
@@ -256,7 +262,7 @@ export const FORMS = { demo: { ...fromTemplate('custom-enquiry', { id: 'demo', b
 
 export function publicForm(form) {
   // Sve što ide u browser. Opis oblika (shape) i napomene za AI (note) nisu za kupca.
-  const { id, brand, theme, maxRenders, contact, result, tryOn } = form;
+  const { id, brand, theme, maxRenders, contact, result, tryOn, products } = form;
   const steps = (form.steps || []).map((s) => ({
     ...s,
     fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => o) } : f)),
@@ -265,7 +271,7 @@ export function publicForm(form) {
     const teeth = t === 'grillz' ? styleOf(form, { type: t, style: value })?.teeth : null;
     return { value, label, image, ...(teeth ? { teeth } : {}) };
   })]));
-  return { id, brand, theme, maxRenders, steps, styles, contact, result, tryOn };
+  return { id, brand, theme, maxRenders, steps, styles, contact, result, tryOn, ...(products?.length ? { products } : {}) };
 }
 
 // ---------- Provjera definicije forme (builder čuva samo ono što prođe ovo) ----------
@@ -304,9 +310,11 @@ export function validateFormDef(f, id) {
   for (const [k, v] of Object.entries(f.theme || {})) if (!SLUG.test(k) || !HEX.test(v)) err(`Color ${k}: hex only (#rrggbb)`);
   if (!Number.isInteger(f.maxRenders) || f.maxRenders < 1 || f.maxRenders > 10) err('Previews per customer: 1 to 10');
 
-  if (!Array.isArray(f.steps) || !f.steps.length || f.steps.length > 12) err('Steps: 1 to 12');
+  // Do 24 koraka: forma iz onboardinga ima i korak detalja po komadu.
+  if (!Array.isArray(f.steps) || !f.steps.length || f.steps.length > 24) err('Steps: 1 to 24');
   const stepIds = new Set();
   const fieldIds = new Set();
+  const perPieceKeys = [];
   for (const s of f.steps) {
     if (!SLUG.test(s.id || '') || stepIds.has(s.id)) err(`Step "${s.id}": ID must be unique`);
     stepIds.add(s.id);
@@ -344,6 +352,15 @@ export function validateFormDef(f, id) {
           str(o.note, 300, `AI note (${o.value})`);
         }
         if (fl.default != null && !vals.has(fl.default)) err(`Question ${fl.id}: default must be one of its options`);
+        if (fl.perPiece != null) {
+          if (fl.id === 'type' || typeof fl.perPiece !== 'object' || Array.isArray(fl.perPiece)) err(`Question ${fl.id}: invalid options per piece`);
+          for (const [pc, list] of Object.entries(fl.perPiece)) {
+            if (!SLUG.test(pc) || !Array.isArray(list) || list.some((v) => !vals.has(v))) err(`Question ${fl.id}: options for ${pc} must be its own options`);
+            perPieceKeys.push([fl.id, pc]);
+          }
+        }
+      } else if (fl.perPiece != null) {
+        err(`Question ${fl.id}: options per piece only work on choice questions`);
       }
       if (fl.showIf) {
         const c = fl.showIf;
@@ -355,6 +372,24 @@ export function validateFormDef(f, id) {
   if (!typeField || typeField.type !== 'cards') err('The form needs a "type" question (piece choice) shown as cards');
   const typeStepOn = f.steps.find((s) => s.fields.includes(typeField)).enabled !== false;
   if (!typeStepOn && typeField.options.length !== 1) err('The piece step can only be turned off when there is exactly one piece');
+  const pieceVals = new Set(typeField.options.map((o) => o.value));
+  for (const [fid, pc] of perPieceKeys) if (!pieceVals.has(pc)) err(`Question ${fid}: piece "${pc}" is not in this form`);
+
+  // Proizvodi iz radnje: prikazuju se ispod rendera (filtrirani po komadu kupca).
+  if (f.products != null) {
+    if (!Array.isArray(f.products) || f.products.length > 24) err('Shop products: up to 24');
+    const ids = new Set();
+    for (const pr of f.products) {
+      if (!pr || typeof pr !== 'object' || !SLUG.test(pr.id || '') || ids.has(pr.id)) err('Shop products: each needs a unique ID');
+      ids.add(pr.id);
+      str(pr.name, 80, 'Product name', true);
+      str(pr.price, 30, `Price of ${pr.name}`);
+      str(pr.description, 300, `Description of ${pr.name}`);
+      if (pr.url != null && pr.url !== '' && (typeof pr.url !== 'string' || pr.url.length > 500 || !/^https?:\/\/[^\s"'<>]+$/i.test(pr.url))) err(`Link of ${pr.name}: use the full shop address (https://...)`);
+      if (!imgOk(pr.image)) err(`Image of ${pr.name} must be uploaded here`);
+      if (pr.pieces != null && (!Array.isArray(pr.pieces) || pr.pieces.some((v) => !pieceVals.has(v)))) err(`Product ${pr.name}: pieces must be pieces of this form`);
+    }
+  }
 
   for (const [t, list] of Object.entries(f.styles || {})) {
     if (!SLUG.test(t) || !Array.isArray(list) || list.length > 16) err(`Styles for ${t}: at most 16`);
@@ -377,22 +412,63 @@ export function validateFormDef(f, id) {
   f.result.loading.forEach((m) => str(m, 60, 'Rendering message', true));
   str(f.result.done, 200, 'Message under the render', true);
   str(f.result.disclaimer, 240, 'Disclaimer', true);
+  str(f.result.productsTitle, 80, 'Shop products title');
   return true;
 }
 
 // ---------- Onboarding klijenta ----------
 
-// Šta zlatar vidi u vodiču: komadi, početni stilovi sa slikama, metali, kamenje i rasponi budžeta.
+// Specifikacije po komadu: zlatar ih u onboardingu uključi i suzi za svaki komad posebno, kupac ih vidi samo za svoj komad.
+// note ide AI-ju kad je opcija izabrana; ai: false = samo za zlatara (veličina prstena, kalupi).
+const spec = (id, label, options, extra = {}) => ({ id, label, options, ...extra });
+const sized = (list, note) => list.map((v) => opt(slugOf(v), v, { note: note(v) }));
+export const PIECE_SPECS = {
+  ring: [
+    spec('center_shape', 'Center stone shape', ['Round', 'Oval', 'Princess', 'Emerald', 'Pear', 'Cushion', 'Marquise', 'Radiant'].map((v) => opt(v.toLowerCase(), v, { note: `${v.toLowerCase()} cut center stone` }))),
+    spec('carat', 'Center stone size', [['0.5', 'small'], ['1', 'medium'], ['1.5', 'generous'], ['2', 'large'], ['3+', 'very large']].map(([c, size]) => opt(`${slugOf(c)}ct`, `${c} ct`, { note: `${size} center stone of about ${c.replace('+', '')} carat` }))),
+    spec('band', 'Band', [opt('plain', 'Plain', { note: 'plain polished band' }), opt('pave', 'Pavé', { note: 'pavé band with small stones along the top' }), opt('split', 'Split shank', { note: 'split shank band' })]),
+    spec('ring_size', 'Ring size', ['4', '5', '6', '7', '8', '9', '10', '11', '12+'].map((v) => opt(slugOf(v), v)), { ai: false, on: false }),
+  ],
+  grillz: [
+    spec('grill_cut', 'Cut', [opt('solid', 'Solid'), opt('open-face', 'Open face', { note: 'open face grill: only the outline of each tooth is covered, the center of each tooth is open' }), opt('diamond-cut', 'Diamond cut', { note: 'diamond-cut metal: faceted, sparkling engraved surface' })]),
+    spec('mold', 'Do you already have dental molds?', structuredClone(YES_NO), { type: 'yesno', ai: false }),
+  ],
+  chain: [
+    spec('length', 'Length', sized(['16"', '18"', '20"', '22"', '24"', '26"', '30"'], (v) => `chain length about ${parseFloat(v)} inches`)),
+    spec('width', 'Width', sized(['3 mm', '5 mm', '8 mm', '10 mm', '12 mm+'], (v) => `links about ${parseFloat(v)} mm wide`)),
+  ],
+  bracelet: [
+    spec('length', 'Wrist size', sized(['6.5"', '7"', '7.5"', '8"', '8.5"'], (v) => `bracelet length about ${parseFloat(v)} inches`), { ai: false }),
+    spec('width', 'Width', sized(['3 mm', '5 mm', '8 mm', '10 mm', '12 mm+'], (v) => `links about ${parseFloat(v)} mm wide`)),
+  ],
+  pendant: [
+    spec('size', 'Size', sized(['1"', '1.5"', '2"', '2.5"', '3"+'], (v) => `pendant about ${parseFloat(v)} inches tall`)),
+    spec('chain', 'Add a matching chain?', structuredClone(YES_NO), { type: 'yesno', ai: false, on: false }),
+  ],
+  earrings: [
+    spec('size', 'Size', [opt('small', 'Small', { note: 'small, delicate earrings' }), opt('medium', 'Medium', { note: 'medium size earrings' }), opt('statement', 'Statement', { note: 'large statement earrings' })]),
+    spec('backs', 'Backs', [opt('push', 'Push back'), opt('screw', 'Screw back'), opt('huggie', 'Hinged huggie')], { ai: false, on: false }),
+  ],
+  watch: [
+    spec('band', 'Band', [opt('bracelet', 'Metal bracelet', { note: 'metal link bracelet band' }), opt('leather', 'Leather strap', { note: 'leather strap' }), opt('rubber', 'Rubber strap', { note: 'rubber strap' })]),
+    spec('case_size', 'Case size', sized(['36 mm', '40 mm', '42 mm', '44 mm+'], (v) => `watch case about ${parseFloat(v)} mm`)),
+  ],
+};
+const KARATS = ['10K', '14K', '18K', '925 Silver'];
+
+// Šta zlatar vidi u vodiču: komadi, početni stilovi sa slikama, metali, kamenje, rasponi budžeta i specifikacije po komadu.
 export const ONBOARDING_DEFAULTS = {
   pieces: PIECES.map(({ value, label, icon }) => ({ value, label, icon, image: value === 'chain' ? '/site/gallery/chain-category-v2.webp' : DEFAULT_STYLES[value]?.[0]?.image || '' })),
   styles: Object.fromEntries(Object.entries(DEFAULT_STYLES).map(([k, list]) => [k, list.map(({ value, label, image }) => ({ value, label, image }))])),
   metals: METALS.map(({ value, label, swatch }) => ({ value, label, swatch })),
+  karats: KARATS,
   stones: [opt('moissanite', 'Moissanite'), opt('lab', 'Lab-grown diamonds'), opt('natural', 'Natural diamonds'), opt('none', 'No stones')],
   budgets: BUDGETS.map((b) => b.label),
+  specs: Object.fromEntries(Object.entries(PIECE_SPECS).map(([k, list]) => [k, list.map(({ id, label, options, on }) => ({ id, label, on: on !== false, options: options.map(({ value, label }) => ({ value, label })) }))])),
 };
 
 const LIGHT_THEME = { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#6f675b' };
-const slugOf = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36) || 'item';
+function slugOf(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36) || 'item'; }
 const uniqOf = (base, taken) => { let v = base; for (let i = 2; taken.has(v); i++) v = `${base}-${i}`; taken.add(v); return v; };
 // Tekst na boji: taman ili svijetao, po svjetlini boje.
 const inkOn = (hex) => {
@@ -401,29 +477,36 @@ const inkOn = (hex) => {
   return l > 0.6 ? '#111111' : '#ffffff';
 };
 
-// Forma iz poslatog onboardinga: Custom Enquiry suženo na komade, stilove, metale, kamenje i budžete koje je zlatar izabrao.
+// Komadi iz onboardinga koji ulaze u formu (isti filter i redoslijed koristi pregled u portalu).
+export const onboardingPieces = (d) => (Array.isArray(d?.pieces) ? d.pieces : []).filter((p) => p && String(p.label || '').trim()).slice(0, 12);
+
+// Forma iz poslatog onboardinga: Custom Enquiry suženo na komade koje je zlatar izabrao, a za svaki komad
+// njegovi stilovi, metali, karati, kamenje, budžet, specifikacije i pitanja. Stariji onboarding (metali, kamenje
+// i budžet za sve komade zajedno) radi i dalje: komad bez svojih lista uzima zajedničke.
 // img(url) pretvara sliku iz onboardinga u sliku forme (worker je prije toga kopira u R2), ili vrati '' ako slika ne važi.
 export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => u }) {
   const form = fromTemplate('custom-enquiry', { id, brand, clientId, logo, name: `${brand} · Custom form` });
   const typeStep = form.steps.find((s) => s.id === 'type');
   const typeField = typeStep.fields.find((f) => f.id === 'type');
   const known = Object.fromEntries(typeField.options.map((o) => [o.value, o]));
-  const pieces = (Array.isArray(d.pieces) ? d.pieces : []).filter((p) => p && String(p.label || '').trim()).slice(0, 12);
+  const pieces = onboardingPieces(d);
   if (!pieces.length) throw new Error('The onboarding has no pieces yet.');
 
   const taken = new Set();
   const options = [];
   const styles = {};
+  const pv = new Map(); // uid komada iz onboardinga -> vrijednost komada u formi
   for (const p of pieces) {
     const label = String(p.label).trim().slice(0, 60);
     const base = known[p.value];
     const value = base && !taken.has(base.value) ? uniqOf(base.value, taken) : uniqOf(slugOf(label), taken);
+    if (p.uid) pv.set(p.uid, value);
     options.push(base ? { ...base, value, label } : opt(value, label, { icon: 'gem', subject: `a custom ${label.toLowerCase()}` }));
     const lib = DEFAULT_STYLES[p.value] || [];
     const st = new Set(['other']);
     styles[value] = (Array.isArray(p.styles) ? p.styles : [])
       .filter((s) => s && s.keep !== false && String(s.label || '').trim())
-      .slice(0, 24)
+      .slice(0, 16)
       .map((s) => {
         const shape = String(s.note || '').trim().slice(0, 300) || lib.find((x) => x.value === s.value)?.shape || '';
         const teeth = p.value === 'grillz' ? lib.find(x => x.value === s.value)?.teeth : null;
@@ -434,36 +517,122 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
   if (options.length === 1) { typeField.default = options[0].value; typeStep.enabled = false; }
   form.styles = styles;
   if (!options.some((o) => o.value === 'grillz')) form.steps = form.steps.filter((s) => s.id !== 'teeth');
+  const valueOf = (p, i) => options[i].value;
 
   const design = form.steps.find((s) => s.id === 'design');
   const field = (fid) => design?.fields.find((f) => f.id === fid);
-  // Metali: izabrani iz liste + vlastiti (npr. "Black gold"); bez izbora ostaju svi.
-  const metals = Array.isArray(d.metals) ? d.metals : [];
+  const listOf = (p, k) => (Array.isArray(p[k]) ? p[k] : Array.isArray(d[k]) && d[k].length ? d[k] : null);
+  // Zajednička lista opcija (redom iz kataloga) + perPiece samo za komade koji ne nude sve.
+  // Metali, karati i kamenje idu redom iz kataloga; budžet (ownOrder) redom kojim ga je zlatar upisao.
+  const perPiece = (f, chosen, ownOrder = false) => {
+    const all = f.options.map((o) => o.value);
+    const pp = {};
+    pieces.forEach((p, i) => {
+      const set = new Set(chosen(p));
+      const mine = ownOrder ? [...set].filter((v) => all.includes(v)) : all.filter((v) => set.has(v));
+      if (mine.length !== all.length || (ownOrder && mine.some((v, k) => v !== all[k]))) pp[valueOf(p, i)] = mine;
+    });
+    if (Object.keys(pp).length) f.perPiece = pp; else delete f.perPiece;
+  };
+
+  // Metali: katalog + vlastiti (npr. "Black gold", sa bojom); komad bez izbora ne dobija pitanje o metalu.
   const extraMetals = String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 6);
-  const customMetals = (Array.isArray(d.customMetals) ? d.customMetals : []).filter((m) => metals.includes(m.value));
-  if (field('metal') && (metals.length || extraMetals.length || customMetals.length)) {
+  const customMetals = Array.isArray(d.customMetals) ? d.customMetals : [];
+  if (field('metal')) {
+    const chosen = new Set(pieces.flatMap((p) => listOf(p, 'metals') || []));
     const mt = new Set();
-    field('metal').options = [
-      ...field('metal').options.filter((o) => metals.includes(o.value)).map((o) => (mt.add(o.value), o)),
+    const map = new Map();
+    const opts = [
+      ...field('metal').options.filter((o) => chosen.has(o.value)).map((o) => (mt.add(o.value), map.set(o.value, o.value), o)),
       ...extraMetals.map((m) => opt(uniqOf(slugOf(m), mt), m.slice(0, 40))),
-      ...customMetals.map((m) => opt(uniqOf(slugOf(m.label), mt), String(m.label).slice(0, 40), { swatch: /^#[0-9a-f]{6}$/i.test(m.swatch || '') ? m.swatch : '#c0c4c8' })),
+      ...customMetals.filter((m) => chosen.has(m.value)).map((m) => { const o = opt(uniqOf(slugOf(m.label), mt), String(m.label).slice(0, 40), { swatch: /^#[0-9a-f]{6}$/i.test(m.swatch || '') ? m.swatch : '#c0c4c8' }); map.set(m.value, o.value); return o; }),
     ];
+    const noLists = pieces.every((p) => !listOf(p, 'metals'));
+    if (opts.length) {
+      field('metal').options = opts;
+      const extra = opts.filter((o) => ![...map.values()].includes(o.value)).map((o) => o.value);
+      perPiece(field('metal'), (p) => [...(listOf(p, 'metals') || []).map((v) => map.get(v)).filter(Boolean), ...extra]);
+    } else if (!noLists) {
+      for (const f of design.fields) if (['metal', 'karat'].includes(f.id)) f.enabled = false;
+    }
   }
-  // Kamenje: samo izabrano; ako zlatar radi samo bez kamena, pitanja o kamenu se isključe.
-  const stones = Array.isArray(d.stones) ? d.stones : [];
-  const customStones = (Array.isArray(d.customStones) ? d.customStones : []).filter((s) => stones.includes(s.value));
-  if (field('stones') && stones.length) {
+  // Karati: samo kad ih je zlatar birao po komadu (stariji onboarding ih nema, pa ostaju svi).
+  if (field('karat') && pieces.some((p) => Array.isArray(p.karats))) perPiece(field('karat'), (p) => (Array.isArray(p.karats) ? p.karats : KARATS));
+
+  // Kamenje: samo izabrano; komad koji nudi samo "bez kamena" ne dobija pitanja o kamenu.
+  const customStones = Array.isArray(d.customStones) ? d.customStones : [];
+  if (field('stones')) {
+    const chosen = new Set(pieces.flatMap((p) => listOf(p, 'stones') || []));
     const st = new Set();
-    field('stones').options = [
-      ...field('stones').options.filter((o) => stones.includes(o.value)).map((o) => (st.add(o.value), o)),
-      ...customStones.map((s) => opt(uniqOf(slugOf(s.label), st), String(s.label).slice(0, 40))),
+    const map = new Map();
+    const opts = [
+      ...field('stones').options.filter((o) => chosen.has(o.value)).map((o) => (st.add(o.value), map.set(o.value, o.value), o)),
+      ...customStones.filter((s) => chosen.has(s.value)).map((s) => { const o = opt(uniqOf(slugOf(s.label), st), String(s.label).slice(0, 40)); map.set(s.value, o.value); return o; }),
     ];
-    if (stones.every((x) => x === 'none')) for (const f of design.fields) if (['stones', 'coverage', 'clarity'].includes(f.id)) f.enabled = false;
+    if (opts.length) {
+      field('stones').options = opts;
+      perPiece(field('stones'), (p) => {
+        const mine = (listOf(p, 'stones') || []).map((v) => map.get(v)).filter(Boolean);
+        return mine.every((v) => v === 'none') ? [] : mine;
+      });
+    }
+    if (!opts.length || [...chosen].every((x) => x === 'none')) for (const f of design.fields) if (['stones', 'coverage', 'clarity'].includes(f.id)) f.enabled = false;
   }
-  // Budžet: rasponi zlatara.
-  const budgets = (Array.isArray(d.budgets) ? d.budgets : []).map((b) => String(b || '').trim().slice(0, 40)).filter(Boolean).slice(0, 10);
+
+  // Budžet: rasponi po komadu (grillz i lanac imaju različite cijene); isti natpis = ista opcija.
   const bf = form.steps.find((s) => s.id === 'budget')?.fields.find((f) => f.id === 'budget');
-  if (bf && budgets.length) { const bt = new Set(); bf.options = budgets.map((b) => opt(uniqOf(slugOf(b), bt), b)); }
+  const budgetsOf = (p) => (listOf(p, 'budgets') || []).map((b) => String(b || '').trim().slice(0, 40)).filter(Boolean).slice(0, 10);
+  const labels = [...new Set(pieces.flatMap(budgetsOf))].slice(0, 40);
+  if (bf && labels.length) {
+    const bt = new Set();
+    bf.options = labels.map((b) => opt(uniqOf(slugOf(b), bt), b));
+    const byLabel = new Map(bf.options.map((o) => [o.label, o.value]));
+    perPiece(bf, (p) => budgetsOf(p).map((b) => byLabel.get(b)).filter(Boolean), true);
+  }
+
+  // Detalji po komadu: poseban korak za svaki komad (dužina lanca, centralni kamen, rez grillza, pitanja zlatara).
+  const stepIds = new Set(form.steps.map((s) => s.id));
+  const fieldIds = new Set(form.steps.flatMap((s) => s.fields.map((f) => f.id)));
+  const details = [];
+  pieces.forEach((p, i) => {
+    const value = valueOf(p, i);
+    const showIf = { field: 'type', in: [value] };
+    const fields = [];
+    for (const sp of PIECE_SPECS[p.value] || []) {
+      const picked = p.specs && typeof p.specs === 'object' && Array.isArray(p.specs[sp.id]) ? p.specs[sp.id] : sp.on === false ? [] : sp.options.map((o) => o.value);
+      const opts = sp.options.filter((o) => picked.includes(o.value));
+      if (!opts.length) continue;
+      fields.push({ id: uniqOf(`${value}_${sp.id}`.replace(/-/g, '_').slice(0, 40), fieldIds), type: sp.type || 'chips', label: sp.label, required: false, ...(sp.ai === false ? { ai: false } : {}), options: structuredClone(opts), showIf });
+    }
+    for (const q of (Array.isArray(p.questions) ? p.questions : []).slice(0, 6)) {
+      const label = String(q?.label || '').trim().slice(0, 120);
+      if (!label) continue;
+      const qt = new Set();
+      const opts = String(q.options || '').split(',').map((x) => x.trim().slice(0, 60)).filter(Boolean).slice(0, 20).map((x) => opt(uniqOf(slugOf(x), qt), x));
+      const fid = uniqOf(`${value}_${slugOf(label)}`.replace(/-/g, '_').slice(0, 40), fieldIds);
+      fields.push(opts.length ? { id: fid, type: 'chips', label, required: false, options: opts, showIf } : { id: fid, type: 'text', label, required: false, max: 200, showIf });
+    }
+    if (!fields.length) return;
+    const label = options[i].label;
+    details.push({ id: uniqOf(`d-${value}`.slice(0, 40), stepIds), label: 'Details', title: `${label} details`.slice(0, 120), subtitle: 'A few specifics so we get it just right.', fields: fields.slice(0, 10) });
+  });
+  if (details.length) form.steps.splice(form.steps.findIndex((s) => s.id === 'design') + 1, 0, ...details);
+
+  // Proizvodi iz radnje za preporuke ispod rendera; komadi su uid-ovi iz onboardinga (prazno = za sve komade).
+  const prodIds = new Set();
+  const products = (Array.isArray(d.products) ? d.products : []).filter((x) => x && String(x.name || '').trim()).slice(0, 24).map((x) => {
+    const url = String(x.url || '').trim();
+    return {
+      id: uniqOf(slugOf(x.name), prodIds),
+      name: String(x.name).trim().slice(0, 80),
+      ...(x.price ? { price: String(x.price).trim().slice(0, 30) } : {}),
+      ...(x.description ? { description: String(x.description).trim().slice(0, 300) } : {}),
+      ...(/^https?:\/\/[^\s"'<>]+$/i.test(url) ? { url: url.slice(0, 500) } : {}),
+      image: x.image ? img(x.image) : '',
+      pieces: (Array.isArray(x.pieces) ? x.pieces : []).map((u) => pv.get(u)).filter(Boolean),
+    };
+  });
+  if (products.length) form.products = products;
 
   // Izgled: svijetla ili tamna tema i boja brenda.
   const store = d.store || {};

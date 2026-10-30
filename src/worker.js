@@ -1,4 +1,4 @@
-import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
+import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
 import { buildPrompt, buildTweakPrompt } from './prompt.js';
 import { parseTeeth, teethSummary } from './teeth.js';
 import { buildTryOnPrompt } from './tryon.js';
@@ -941,7 +941,8 @@ async function adminOnboardings(request, env, p) {
       return `/media/${key}`;
     };
     const map = new Map();
-    for (const piece of d.pieces || []) for (const s of piece.styles || []) if (s?.image?.startsWith(prefix) && !map.has(s.image)) map.set(s.image, await copy(s.image, `forms/${id}`));
+    const images = [...(d.pieces || []).flatMap((piece) => (piece.styles || []).map((s) => s?.image)), ...(d.products || []).map((x) => x?.image)];
+    for (const u of images) if (u?.startsWith(prefix) && !map.has(u)) map.set(u, await copy(u, `forms/${id}`));
     const logo = d.store?.logo?.startsWith(prefix) ? await copy(d.store.logo, `clients/${client.id}`) : d.store?.logo?.startsWith('/media/clients/') ? d.store.logo : '';
     let form;
     try {
@@ -1147,14 +1148,26 @@ function cleanOnboarding(d, clientId) {
   const str = (v, max) => String(v ?? '').slice(0, max);
   const list = (v, n) => (Array.isArray(v) ? v.slice(0, n) : []);
   const st = d.store || {};
+  const vals = (v, n = 12) => list(v, n).map((x) => str(x, 40));
+  const stepKey = typeof d.step === 'string' && /^[a-z0-9:_-]{1,60}$/i.test(d.step) ? d.step : Math.max(0, Math.min(5, Number(d.step) || 0));
   return {
-    step: Math.max(0, Math.min(5, Number(d.step) || 0)),
+    step: stepKey,
     store: { name: str(st.name, 60), website: str(st.website, 200), logo: img(st.logo), accent: /^#[0-9a-f]{6}$/i.test(st.accent || '') ? st.accent : '#35d0c4', theme: st.theme === 'light' ? 'light' : 'dark' },
     pieces: list(d.pieces, 12).filter((x) => x && typeof x === 'object').map((x) => ({
       uid: str(x.uid, 24), value: str(x.value, 40), label: str(x.label, 60),
       styles: list(x.styles, 24).filter((y) => y && typeof y === 'object').map((y) => ({
         uid: str(y.uid, 24), value: str(y.value, 40), label: str(y.label, 40), image: img(y.image), note: str(y.note, 300), custom: !!y.custom, keep: y.keep !== false,
       })),
+      // Po komadu: metali, karati, kamenje, budžet, specifikacije i pitanja zlatara (stariji onboarding ih nema).
+      ...(Array.isArray(x.metals) ? { metals: vals(x.metals) } : {}),
+      ...(Array.isArray(x.karats) ? { karats: vals(x.karats, 6) } : {}),
+      ...(Array.isArray(x.stones) ? { stones: vals(x.stones) } : {}),
+      ...(Array.isArray(x.budgets) ? { budgets: vals(x.budgets, 10) } : {}),
+      ...(x.specs && typeof x.specs === 'object' && !Array.isArray(x.specs) ? { specs: Object.fromEntries(Object.entries(x.specs).slice(0, 8).filter(([k, v]) => /^[a-z_]{1,30}$/.test(k) && Array.isArray(v)).map(([k, v]) => [k, vals(v, 20)])) } : {}),
+      questions: list(x.questions, 6).filter((q) => q && typeof q === 'object').map((q) => ({ uid: str(q.uid, 24), label: str(q.label, 120), options: str(q.options, 600) })),
+    })),
+    products: list(d.products, 24).filter((x) => x && typeof x === 'object').map((x) => ({
+      uid: str(x.uid, 24), name: str(x.name, 80), price: str(x.price, 30), url: str(x.url, 500), description: str(x.description, 300), image: img(x.image), pieces: vals(x.pieces, 12),
     })),
     metals: list(d.metals, 12).map((x) => str(x, 40)),
     metalsOther: str(d.metalsOther, 200),
@@ -1337,6 +1350,7 @@ function validateAnswers(form, a) {
 
 function visible(field, a, form) {
   if (field.type === 'teeth' && !customTeethVisible(form, a)) return false;
+  if (!offeredFor(field, a)) return false;
   const c = field.showIf;
   if (!c) return true;
   const v = a[c.field];

@@ -391,3 +391,23 @@ dialog.obr { width: min(760px, 94vw); max-height: 88vh; }
 .note.warn { border-color: color-mix(in srgb, #f0c27a 50%, var(--line)); color: #f0c27a; }
 .piece:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* Po komadu: opcije zajedničkih pitanja i pitanja samo za komad */
+.pp { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 8px; }
+.pp.is-off { opacity: 0.6; }
+.pp-head { display: flex; align-items: baseline; gap: 10px; }
+.pp-head b { font-size: 13px; }
+.pp-head small { margin-left: auto; color: var(--ink-faint); font-size: 12px; }
+.pp-q { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); margin-bottom: 8px; }
+.pp-q .grow { flex: 1; min-width: 0; }
+.pp-q b, .pp-q small { display: block; }
+.pp-q b { font-size: 13px; }
+.pp-q small { color: var(--ink-faint); font-size: 12px; margin-top: 2px; }
+
+/* Shop products */
+.prod-row { display: flex; gap: 14px; align-items: flex-start; }
+.prod-row .grow { flex: 1; min-width: 0; }
+.pick.prod { width: 120px; height: 120px; }
+.pick.prod img { width: 100%; height: 100%; object-fit: cover; }
+.prod .tools { display: flex; justify-content: space-between; margin-top: 6px; }
+@media (max-width: 720px) { .prod-row { flex-direction: column; } }

@@ -236,10 +236,21 @@ app.addEventListener('click', async (e) => {
 });
 
 // ---------- Onboarding (vodič za zlatara) ----------
-// Zlatar popuni radnju, komade, stilove sa slikama, materijale i budžet. Sve se čuva samo; Send šalje adminu.
-const OB_STEPS = [['store', 'Your store'], ['pieces', 'What you make'], ['styles', 'Styles'], ['materials', 'Materials & budget'], ['extras', 'Notes for our team'], ['send', 'Review & send']];
+// Zlatar popuni radnju i komade, pa svaki komad redom (stilovi, materijali i budžet, detalji), proizvode iz radnje i napomene.
+// Sve se čuva samo; Send šalje adminu. Korak je ključ ('store', 'p:<uid>:materials'...), ne redni broj.
+const OB_PIECE_STEPS = [['styles', 'Styles'], ['materials', 'Materials & budget'], ['details', 'Details']];
+function obSteps() {
+  const out = [['store', 'Your store'], ['pieces', 'What you make']];
+  for (const pc of OB.d.pieces) for (const [k, l] of OB_PIECE_STEPS) out.push([`p:${pc.uid}:${k}`, l]);
+  out.push(['products', 'Shop products'], ['extras', 'Notes for our team'], ['send', 'Review & send']);
+  return out;
+}
+const obIdx = () => Math.max(0, obSteps().findIndex(([k]) => k === OB.step));
+// Komad na kojem je zlatar (null van koraka komada).
+const obPiece = () => { const m = /^p:([^:]+):/.exec(OB.step); const i = m ? OB.d.pieces.findIndex((pc) => pc.uid === m[1]) : -1; return i < 0 ? null : { i, pc: OB.d.pieces[i], sub: OB.step.split(':')[2] }; };
+const obGo = (key) => { OB.step = obSteps().some(([k]) => k === key) ? key : 'pieces'; };
 const ACCENTS = ['#35d0c4', '#d8b46a', '#e7a9a0', '#9b8cff', '#5aa9ff', '#ef6f6f', '#f2f2f2'];
-const OB = { d: null, step: 0, timer: null, saving: false, savedAt: 0, err: '', dirty: false, rev: 0, inflight: null, retry: null, uploads: new Map(), submitting: false, previewBg: null, previewTimer: null, previewSeq: 0, previewStep: -1 };
+const OB = { d: null, step: 'store', timer: null, saving: false, savedAt: 0, err: '', dirty: false, rev: 0, inflight: null, retry: null, uploads: new Map(), submitting: false, previewBg: null, previewTimer: null, previewSeq: 0, previewStep: -1 };
 // Stabilan id za komade i stilove: slika se upiše u pravi stil i kad se u međuvremenu doda ili ukloni neki drugi.
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -259,10 +270,31 @@ function obInit() {
     d.customMetals.push({ value, label: label.slice(0, 40), swatch: '#c0c4c8' }); d.metals.push(value);
   }
   d.metalsOther = '';
-  for (const pc of d.pieces) { pc.uid ||= uid(); for (const st of pc.styles || []) st.uid ||= uid(); }
+  for (const pc of d.pieces) { pc.uid ||= uid(); for (const st of pc.styles || []) st.uid ||= uid(); obPieceDefaults(pc, d); }
+  d.products = Array.isArray(d.products) ? d.products : [];
+  for (const x of d.products) { x.uid ||= uid(); x.pieces = Array.isArray(x.pieces) ? x.pieces : []; }
   OB.d = d;
   OB.rev = P.me.onboarding.rev || 0;
-  OB.step = Math.min(OB_STEPS.length - 1, Math.max(0, +d.step || 0));
+  // Stariji nacrt pamti redni broj koraka (0 radnja ... 5 slanje).
+  let st = d.step;
+  if (typeof st === 'number' || /^\d+$/.test(String(st ?? ''))) {
+    const k = ['store', 'pieces', 'styles', 'materials', 'extras', 'send'][+st] || 'store';
+    st = ['styles', 'materials'].includes(k) ? (d.pieces[0] ? `p:${d.pieces[0].uid}:${k}` : 'pieces') : k;
+  }
+  OB.step = 'store';
+  if (st) obGo(st);
+}
+// Svaki komad ima svoje metale, karate, kamenje, budžet, specifikacije i pitanja. Početno: zajedničke liste.
+function obPieceDefaults(pc, d = OB.d) {
+  const defs = P.me.onboardingDefaults;
+  pc.styles ||= [];
+  pc.metals ||= [...d.metals];
+  pc.karats ||= [...defs.karats];
+  pc.stones ||= [...d.stones];
+  pc.budgets ||= [...d.budgets];
+  pc.specs = pc.specs && typeof pc.specs === 'object' && !Array.isArray(pc.specs) ? pc.specs : {};
+  pc.questions = Array.isArray(pc.questions) ? pc.questions : [];
+  for (const q of pc.questions) q.uid ||= uid();
 }
 
 const obGet = (path) => path.split('.').reduce((x, k) => x?.[k], OB.d);
@@ -337,7 +369,12 @@ function renderOnboarding() {
   const restoreImages = JLUI.images(editor);
   const { client, session } = P.me;
   const banner = session.kind === 'view-as' ? `<div class="viewas"><div class="wrap"><span>Admin view</span><span class="grow">Viewing <b>${esc(client.name)}</b>'s onboarding, read-only: nothing you change here is saved.</span><button class="btn warn" data-act="exit">Exit view</button></div></div>` : '';
-  const steps = OB_STEPS.map(([k, l], i) => `<button class="ob-dot ${i === OB.step ? 'now' : i < OB.step ? 'done' : ''}" data-ob-go="${i}" ${i > OB.step && !(obCan(0) && obCan(1)) ? 'disabled' : ''}><span>${i + 1}</span>${esc(l)}</button>`).join('');
+  // Gornja traka: radnja, komadi, pa svaki izabrani komad kao svoja grupa (stilovi, materijali, detalji), pa ostalo.
+  if (!obSteps().some(([k]) => k === OB.step)) obGo(OB.step);
+  const groups = [['store', 'Your store'], ['pieces', 'What you make'], ...OB.d.pieces.map((pc) => [`p:${pc.uid}:`, pc.label || 'Piece']), ['products', 'Shop products'], ['extras', 'Notes'], ['send', 'Review & send']];
+  const g = groups.findIndex(([k]) => OB.step === k || (k.endsWith(':') && OB.step.startsWith(k)));
+  const open = obCan('store') && obCan('pieces');
+  const steps = groups.map(([k, l], i) => `<button class="ob-dot ${k.endsWith(':') ? 'piece' : ''} ${i === g ? 'now' : i < g ? 'done' : ''}" data-ob-go="${esc(k.endsWith(':') ? `${k}styles` : k)}" ${i > g && !open ? 'disabled' : ''}><span>${i + 1}</span>${esc(l)}</button>`).join('');
   editor.innerHTML = `
     ${banner}
     <header class="head"><div class="wrap">
@@ -349,8 +386,8 @@ function renderOnboarding() {
       <nav class="ob-steps">${steps}</nav>
       <section class="ob-card">${obStepView()}</section>
       <div class="ob-nav">
-        ${OB.step > 0 ? '<button class="btn" data-ob-act="back">Back</button>' : '<span></span>'}
-        ${OB.step < OB_STEPS.length - 1 ? `<button class="btn primary" data-ob-act="next" ${obCan(OB.step) ? '' : 'disabled'}>Continue</button>` : ''}
+        ${obIdx() > 0 ? '<button class="btn" data-ob-act="back">Back</button>' : '<span></span>'}
+        ${obIdx() < obSteps().length - 1 ? `<button class="btn primary" data-ob-act="next" ${obCan(OB.step) ? '' : 'disabled'}>${obNextLabel()}</button>` : ''}
       </div>
       <p class="note">Everything saves automatically. You can close this page and come back with the same link.</p>
     </main>`;
@@ -365,6 +402,15 @@ function renderOnboarding() {
   syncPreviewBackground();
   queueOnboardingPreview();
   obStatus();
+}
+
+// Dugme dalje kaže kuda vodi kad se prelazi na sljedeći komad.
+function obNextLabel() {
+  const next = obSteps()[obIdx() + 1]?.[0] || '';
+  const here = obPiece();
+  const m = /^p:([^:]+):styles$/.exec(next);
+  if (m && here?.pc.uid !== m[1]) return `Continue to ${esc(OB.d.pieces.find((pc) => pc.uid === m[1])?.label || 'next piece')}`;
+  return 'Continue';
 }
 
 function obPreviewBackground() {
@@ -388,14 +434,20 @@ function queueOnboardingPreview() {
       if (seq !== OB.previewSeq || !OB.d) return;
       const jump = {};
       if (OB.previewStep !== OB.step) {
-        const target = OB.step === 2 ? 'style' : OB.step === 3 ? 'design' : 'type';
-        const step = form.steps.findIndex((s) => s.id === target);
-        if (step >= 0) jump.step = step;
-        const type = form.steps.find((s) => s.id === 'type')?.fields.find((f) => f.id === 'type')?.options[0]?.value;
+        // Pregled prati komad na kojem je zlatar: njegovi stilovi, materijali ili detalji.
+        const types = form.steps.find((s) => s.id === 'type')?.fields.find((f) => f.id === 'type')?.options || [];
+        const here = obPiece();
+        const k = here ? OB.d.pieces.filter((pc) => String(pc.label || '').trim()).indexOf(here.pc) : 0;
+        const type = types[Math.max(0, k)]?.value;
+        const target = { styles: (s) => s.id === 'style', materials: (s) => s.id === 'design', details: (s) => s.fields.some((f) => f.showIf?.field === 'type' && f.showIf.in?.includes(type)) }[here?.sub] || ((s) => s.id === 'type');
+        const step = form.steps.findIndex(target);
+        if (OB.step === 'products') jump.products = true;
+        else if (step >= 0) jump.step = step;
         if (type) jump.answers = { type };
         OB.previewStep = OB.step;
       }
-      document.getElementById('ob-preview-frame')?.contentWindow.postMessage({ type: 'aik:preview', form, admin: false, soft: true, ...jump }, location.origin);
+      // Prelazak na drugi korak (i komad) nije "mekan": pregled pređe na taj komad.
+      document.getElementById('ob-preview-frame')?.contentWindow.postMessage({ type: 'aik:preview', form, admin: false, soft: !jump.answers, ...jump }, location.origin);
       const err = document.getElementById('ob-preview-error'); if (err) err.textContent = '';
     } catch { const err = document.getElementById('ob-preview-error'); if (err) err.textContent = 'Preview could not update. Your answers are still here; keep editing to retry.'; }
   }, 220);
@@ -408,9 +460,9 @@ addEventListener('message', (e) => {
 });
 
 // Može dalje: radnja treba ime, a "What you make" bar jedan komad.
-function obCan(i) {
-  if (i === 0) return !!String(OB.d.store.name || '').trim();
-  if (i === 1) return OB.d.pieces.length > 0;
+function obCan(key) {
+  if (key === 'store') return !!String(OB.d.store.name || '').trim();
+  if (key === 'pieces') return OB.d.pieces.length > 0;
   return true;
 }
 
@@ -424,7 +476,7 @@ const obPick = (path, { label = 'Upload photo', cls = '' } = {}) => {
 function obStepView() {
   const d = OB.d;
   const defs = P.me.onboardingDefaults;
-  const key = OB_STEPS[OB.step][0];
+  const key = OB.step;
   if (key === 'store') {
     return `
       <h2>Welcome! Let's set up your design form.</h2>
@@ -445,48 +497,14 @@ function obStepView() {
     const custom = d.pieces.map((p, i) => (p.value ? '' : `<div class="ob-custom"><input class="in" data-ob="pieces.${i}.label" value="${esc(p.label)}" /><button class="btn small" data-ob-del-piece="${i}">Remove</button></div>`)).join('');
     return `
       <h2>What do you make?</h2>
-      <p class="ob-lead">Pick everything customers can order from you. Next you choose the styles for each one.</p>
+      <p class="ob-lead">Pick everything customers can order from you. Then we go through them one by one: styles, materials and budget, and details for each piece.</p>
       <div class="ob-pieces">${lib}</div>
       ${custom ? `<h3>Your own pieces</h3>${custom}` : ''}
       <button class="btn" data-ob-act="add-piece">+ Add another piece (e.g. Belt buckle)</button>`;
   }
-  if (key === 'styles') {
-    const blocks = d.pieces.map((p, i) => {
-      const cards = (p.styles || []).map((s, j) => {
-        const path = `pieces.${i}.styles.${j}`;
-        return `
-          <div class="ob-style ${s.keep === false ? 'off' : ''}">
-            ${obPick(`${path}.image`, { label: 'Add photo' })}
-            <input class="in" data-ob="${path}.label" value="${esc(s.label)}" placeholder="Style name" />
-            ${s.custom ? `<textarea class="in" data-ob="${path}.note" rows="2" placeholder="What makes it special? (shape, details)">${esc(s.note || '')}</textarea>` : ''}
-            <div class="ob-style-foot">
-              <label class="ob-check"><span>Offer this</span><input type="checkbox" data-ob-keep="${path}" ${s.keep === false ? '' : 'checked'} /><span class="ob-selected" aria-hidden="true">✓</span></label>
-              ${s.custom ? `<button class="link" data-ob-del-style="${i}.${j}">Remove</button>` : ''}
-            </div>
-          </div>`;
-      }).join('');
-      return `
-        <div class="ob-block">
-          <h3>${esc(p.label || 'Piece')}</h3>
-          <div class="ob-styles">${cards}<button class="ob-style add" data-ob-add-style="${i}"><span>+</span>Add a style</button></div>
-        </div>`;
-    }).join('');
-    return `
-      <h2>Styles</h2>
-      <p class="ob-lead">These are the shapes customers pick from. Keep the ones you make, rename them, swap in photos of your own work, or add your signature styles. Your photos also guide the AI, so the previews look like your pieces.</p>
-      ${blocks}`;
-  }
-  if (key === 'materials') {
-    const chip = (list, v, label, sw = '') => `<button class="ob-chip ${list.includes(v) ? 'on' : 'off'}" data-ob-toggle="${list === d.metals ? 'metals' : 'stones'}" data-v="${esc(v)}" aria-pressed="${list.includes(v)}">${sw ? `<i style="background:${esc(sw)}"></i>` : ''}${esc(label)}${list.includes(v) ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`;
-    return `
-      <h2>Materials & budget</h2>
-      <p class="ob-lead">Only what you offer will show to customers.</p>
-      <div class="ob-f"><span>Metals</span><div class="ob-chips">${[...defs.metals, ...d.customMetals].map((m) => chip(d.metals, m.value, m.label, m.swatch)).join('')}<button class="ob-chip add" data-ob-add-option="metals">+ Add new</button></div></div>
-      <div class="ob-f"><span>Stones</span><div class="ob-chips">${[...defs.stones, ...d.customStones].map((s) => chip(d.stones, s.value, s.label)).join('')}<button class="ob-chip add" data-ob-add-option="stones">+ Add new</button></div></div>
-      <div class="ob-f"><span>Budget ranges customers can pick</span>
-        ${d.budgets.map((b, i) => `<div class="ob-custom"><input class="in" data-ob="budgets.${i}" value="${esc(b)}" /><button class="btn small" data-ob-del-budget="${i}" ${d.budgets.length < 2 ? 'disabled' : ''}>Remove</button></div>`).join('')}
-        <button class="btn small" data-ob-act="add-budget">+ Add range</button></div>`;
-  }
+  if (key === 'products') return obProductsView();
+  const here = obPiece();
+  if (here) return obPieceView(here);
   if (key === 'extras') {
     return `
       <h2>Notes for our team</h2>
@@ -495,19 +513,122 @@ function obStepView() {
       <label class="ob-f"><span>Notes for our team</span><textarea class="in" rows="4" data-ob="notes" placeholder="e.g. We don't do platinum grillz. Our minimum order is $800.">${esc(d.notes || '')}</textarea></label>`;
   }
   const kept = (p) => (p.styles || []).filter((s) => s.keep !== false && s.label);
+  const name = (list, v) => list.find((x) => x.value === v)?.label || v;
+  const metals = [...defs.metals, ...d.customMetals];
+  const stones = [...defs.stones, ...d.customStones];
+  const pieceRow = (pc) => {
+    const specs = (defs.specs[pc.value] || []).map((sp) => [sp, obSpecPicked(pc, sp)]).filter(([, v]) => v.length).map(([sp, v]) => `${esc(sp.label)} (${v.length})`);
+    const qs = pc.questions.filter((q) => q.label.trim()).map((q) => esc(q.label));
+    return `<dt>${esc(pc.label)}</dt><dd>
+      <b>Styles:</b> ${kept(pc).map((s) => esc(s.label)).join(', ') || '<span class="faint">none, customers describe their idea</span>'}<br />
+      <b>Metals:</b> ${esc(pc.metals.map((v) => name(metals, v)).join(', ') || 'not asked')}${pc.metals.some((v) => v !== 'platinum') ? ` · ${esc(pc.karats.join(', ') || 'no karat question')}` : ''}<br />
+      <b>Stones:</b> ${esc(pc.stones.map((v) => name(stones, v)).join(', ') || 'not asked')}<br />
+      <b>Budgets:</b> ${esc(pc.budgets.filter(Boolean).join(' · ') || 'not asked')}
+      ${specs.length || qs.length ? `<br /><b>Details:</b> ${[...specs, ...qs].join(', ')}` : ''}</dd>`;
+  };
+  const prods = d.products.filter((x) => x.name.trim());
   return `
     <h2>Review & send</h2>
     <p class="ob-lead">Check everything once. After you send it, we build your form and it appears in this portal.</p>
     <dl class="ob-review">
       <dt>Store</dt><dd>${esc(d.store.name)}${d.store.website ? ` · ${esc(d.store.website)}` : ''} · ${d.store.theme === 'light' ? 'Light' : 'Dark'} look <i class="ob-dotc" style="background:${esc(d.store.accent)}"></i></dd>
-      <dt>Pieces & styles</dt><dd>${d.pieces.map((p) => `<b>${esc(p.label)}</b>: ${kept(p).map((s) => esc(s.label)).join(', ') || '<span class="faint">no styles, customers describe their idea</span>'}`).join('<br />')}</dd>
-      <dt>Metals</dt><dd>${esc([...defs.metals, ...d.customMetals].filter((m) => d.metals.includes(m.value)).map((m) => m.label).join(', ') || 'All')}</dd>
-      <dt>Stones</dt><dd>${esc([...defs.stones, ...d.customStones].filter((s) => d.stones.includes(s.value)).map((s) => s.label).join(', ') || 'All')}</dd>
-      <dt>Budgets</dt><dd>${esc(d.budgets.filter(Boolean).join(' · '))}</dd>
+      ${d.pieces.map(pieceRow).join('')}
+      <dt>Shop products</dt><dd>${prods.length ? prods.map((x) => `${esc(x.name)}${x.price ? ` (${esc(x.price)})` : ''}`).join(', ') : '<span class="faint">none, nothing is recommended under the preview</span>'}</dd>
       ${d.notes ? `<dt>Notes</dt><dd>${esc(d.notes)}</dd>` : ''}
     </dl>
     ${OB.err ? `<p class="ob-err">${esc(OB.err)}</p>` : ''}
     <button class="btn primary big" data-ob-act="send" ${readOnly() || OB.uploads.size || OB.submitting ? 'disabled' : ''}>${OB.submitting ? '<span class="jl-spinner"></span> Sending…' : OB.uploads.size ? 'Waiting for photo upload…' : 'Send to our team'}</button>`;
+}
+
+// Specifikacija komada: izabrane opcije (prazno = ne pita se). Bez odluke zlatara važi podrazumijevano iz kataloga.
+const obSpecPicked = (pc, sp) => (Array.isArray(pc.specs[sp.id]) ? pc.specs[sp.id] : sp.on ? sp.options.map((o) => o.value) : []);
+
+// Jedan komad: zaglavlje "Piece 2 of 3", pod-koraci i sadržaj izabranog pod-koraka.
+function obPieceView({ i, pc, sub }) {
+  const d = OB.d;
+  const defs = P.me.onboardingDefaults;
+  const n = d.pieces.length;
+  const tabs = OB_PIECE_STEPS.map(([k, l], j) => `<button class="ob-sub ${k === sub ? 'on' : ''}" data-ob-go="p:${esc(pc.uid)}:${k}" aria-current="${k === sub ? 'step' : 'false'}"><span>${j + 1}</span>${l}</button>`).join('');
+  const head = `<div class="ob-piece-head"><small>Piece ${i + 1} of ${n}</small><h2>${esc(pc.label || 'Piece')}</h2><nav class="ob-subs">${tabs}</nav></div>`;
+  const P_ = `pieces.${i}`;
+  if (sub === 'styles') {
+    const cards = pc.styles.map((s, j) => {
+      const path = `${P_}.styles.${j}`;
+      return `
+        <div class="ob-style ${s.keep === false ? 'off' : ''}">
+          ${obPick(`${path}.image`, { label: 'Add photo' })}
+          <input class="in" data-ob="${path}.label" value="${esc(s.label)}" placeholder="Style name" />
+          ${s.custom ? `<textarea class="in" data-ob="${path}.note" rows="2" placeholder="What makes it special? (shape, details)">${esc(s.note || '')}</textarea>` : ''}
+          <div class="ob-style-foot">
+            <label class="ob-check"><span>Offer this</span><input type="checkbox" data-ob-keep="${path}" ${s.keep === false ? '' : 'checked'} /><span class="ob-selected" aria-hidden="true">✓</span></label>
+            ${s.custom ? `<button class="link" data-ob-del-style="${i}.${j}">Remove</button>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+    return `${head}
+      <p class="ob-lead">The shapes customers pick from for a ${esc(pc.label.toLowerCase())}. Keep the ones you make, rename them, swap in photos of your own work, or add your signature styles. Your photos also guide the AI, so the previews look like your pieces.</p>
+      <div class="ob-styles">${cards}<button class="ob-style add" data-ob-add-style="${i}"><span>+</span>Add a style</button></div>`;
+  }
+  if (sub === 'materials') {
+    const chip = (k, v, label, sw = '') => { const on = pc[k].includes(v); return `<button class="ob-chip ${on ? 'on' : 'off'}" data-ob-ptoggle="${i}.${k}" data-v="${esc(v)}" aria-pressed="${on}">${sw ? `<i style="background:${esc(sw)}"></i>` : ''}${esc(label)}${on ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; };
+    const others = d.pieces.filter((x) => x !== pc && x.budgets.some(Boolean));
+    return `${head}
+      <p class="ob-lead">Only what you offer for a ${esc(pc.label.toLowerCase())} shows to customers who design one. Untick everything in a row and that question is skipped for this piece.</p>
+      <div class="ob-f"><span>Metals</span><div class="ob-chips">${[...defs.metals, ...d.customMetals].map((m) => chip('metals', m.value, m.label, m.swatch)).join('')}<button class="ob-chip add" data-ob-add-option="metals" data-i="${i}">+ Add new</button></div></div>
+      <div class="ob-f"><span>Karat</span><div class="ob-chips">${defs.karats.map((k) => chip('karats', k, k)).join('')}</div><p class="hint">Not asked when the customer picks platinum.</p></div>
+      <div class="ob-f"><span>Stones</span><div class="ob-chips">${[...defs.stones, ...d.customStones].map((st) => chip('stones', st.value, st.label)).join('')}<button class="ob-chip add" data-ob-add-option="stones" data-i="${i}">+ Add new</button></div></div>
+      <div class="ob-f"><span>Budget ranges for a ${esc(pc.label.toLowerCase())}</span>
+        ${pc.budgets.map((b, k) => `<div class="ob-custom"><input class="in" data-ob="${P_}.budgets.${k}" value="${esc(b)}" /><button class="btn small" data-ob-del-budget="${i}.${k}">Remove</button></div>`).join('') || '<p class="hint">No budget question for this piece.</p>'}
+        <div class="ob-row"><button class="btn small" data-ob-add-budget="${i}">+ Add range</button>${others.map((x) => `<button class="btn small" data-ob-copy-budget="${i}.${d.pieces.indexOf(x)}">Same as ${esc(x.label)}</button>`).join('')}</div></div>`;
+  }
+  const specs = (defs.specs[pc.value] || []).map((sp) => {
+    const picked = obSpecPicked(pc, sp);
+    const on = picked.length > 0;
+    return `
+      <div class="ob-spec ${on ? '' : 'off'}">
+        <label class="ob-spec-head"><input type="checkbox" data-ob-spec-on="${i}.${sp.id}" ${on ? 'checked' : ''} /><b>${esc(sp.label)}</b><small>${on ? 'Asked' : 'Not asked'}</small></label>
+        ${on ? `<div class="ob-chips">${sp.options.map((o) => { const sel = picked.includes(o.value); return `<button class="ob-chip ${sel ? 'on' : 'off'}" data-ob-spec="${i}.${sp.id}" data-v="${esc(o.value)}" aria-pressed="${sel}">${esc(o.label)}${sel ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; }).join('')}</div>` : ''}
+      </div>`;
+  }).join('');
+  const qs = pc.questions.map((q, k) => `
+    <div class="ob-q">
+      <input class="in" data-ob="${P_}.questions.${k}.label" value="${esc(q.label)}" placeholder="Question, e.g. Which finish do you like?" />
+      <input class="in" data-ob="${P_}.questions.${k}.options" value="${esc(q.options || '')}" placeholder="Answers, separated by commas (empty = customer types an answer)" />
+      <button class="btn small" data-ob-del-question="${i}.${k}">Remove</button>
+    </div>`).join('');
+  return `${head}
+    <p class="ob-lead">${specs ? `The specifics you ask about a ${esc(pc.label.toLowerCase())}. Customers only see these when they design one. Turn off what you don't ask and untick sizes you don't make.` : `Anything you need to know about a ${esc(pc.label.toLowerCase())}? Add your own questions; customers only see them when they design one.`}</p>
+    ${specs}
+    <div class="ob-f"><span>Your own questions${specs ? ' (optional)' : ''}</span>${qs}
+      ${pc.questions.length < 6 ? `<button class="btn small" data-ob-add-question="${i}">+ Add a question</button>` : ''}</div>`;
+}
+
+// Proizvodi iz radnje: kupac ih vidi ispod svog AI pregleda, prvo oni za komad koji je dizajnirao.
+function obProductsView() {
+  const d = OB.d;
+  const cards = d.products.map((x, k) => {
+    const path = `products.${k}`;
+    const pcs = d.pieces.map((pc) => { const on = x.pieces.includes(pc.uid); return `<button class="ob-chip small ${on ? 'on' : 'off'}" data-ob-prod-piece="${k}" data-v="${esc(pc.uid)}" aria-pressed="${on}">${esc(pc.label)}${on ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; }).join('');
+    return `
+      <div class="ob-product">
+        ${obPick(`${path}.image`, { label: 'Product photo' })}
+        <div class="ob-product-body">
+          <div class="ob-grid2">
+            <label class="ob-f"><span>Name</span><input class="in" data-ob="${path}.name" value="${esc(x.name)}" placeholder="Miami Cuban chain 18&quot;" /></label>
+            <label class="ob-f"><span>Price</span><input class="in" data-ob="${path}.price" value="${esc(x.price)}" placeholder="$1,250" /></label>
+          </div>
+          <label class="ob-f"><span>Link to the product in your shop</span><input class="in" type="url" data-ob="${path}.url" value="${esc(x.url)}" placeholder="https://yourstore.com/products/..." /></label>
+          <label class="ob-f"><span>Short description</span><textarea class="in" rows="2" data-ob="${path}.description" placeholder="14K yellow gold, 8 mm, lifetime warranty">${esc(x.description)}</textarea></label>
+          <div class="ob-f"><span>Recommend it with</span><div class="ob-chips">${pcs}</div><p class="hint">${x.pieces.length ? 'Shown only to customers who design one of these.' : 'Nothing selected: shown with every piece.'}</p></div>
+          <button class="link" data-ob-del-product="${k}">Remove product</button>
+        </div>
+      </div>`;
+  }).join('');
+  return `
+    <h2>Shop products</h2>
+    <p class="ob-lead">Optional. Add pieces from your online shop. When a customer finishes the form, they see them under their AI preview with the price and a link to your shop, matched to the piece they designed.</p>
+    ${cards}
+    ${d.products.length < 24 ? '<button class="btn" data-ob-act="add-product">+ Add a product</button>' : ''}`;
 }
 
 // Fotografija: smanji u browseru (logo 600 px PNG, ostalo 1200 px WebP), pa u R2.
@@ -540,13 +661,14 @@ async function obUpload(input) {
     const res = await fetch('/api/portal/onboarding/upload', { method: 'POST', credentials: 'same-origin', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Upload failed.');
+    // decode() u tabu u pozadini ne završava nikad; najviše 1,5 s čekanja da slika ne trepne, pa dalje.
     const loaded = new Image(); loaded.src = data.url;
-    try { await loaded.decode(); } catch {}
+    try { await Promise.race([loaded.decode(), new Promise((r) => setTimeout(r, 1500))]); } catch {}
     // Slika ide stilu po njegovom id-ju (ne po rednom broju, koji se može promijeniti dok slika putuje).
     const id = input.dataset.uid;
     if (!id) obSet('store.logo', data.url);
     else {
-      const st = OB.d?.pieces.flatMap((pc) => pc.styles || []).find((x) => x.uid === id);
+      const st = [...(OB.d?.pieces.flatMap((pc) => pc.styles || []) || []), ...(OB.d?.products || [])].find((x) => x.uid === id);
       if (st) st.image = data.url;
     }
     obSave(true);
@@ -571,6 +693,11 @@ app.addEventListener('change', (e) => {
   const el = e.target;
   if (!OB.d) return;
   if (el.dataset.obFile) obUpload(el);
+  if (el.dataset.obSpecOn && !readOnly() && !OB.submitting) {
+    const [i, id] = el.dataset.obSpecOn.split('.');
+    const sp = P.me.onboardingDefaults.specs[OB.d.pieces[+i].value]?.find((x) => x.id === id);
+    if (sp) { OB.d.pieces[+i].specs[id] = el.checked ? sp.options.map((o) => o.value) : []; obSave(); const y = scrollY; renderOnboarding(); scrollTo(0, y); }
+  }
   if (el.dataset.obKeep && !readOnly() && !OB.submitting) { obSet(`${el.dataset.obKeep}.keep`, el.checked); el.closest('.ob-style')?.classList.toggle('off', !el.checked); obSave(); queueOnboardingPreview(); }
 });
 app.addEventListener('click', async (e) => {
@@ -582,10 +709,10 @@ app.addEventListener('click', async (e) => {
   const d = OB.d;
   const defs = P.me.onboardingDefaults;
   const redraw = () => { obSave(); const y = scrollY; renderOnboarding(); scrollTo(0, y); };
-  if (t.dataset.obGo !== undefined) { OB.step = +t.dataset.obGo; obSave(true); renderOnboarding(); scrollTo(0, 0); return; }
+  if (t.dataset.obGo !== undefined) { obGo(t.dataset.obGo); obSave(true); renderOnboarding(); scrollTo(0, 0); return; }
   const act = t.dataset.obAct;
-  if (act === 'next' && obCan(OB.step)) { OB.step++; obSave(true); renderOnboarding(); scrollTo(0, 0); }
-  if (act === 'back') { OB.step--; obSave(true); renderOnboarding(); scrollTo(0, 0); }
+  if (act === 'next' && obCan(OB.step)) { OB.step = obSteps()[obIdx() + 1][0]; obSave(true); renderOnboarding(); scrollTo(0, 0); }
+  if (act === 'back') { OB.step = obSteps()[Math.max(0, obIdx() - 1)][0]; obSave(true); renderOnboarding(); scrollTo(0, 0); }
   if (t.dataset.obAccent) { d.store.accent = t.dataset.obAccent; redraw(); }
   if (t.dataset.obTheme) { d.store.theme = t.dataset.obTheme; redraw(); }
   if (t.dataset.obAddOption) {
@@ -597,9 +724,12 @@ app.addEventListener('click', async (e) => {
       : await JLUI.prompt('Name of the stone (e.g. Ruby)', { title: 'Add a stone' });
     const label = typeof answer === 'string' ? answer : answer?.label;
     if (!label) return;
+    // Nova opcija ide u katalog radnje (vide je i ostali komadi) i odmah je izabrana za ovaj komad.
+    const pc = d.pieces[+t.dataset.i];
     const existing = [...defs[kind], ...d[listKey]].find((x) => x.label.toLowerCase() === label.toLowerCase());
-    if (existing) { if (!d[kind].includes(existing.value)) d[kind].push(existing.value); }
-    else { const value = `custom-${uid()}`; d[listKey].push({ value, label: label.slice(0, 40), ...(kind === 'metals' ? { swatch: answer.swatch } : {}) }); d[kind].push(value); }
+    const value = existing ? existing.value : `custom-${uid()}`;
+    if (!existing) { d[listKey].push({ value, label: label.slice(0, 40), ...(kind === 'metals' ? { swatch: answer.swatch } : {}) }); d[kind].push(value); }
+    if (pc && !pc[kind].includes(value)) pc[kind].push(value);
     redraw();
   }
   if (t.dataset.obPiece) {
@@ -608,20 +738,25 @@ app.addEventListener('click', async (e) => {
     if (i >= 0) {
       const custom = (d.pieces[i].styles || []).some((s) => s.custom || (s.image && !s.image.startsWith('/library/')));
       if (custom && !(await JLUI.confirm('Remove this piece and the styles and photos you added for it?'))) return;
-      d.pieces.splice(i, 1);
+      const [gone] = d.pieces.splice(i, 1);
+      for (const x of d.products) x.pieces = x.pieces.filter((u) => u !== gone.uid);
     } else {
       const p = defs.pieces.find((x) => x.value === v);
-      d.pieces.push({ uid: uid(), value: v, label: p.label, styles: (defs.styles[v] || []).map((s) => ({ ...s, uid: uid(), keep: true })) });
+      const pc = { uid: uid(), value: v, label: p.label, styles: (defs.styles[v] || []).map((s) => ({ ...s, uid: uid(), keep: true })) };
+      obPieceDefaults(pc);
+      d.pieces.push(pc);
     }
     redraw();
   }
   if (act === 'add-piece') {
     const name = await JLUI.prompt('What is the piece called? (e.g. Belt buckle)');
     if (!name?.trim()) return;
-    d.pieces.push({ uid: uid(), value: '', label: name.trim().slice(0, 60), styles: [] });
+    const pc = { uid: uid(), value: '', label: name.trim().slice(0, 60), styles: [] };
+    obPieceDefaults(pc);
+    d.pieces.push(pc);
     redraw();
   }
-  if (t.dataset.obDelPiece) { d.pieces.splice(+t.dataset.obDelPiece, 1); redraw(); }
+  if (t.dataset.obDelPiece) { const [gone] = d.pieces.splice(+t.dataset.obDelPiece, 1); for (const x of d.products) x.pieces = x.pieces.filter((u) => u !== gone.uid); redraw(); }
   if (t.dataset.obAddStyle !== undefined) {
     const p = d.pieces[+t.dataset.obAddStyle];
     (p.styles ||= []).push({ uid: uid(), value: '', label: '', image: '', note: '', custom: true, keep: true });
@@ -630,15 +765,41 @@ app.addEventListener('click', async (e) => {
     inputs[inputs.length - 1]?.focus();
   }
   if (t.dataset.obDelStyle) { const [i, j] = t.dataset.obDelStyle.split('.').map(Number); d.pieces[i].styles.splice(j, 1); redraw(); }
-  if (t.dataset.obToggle) {
-    const list = d[t.dataset.obToggle];
-    const v = t.dataset.v;
-    const k = list.indexOf(v);
-    if (k >= 0) list.splice(k, 1); else list.push(v);
+  const flip = (list, v) => { const k = list.indexOf(v); if (k >= 0) list.splice(k, 1); else list.push(v); };
+  if (t.dataset.obPtoggle) { const [i, k] = t.dataset.obPtoggle.split('.'); flip(d.pieces[+i][k], t.dataset.v); redraw(); }
+  if (t.dataset.obSpec) {
+    const [i, id] = t.dataset.obSpec.split('.');
+    const pc = d.pieces[+i];
+    const sp = defs.specs[pc.value]?.find((x) => x.id === id);
+    if (!sp) return;
+    pc.specs[id] = [...obSpecPicked(pc, sp)];
+    flip(pc.specs[id], t.dataset.v);
     redraw();
   }
-  if (act === 'add-budget') { d.budgets.push(''); redraw(); document.querySelectorAll('[data-ob^="budgets."]').forEach((x, k, all) => k === all.length - 1 && x.focus()); }
-  if (t.dataset.obDelBudget) { d.budgets.splice(+t.dataset.obDelBudget, 1); redraw(); }
+  if (t.dataset.obAddBudget !== undefined) { const i = +t.dataset.obAddBudget; d.pieces[i].budgets.push(''); redraw(); document.querySelectorAll(`[data-ob^="pieces.${i}.budgets."]`).forEach((x, k, all) => k === all.length - 1 && x.focus()); }
+  if (t.dataset.obDelBudget) { const [i, k] = t.dataset.obDelBudget.split('.').map(Number); d.pieces[i].budgets.splice(k, 1); redraw(); }
+  if (t.dataset.obCopyBudget) { const [i, from] = t.dataset.obCopyBudget.split('.').map(Number); d.pieces[i].budgets = [...d.pieces[from].budgets]; redraw(); }
+  if (t.dataset.obAddQuestion !== undefined) {
+    const i = +t.dataset.obAddQuestion;
+    if (d.pieces[i].questions.length >= 6) return;
+    d.pieces[i].questions.push({ uid: uid(), label: '', options: '' });
+    redraw();
+    document.querySelectorAll(`[data-ob^="pieces.${i}.questions."][data-ob$=".label"]`).forEach((x, k, all) => k === all.length - 1 && x.focus());
+  }
+  if (t.dataset.obDelQuestion) { const [i, k] = t.dataset.obDelQuestion.split('.').map(Number); d.pieces[i].questions.splice(k, 1); redraw(); }
+  if (act === 'add-product') {
+    if (d.products.length >= 24) return;
+    d.products.push({ uid: uid(), name: '', price: '', url: '', description: '', image: '', pieces: [] });
+    redraw();
+    document.querySelectorAll('[data-ob^="products."][data-ob$=".name"]').forEach((x, k, all) => k === all.length - 1 && x.focus());
+  }
+  if (t.dataset.obDelProduct !== undefined) {
+    const x = d.products[+t.dataset.obDelProduct];
+    if ((x.name || x.image) && !(await JLUI.confirm('Remove this product?'))) return;
+    d.products.splice(+t.dataset.obDelProduct, 1);
+    redraw();
+  }
+  if (t.dataset.obProdPiece !== undefined) { flip(d.products[+t.dataset.obProdPiece].pieces, t.dataset.v); redraw(); }
   if (act === 'send') {
     if (OB.uploads.size) return JLUI.alert('Wait for your photos to finish uploading before sending.');
     if (!(await JLUI.confirm('Send your answers to our team? You won\'t be able to edit them here after that, but you can always message us changes.'))) return;
