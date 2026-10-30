@@ -294,6 +294,7 @@ async function createRender(request, env, leadId, ctx) {
       await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
       await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ? WHERE id = ?')
         .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, renderId).run();
+      await monthlyBudgetCheck(env, lead.form_id).catch((e) => console.error('monthly budget check', e.message));
       return json({
         url: `/media/${key}`, n, remaining: form.maxRenders - n,
         ...(env.DEV_MODE === '1' ? { dev: { model: model.label, ms: out.ms, inTokens: out.inT, outTokens: out.outT, costUsd: out.cost, prompt } } : {}),
@@ -306,6 +307,29 @@ async function createRender(request, env, leadId, ctx) {
   })();
   ctx?.waitUntil?.(job.catch(() => {}));
   return job;
+}
+
+// Mjesečni AI budžet po klijentu (zlataru): $50, ili CLIENT_MONTHLY_BUDGET_USD u Cloudflare Variables.
+// Ne zaustavlja rendere: admin dobije obavještenje kad klijent pređe granicu, klijent vidi potrošnju u portalu.
+// Mjesec je kalendarski po UTC-u; broje se renderi i try-on upita tog klijenta (probni renderi iz buildera ne).
+const monthlyBudget = (env) => { const n = Number(env.CLIENT_MONTHLY_BUDGET_USD); return Number.isFinite(n) && n > 0 ? n : 50; };
+const monthStart = (t = Date.now(), add = 0) => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + add, 1); };
+async function clientMonthCost(env, clientId) {
+  const r = await env.DB.prepare('SELECT COALESCE(SUM(r.cost_usd), 0) AS cost FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND r.created_at >= ?')
+    .bind(clientId, monthStart()).first();
+  return r?.cost || 0;
+}
+// Poslije svakog plaćenog rendera: prešao granicu ovog mjeseca -> jedno obavještenje po klijentu i mjesecu.
+async function monthlyBudgetCheck(env, formId) {
+  const f = await env.DB.prepare('SELECT f.client_id, c.name FROM forms f JOIN clients c ON c.id = f.client_id WHERE f.id = ?').bind(formId).first();
+  if (!f) return;
+  const limit = monthlyBudget(env);
+  const spent = await clientMonthCost(env, f.client_id);
+  if (spent < limit) return;
+  const month = new Date().toISOString().slice(0, 7);
+  const ref = `monthly:${f.client_id}:${month}`;
+  await env.DB.prepare("INSERT INTO notifications (id, kind, title, ref, created_at) SELECT ?, 'budget', ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM notifications WHERE ref = ?)")
+    .bind(rid(12), clean(`${f.name} passed the $${limit} monthly AI budget: $${spent.toFixed(2)} so far in ${month}`, 160), ref, Date.now(), ref).run();
 }
 
 // Kad se dostigne dnevni budžet ili pauza: jedno obavještenje dnevno po razlogu (zvonce u builderu).
@@ -364,6 +388,7 @@ async function createTryOn(request, env, leadId, ctx) {
       await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
       await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ? WHERE id = ?')
         .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, renderId).run();
+      await monthlyBudgetCheck(env, lead.form_id).catch((e) => console.error('monthly budget check', e.message));
       return json({ url: await signMedia(env, key), base: pick.n, remaining: TRYONS_PER_LEAD - (tries.filter((r) => r.status === 'ok').length + 1) });
     } catch (err) {
       console.error('try-on failed', model.id, err.message);
@@ -979,11 +1004,13 @@ async function adminNotifications(request, env, p) {
 // Pregled svih formi za builder: upiti, renderi, zadnji upit i trošak po formi, plus aktivni linkovi klijenata.
 async function adminOverview(request, env) {
   if (!(await isAdmin(request, env))) return json({ error: 'Not allowed.' }, 403);
-  const [leads, renders, links, tests] = await env.DB.batch([
+  const start = monthStart();
+  const [leads, renders, links, tests, month] = await env.DB.batch([
     env.DB.prepare('SELECT form_id, COUNT(*) AS leads, MAX(created_at) AS last_lead FROM leads GROUP BY form_id'),
     env.DB.prepare("SELECT l.form_id, SUM(CASE WHEN r.status = 'ok' THEN 1 ELSE 0 END) AS renders, SUM(r.cost_usd) AS cost FROM renders r JOIN leads l ON l.id = r.lead_id GROUP BY l.form_id"),
     env.DB.prepare("SELECT client_id, MAX(started_at) AS created_at FROM portal_sessions WHERE kind = 'client' AND ended_at IS NULL AND (expires_at = 0 OR expires_at > ?) GROUP BY client_id").bind(Date.now()),
     env.DB.prepare("SELECT form_id, COUNT(*) AS tests, SUM(cost_usd) AS cost FROM test_renders WHERE status = 'ok' GROUP BY form_id"),
+    env.DB.prepare('SELECT f.client_id, SUM(r.cost_usd) AS cost FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id WHERE r.created_at >= ? AND f.client_id IS NOT NULL GROUP BY f.client_id').bind(start),
   ]);
   const stats = {};
   const row = (id) => (stats[id] ||= { leads: 0, renders: 0, cost: 0, lastLead: null, tests: 0, testCost: 0 });
@@ -991,7 +1018,10 @@ async function adminOverview(request, env) {
   for (const r of renders.results) Object.assign(row(r.form_id), { renders: r.renders || 0, cost: r.cost || 0 });
   // Probni renderi iz buildera su pravi trošak: ulaze u ukupno, a posebno se vidi koliko je na njih otišlo.
   for (const r of tests.results) { const x = row(r.form_id); x.tests = r.tests; x.testCost = r.cost || 0; x.cost += r.cost || 0; }
-  return json({ stats, links: Object.fromEntries(links.results.map((r) => [r.client_id, { createdAt: r.created_at }])) });
+  return json({
+    stats, links: Object.fromEntries(links.results.map((r) => [r.client_id, { createdAt: r.created_at }])),
+    month: { start, limit: monthlyBudget(env), clients: Object.fromEntries(month.results.map((r) => [r.client_id, r.cost || 0])) },
+  });
 }
 
 // Token iz zaglavlja (skripte) ili HttpOnly kolačića (browser: admin pregled ima prednost nad klijentovim linkom).
@@ -1063,7 +1093,7 @@ async function portalApi(request, env, p, secure) {
     const d = JSON.parse(client.data || '{}');
     const stats = await env.DB.prepare(`SELECT COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, COUNT(DISTINCT CASE WHEN l.created_at > ? THEN l.id END) AS recent
       FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ?`).bind(Date.now() - 30 * 86400_000, client.id).first();
-    // Po formi: upiti, renderi i zadnji upit. Trošak AI-ja klijent ne vidi (samo admin).
+    // Po formi: upiti, renderi i zadnji upit. Trošak po formi klijent ne vidi; vidi samo mjesečnu potrošnju naspram budžeta.
     const per = Object.fromEntries((await env.DB.prepare(`SELECT l.form_id, COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, MAX(l.created_at) AS last_lead
       FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? GROUP BY l.form_id`).bind(client.id).all()).results.map((r) => [r.form_id, r]));
     const ob = await env.DB.prepare('SELECT id, status, data, updated_at, submitted_at, rev FROM onboardings WHERE client_id = ? ORDER BY created_at DESC LIMIT 1').bind(client.id).first();
@@ -1077,6 +1107,7 @@ async function portalApi(request, env, p, secure) {
         leads: per[r.id]?.leads || 0, renders: per[r.id]?.renders || 0, lastLead: per[r.id]?.last_lead || null,
       })),
       stats: { leads: stats?.leads || 0, renders: stats?.renders || 0, recent: stats?.recent || 0 },
+      usage: { spent: Math.round((await clientMonthCost(env, client.id)) * 100) / 100, limit: monthlyBudget(env), resetsAt: monthStart(Date.now(), 1) },
     });
   }
   // Upiti po stranicama (50), bez dugih IN lista (D1 prima najviše 100 parametara po upitu).

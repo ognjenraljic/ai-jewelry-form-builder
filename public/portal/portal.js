@@ -122,10 +122,27 @@ function render() {
         <div class="stat">AI renders<b>${stats.renders}</b></div>
         <div class="stat">Live forms<b>${forms.length}</b></div>
       </div>
+      ${usageView()}
       ${P.me.onboarding?.status === 'submitted' || P.me.onboarding?.status === 'building' ? `<div class="ob-sent"><b>Thank you, we have your answers.</b> We are building your form now and it will appear under Forms. Your leads will show up here as soon as customers use it.</div>` : ''}
       ${P.tab === 'leads' ? leadsView() : formsView()}
       <p class="note">Want to change a form, add styles or questions? Contact your JewelryLead team.</p>
     </main>`;
+}
+
+// AI potrošnja ovog mjeseca naspram mjesečnog budžeta (vidi je i zlatar; trošak po formi ne).
+function usageView() {
+  const u = P.me.usage;
+  if (!u) return '';
+  const money = (n) => `$${(n || 0).toFixed(2)}`;
+  const pct = Math.min(100, (u.spent / u.limit) * 100);
+  const over = u.spent >= u.limit;
+  const resets = new Date(u.resetsAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return `
+    <div class="usage ${over ? 'over' : pct >= 80 ? 'near' : ''}">
+      <div class="usage-top"><span>AI usage this month</span><b>${money(u.spent)} <small>of ${money(u.limit)}</small></b></div>
+      <div class="usage-bar" role="progressbar" aria-valuemin="0" aria-valuemax="${u.limit}" aria-valuenow="${u.spent}" aria-label="AI usage this month"><i style="width:${pct.toFixed(1)}%"></i></div>
+      <small>${over ? 'Your monthly allowance is used up. Your form keeps working; your JewelryLead team will reach out.' : `${money(u.limit - u.spent)} left · resets ${esc(resets)}`}</small>
+    </div>`;
 }
 
 function leadsView() {

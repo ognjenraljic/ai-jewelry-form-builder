@@ -205,7 +205,7 @@ function renderHub() {
       </header>
       <main class="hub-main">
         <h2>All projects</h2>
-        <p class="lead">Every project (client) and their forms. AI cost is visible only here and in the admin, never to the client.</p>
+        <p class="lead">Every project (client) and their forms. AI cost per form is visible only here and in the admin; the client sees only this month's usage against their ${usd(B.overview.month?.limit || 50)} monthly allowance.</p>
         <div class="hub-stats">
           <div><span>Projects</span><b>${activeClients().length}</b></div>
           <div><span>Forms</span><b>${B.forms.filter((f) => !f.archivedAt).length}</b></div>
@@ -230,6 +230,11 @@ function renderHubList() {
     .filter((g) => !q || g.forms.length || hit(g.c?.name));
   document.getElementById('hub-list').innerHTML = shown.map(({ c, forms }) => {
     const link = c && B.overview.links[c.id];
+    // Zbir tabele projekta i mjesečna potrošnja naspram budžeta (obavještenje stiže kad se pređe).
+    const tot = forms.map((f) => statOf(f.id)).reduce((t, x) => ({ leads: t.leads + (x.leads || 0), renders: t.renders + (x.renders || 0), cost: t.cost + (x.cost || 0), lastLead: Math.max(t.lastLead, x.lastLead || 0) }), { leads: 0, renders: 0, cost: 0, lastLead: 0 });
+    const limit = B.overview.month?.limit || 50;
+    const spent = c ? B.overview.month?.clients?.[c.id] || 0 : 0;
+    const monthPill = c && !c.archivedAt ? `<span class="pill budget ${spent >= limit ? 'over' : spent >= limit * 0.8 ? 'near' : ''}" title="AI cost of this project's leads this month (UTC). You get a notification when it passes ${usd(limit)}.">This month ${usd(spent)} / ${usd(limit)}</span>` : '';
     const rows = forms.map((f) => {
       const s = statOf(f.id);
       return `<tr class="${f.archivedAt ? 'archived' : ''}">
@@ -243,6 +248,7 @@ function renderHubList() {
         ${c?.logo ? `<img src="${esc(c.logo)}" alt="" />` : `<span class="hub-mono">${esc((c?.name || '?').slice(0, 1))}</span>`}
         <div class="grow"><b>${esc(c ? c.name : 'Unassigned')}</b><small>${c ? [c.website, `${forms.length} form${forms.length === 1 ? '' : 's'}`].filter(Boolean).map(esc).join(' · ') : 'Forms without a client'}</small></div>
         ${c?.archivedAt ? `<span class="pill">Archived ${esc(day(c.archivedAt))}</span><button class="btn small" data-act="restore-client" data-cid="${esc(c.id)}">Restore client</button>` : ''}
+        ${monthPill}
         ${c && !c.archivedAt ? obPill(c.id) : ''}
         ${c && !c.archivedAt ? `<span class="pill ${link ? 'pill-def' : ''}" title="${link ? `Active since ${esc(day(link.createdAt))}` : 'The client has no portal link yet'}">${link ? 'Portal link on' : 'No portal link'}</span>
           <button class="btn small ghost" data-act="portal-link" data-cid="${esc(c.id)}">Portal link</button>
@@ -250,7 +256,7 @@ function renderHubList() {
           <button class="btn small" data-act="new-form" data-cid="${esc(c.id)}">+ Form</button>
           <button class="btn small ghost danger" data-act="archive-client" data-cid="${esc(c.id)}" title="Hide the client and their forms, turn off the portal link. Nothing is deleted.">Archive</button>` : ''}
       </div>
-      ${rows ? `<div class="table-wrap"><table class="hub-table"><colgroup><col /><col style="width:70px" /><col style="width:84px" /><col style="width:120px" /><col style="width:90px" /><col style="width:320px" /></colgroup><thead><tr><th>Form</th><th class="num">Leads</th><th class="num">Renders</th><th>Last lead</th><th class="num">AI cost</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="hint" style="margin:0">No forms yet.</p>'}
+      ${rows ? `<div class="table-wrap"><table class="hub-table"><colgroup><col /><col style="width:70px" /><col style="width:84px" /><col style="width:120px" /><col style="width:90px" /><col style="width:320px" /></colgroup><thead><tr><th>Form</th><th class="num">Leads</th><th class="num">Renders</th><th>Last lead</th><th class="num">AI cost</th><th></th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td>Total${forms.length > 1 ? ` · ${forms.length} forms` : ''}</td><td class="num">${tot.leads}</td><td class="num">${tot.renders}</td><td class="when">${esc(day(tot.lastLead)) || '<span class="faint">none</span>'}</td><td class="num">${usd(tot.cost)}</td><td></td></tr></tfoot></table></div>` : '<p class="hint" style="margin:0">No forms yet.</p>'}
     </section>`;
   }).join('') || '<p class="hint">Nothing matches your search.</p>';
 }
