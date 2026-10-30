@@ -31,32 +31,91 @@ const budgetEl = document.getElementById('studio-budget');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+// Prvi kadar je odmah gotov render: stranica se nikad ne otvara na zamućenoj slici.
+function showScene(i, instant = false) {
+  const s = SCENES[i];
+  titleEl.textContent = s.title;
+  budgetEl.textContent = s.budget;
+  chipsEl.innerHTML = s.chips.map(([k, v]) => `<span class="chip${instant ? ' on' : ''}">${k}: <b>${v}</b></span>`).join('');
+  return [...chipsEl.children];
+}
 async function play() {
+  showScene(0, true);
+  imgs[0].classList.add('on');
   let i = 0;
   for (;;) {
-    const s = SCENES[i];
-    titleEl.textContent = s.title;
-    budgetEl.textContent = s.budget;
-    chipsEl.innerHTML = s.chips.map(([k, v]) => `<span class="chip">${k}: <b>${v}</b></span>`).join('');
-    const chips = [...chipsEl.children];
-    if (reduced) {
-      chips.forEach((c) => c.classList.add('on'));
-      imgs.forEach((im, k) => im.classList.toggle('on', k === i));
-      await wait(4000);
-    } else {
-      // Prethodni render ostaje zamućen dok se slažu izbori, da okvir nikad nije prazan.
-      studio.classList.add('choosing');
-      for (const c of chips) { await wait(320); c.classList.add('on'); }
-      studio.classList.add('rendering');
-      await wait(1700);
-      imgs.forEach((im, k) => im.classList.toggle('on', k === i));
-      studio.classList.remove('rendering', 'choosing');
-      await wait(3800);
-    }
+    await wait(reduced ? 4000 : 3800);
     i = (i + 1) % SCENES.length;
+    if (reduced) {
+      showScene(i, true);
+      imgs.forEach((im, k) => im.classList.toggle('on', k === i));
+      continue;
+    }
+    // Prethodni render ostaje zamućen dok se slažu izbori, da okvir nikad nije prazan.
+    studio.classList.add('choosing');
+    const chips = showScene(i);
+    for (const c of chips) { await wait(320); c.classList.add('on'); }
+    studio.classList.add('rendering');
+    await wait(1700);
+    imgs.forEach((im, k) => im.classList.toggle('on', k === i));
+    studio.classList.remove('rendering', 'choosing');
   }
 }
-if (studio) { imgs[imgs.length - 1].classList.add('on'); play(); }
+if (studio) play();
+
+// Priča na skrol: isti prsten od izbora stila do leada (They design it / AI renders it / You close it).
+const story = document.querySelector('.story');
+if (story) {
+  const STEPS = 5;
+  const BEAT = [0, 0, 1, 1, 2];
+  const TAGS = ['Style picked', 'Style picked', 'First render', 'After one refinement', 'In your portal'];
+  const TYPED = 'Engrave a small star';
+  const frame = story.querySelector('.story-frame');
+  const shots = [...story.querySelectorAll('.shot')];
+  const beats = [...story.querySelectorAll('.beat')];
+  const ats = [...story.querySelectorAll('[data-at]')];
+  const leadCard = story.querySelector('.story-lead');
+  const tag = document.getElementById('story-tag');
+  const typed = document.getElementById('story-typed');
+  const bar = document.getElementById('story-bar');
+  let cur = -1;
+  let typer = null;
+  const setStep = (step) => {
+    if (step === cur) return;
+    const prev = cur;
+    cur = step;
+    shots.forEach((im) => im.classList.toggle('on', step >= +im.dataset.from && step <= +im.dataset.to));
+    beats.forEach((b, k) => b.classList.toggle('on', k === BEAT[step]));
+    ats.forEach((el) => el.classList.toggle('on', step >= +el.dataset.at && (!el.matches('.tweak-bar') || step === 3)));
+    leadCard.classList.toggle('on', step === 4);
+    tag.textContent = TAGS[step];
+    // Novi render prelazi skenom; kucanje dorade samo kad se ulazi u taj korak.
+    if (prev >= 0 && step !== prev && (step === 2 || step === 3)) { frame.classList.remove('scanning'); void frame.offsetWidth; frame.classList.add('scanning'); }
+    clearInterval(typer);
+    if (step !== 3) { typed.textContent = step > 3 ? TYPED : ''; return; }
+    if (reduced) { typed.textContent = TYPED; return; }
+    let n = 0;
+    typed.textContent = '';
+    typer = setInterval(() => { typed.textContent = TYPED.slice(0, ++n); if (n >= TYPED.length) clearInterval(typer); }, 34);
+  };
+  let tick = false;
+  const onScroll = () => {
+    tick = false;
+    const r = story.getBoundingClientRect();
+    const span = r.height - story.querySelector('.story-pin').offsetHeight;
+    const p = Math.max(0, Math.min(1, -r.top / span));
+    bar.style.transform = `scaleX(${p})`;
+    setStep(Math.min(STEPS - 1, Math.floor(p * STEPS)));
+  };
+  const queue = () => { if (!tick) { tick = true; requestAnimationFrame(onScroll); } };
+  addEventListener('scroll', queue, { passive: true });
+  addEventListener('resize', queue);
+  onScroll();
+}
+
+// Prije i poslije dorade: prevlačenje preko slike.
+const ba = document.getElementById('ba');
+ba?.querySelector('input').addEventListener('input', (e) => ba.style.setProperty('--x', `${e.target.value}%`));
 
 // Forma za demo
 const form = document.getElementById('demo-form');
