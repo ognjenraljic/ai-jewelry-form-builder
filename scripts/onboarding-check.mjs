@@ -96,8 +96,20 @@ const submitted = await stored();
 check(submitted.status === 'submitted' && submitted.data.notes === 'Final unsaved note', 'final unsaved answers included in submission');
 const notices = (await req('/api/admin/notifications', { admin: true })).data.items.filter((n) => n.ref === obId);
 check(notices.length === 1, 'admin receives exactly one notification');
-const built = await post(`${obPath}/build`, {}, { admin: true });
-check(built.status === 200, 'admin builds real form from submitted onboarding');
+if (process.env.QA_STATE) {
+  const sql = (statement) => execFileSync(process.execPath, ['node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'konfigurator', '--local', '--persist-to', process.env.QA_STATE, '--command', statement], { stdio: 'pipe', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } });
+  const trigger = `qa_fail_form_${run}`;
+  sql(`CREATE TRIGGER ${trigger} BEFORE INSERT ON forms WHEN NEW.client_id = '${client.id}' BEGIN SELECT RAISE(ABORT, 'QA form failure'); END;`);
+  try {
+    const failed = await post(`${obPath}/build`, {}, { admin: true });
+    check(failed.status === 400 && failed.data.error.includes('QA form failure'), 'failed build reports the real reason');
+    check((await stored()).status === 'submitted', 'failed build can be repeated right away');
+  } finally { sql(`DROP TRIGGER IF EXISTS ${trigger};`); }
+}
+const builds = await Promise.all([post(`${obPath}/build`, {}, { admin: true }), post(`${obPath}/build`, {}, { admin: true })]);
+const built = builds.find((x) => x.status === 200);
+check(built, 'admin builds real form from submitted onboarding');
+check(builds.filter((x) => x.status === 200).length === 1 && !/not sent/.test(JSON.stringify(builds)), 'double click makes one form and never says the onboarding was not sent');
 const publicForm = (await req(`/api/forms/${built.data.form.id}`)).data;
 check(publicForm.theme.accent === p.theme.accent && publicForm.theme.bg === p.theme.bg, 'published-form theme matches preview');
 check(labels(publicForm, 'metal').join() === labels(p, 'metal').join() && labels(publicForm, 'stones').join() === labels(p, 'stones').join(), 'real custom choices match preview');

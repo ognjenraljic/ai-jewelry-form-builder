@@ -38,6 +38,7 @@ const tryOnModel = (env) => {
 const LEADS_PER_IP_HOUR = 10;
 const MAX_REF_BYTES = 8 * 1024 * 1024;
 const STALE_PENDING_MS = 180_000;
+const STALE_BUILD_MS = 120_000;
 const PAGE_SIZE = 50;
 const LEAD_STATUSES = ['new', 'contacted', 'quoted', 'won', 'lost'];
 const SELFIE_DAYS = 30;
@@ -947,45 +948,48 @@ async function adminOnboardings(request, env, p) {
   if ((m = p.match(/^\/api\/admin\/onboardings\/([a-z0-9]+)\/build$/)) && request.method === 'POST') {
     const ob = await env.DB.prepare('SELECT * FROM onboardings WHERE id = ?').bind(m[1]).first();
     if (!ob) return json({ error: 'Not found' }, 404);
-    if (ob.status !== 'submitted') return json({ error: ob.status === 'done' ? 'A form was already created from this onboarding.' : 'The client has not sent this onboarding yet.' }, 409);
+    if (ob.status === 'done') return json({ error: 'A form was already created from this onboarding.' }, 409);
+    if (ob.status === 'draft') return json({ error: 'The client has not sent this onboarding yet.' }, 409);
     const client = await env.DB.prepare('SELECT * FROM clients WHERE id = ?').bind(ob.client_id).first();
     if (!client) return json({ error: 'Client not found' }, 404);
-    // Zauzmi onboarding (dvostruki klik ne pravi dvije forme).
-    const claim = await env.DB.prepare("UPDATE onboardings SET status = 'building', updated_at = ? WHERE id = ? AND status = 'submitted'").bind(Date.now(), ob.id).run();
-    if (!claim.meta.changes) return json({ error: 'This onboarding is already being turned into a form.' }, 409);
-    const unclaim = () => env.DB.prepare("UPDATE onboardings SET status = 'submitted' WHERE id = ? AND status = 'building'").bind(ob.id).run();
-    const d = JSON.parse(ob.data || '{}');
-    const id = await uniqueId(env, 'forms', `${client.id}-custom`);
-    const prefix = `/media/onboarding/${client.id}/`;
-    const copy = async (url, dir) => {
-      if (!url || !url.startsWith(prefix) || url.includes('..')) return '';
-      const obj = await env.MEDIA.get(url.slice(7));
-      if (!obj) return '';
-      const key = `${dir}/${rid(10)}.${url.split('.').pop()}`;
-      await env.MEDIA.put(key, obj.body, { httpMetadata: { contentType: obj.httpMetadata?.contentType || 'image/webp' } });
-      return `/media/${key}`;
-    };
-    const map = new Map();
-    const images = [...(d.pieces || []).flatMap((piece) => (piece.styles || []).map((s) => s?.image)), ...(d.products || []).map((x) => x?.image)];
-    for (const u of images) if (u?.startsWith(prefix) && !map.has(u)) map.set(u, await copy(u, `forms/${id}`));
-    const logo = d.store?.logo?.startsWith(prefix) ? await copy(d.store.logo, `clients/${client.id}`) : d.store?.logo?.startsWith('/media/clients/') ? d.store.logo : '';
-    let form;
+    // Zauzmi onboarding (dvostruki klik ne pravi dvije forme). Pravljenje koje je palo usred posla se može ponoviti poslije STALE_BUILD_MS.
+    const claim = await env.DB.prepare("UPDATE onboardings SET status = 'building', updated_at = ? WHERE id = ? AND (status = 'submitted' OR (status = 'building' AND updated_at < ?))").bind(Date.now(), ob.id, Date.now() - STALE_BUILD_MS).run();
+    if (!claim.meta.changes) return json({ error: 'This form is still being created. Please wait a moment and refresh.' }, 409);
     try {
-      form = formFromOnboarding(d, { id, clientId: client.id, brand: clean(d.store?.name, 60) || client.name, logo, img: (u) => (u.startsWith('/library/') ? u : map.get(u) || '') });
+      const d = JSON.parse(ob.data || '{}');
+      const id = await uniqueId(env, 'forms', `${client.id}-custom`);
+      const prefix = `/media/onboarding/${client.id}/`;
+      const copy = async (url, dir) => {
+        if (!url || !url.startsWith(prefix) || url.includes('..')) return '';
+        const obj = await env.MEDIA.get(url.slice(7));
+        if (!obj) return '';
+        const key = `${dir}/${rid(10)}.${url.split('.').pop()}`;
+        await env.MEDIA.put(key, obj.body, { httpMetadata: { contentType: obj.httpMetadata?.contentType || 'image/webp' } });
+        return `/media/${key}`;
+      };
+      const map = new Map();
+      const images = [...(d.pieces || []).flatMap((piece) => (piece.styles || []).map((s) => s?.image)), ...(d.products || []).map((x) => x?.image)];
+      for (const u of images) if (u?.startsWith(prefix) && !map.has(u)) map.set(u, await copy(u, `forms/${id}`));
+      const logo = d.store?.logo?.startsWith(prefix) ? await copy(d.store.logo, `clients/${client.id}`) : d.store?.logo?.startsWith('/media/clients/') ? d.store.logo : '';
+      const form = formFromOnboarding(d, { id, clientId: client.id, brand: clean(d.store?.name, 60) || client.name, logo, img: (u) => (u.startsWith('/library/') ? u : map.get(u) || '') });
       validateFormDef(form, id);
-    } catch (e) { await unclaim(); return json({ error: e.message }, 400); }
-    const cd = JSON.parse(client.data || '{}');
-    const extra = [d.questions && `Questions they want to ask customers: ${clean(d.questions, 1500)}`, d.notes && `Notes from onboarding: ${clean(d.notes, 1500)}`].filter(Boolean).join('\n');
-    const now = Date.now();
-    await env.DB.batch([
-      env.DB.prepare('INSERT INTO forms (id, data, client_id, template, updated_at) VALUES (?,?,?,?,?)').bind(id, JSON.stringify(form), client.id, 'custom-enquiry', now),
-      env.DB.prepare('UPDATE onboardings SET status = ?, form_id = ?, updated_at = ? WHERE id = ?').bind('done', id, now, ob.id),
-      env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify({
-        ...cd, website: cd.website || clean(d.store?.website, 200), logo: cd.logo || logo,
-        notes: [cd.notes, extra].filter(Boolean).join('\n\n').slice(0, 4000),
-      }), client.id),
-    ]);
-    return json({ form });
+      const cd = JSON.parse(client.data || '{}');
+      const extra = [d.questions && `Questions they want to ask customers: ${clean(d.questions, 1500)}`, d.notes && `Notes from onboarding: ${clean(d.notes, 1500)}`].filter(Boolean).join('\n');
+      const now = Date.now();
+      await env.DB.batch([
+        env.DB.prepare('INSERT INTO forms (id, data, client_id, template, updated_at) VALUES (?,?,?,?,?)').bind(id, JSON.stringify(form), client.id, 'custom-enquiry', now),
+        env.DB.prepare('UPDATE onboardings SET status = ?, form_id = ?, updated_at = ? WHERE id = ?').bind('done', id, now, ob.id),
+        env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify({
+          ...cd, website: cd.website || clean(d.store?.website, 200), logo: cd.logo || logo,
+          notes: [cd.notes, extra].filter(Boolean).join('\n\n').slice(0, 4000),
+        }), client.id),
+      ]);
+      return json({ form });
+    } catch (e) {
+      console.error('onboarding build failed', ob.id, e);
+      await env.DB.prepare("UPDATE onboardings SET status = 'submitted' WHERE id = ? AND status = 'building'").bind(ob.id).run();
+      return json({ error: `Could not create the form: ${e.message}` }, 400);
+    }
   }
   return json({ error: 'Not found' }, 404);
 }

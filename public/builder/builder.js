@@ -290,7 +290,7 @@ function obPill(cid) {
   const o = latestOb(cid);
   if (!o) return '';
   if (o.status === 'draft') return `<span class="pill" title="Last saved ${esc(day(o.updated_at))}">Onboarding: waiting for client</span><button class="btn small ghost" data-act="ob-link" data-cid="${esc(cid)}" title="Copy the same portal link for onboarding">Resend link</button>`;
-  if (o.status === 'submitted') return `<button class="btn small primary" data-act="ob-review" data-obid="${esc(o.id)}">Review onboarding</button>`;
+  if (o.status === 'submitted' || o.status === 'building') return `<button class="btn small primary" data-act="ob-review" data-obid="${esc(o.id)}">Review onboarding</button>`;
   return '';
 }
 
@@ -386,7 +386,7 @@ async function reviewOnboarding(obid) {
   dlg.className = 'obr';
   dlg.innerHTML = `
     <h2>${esc(ob.name || 'Onboarding')}</h2>
-    <p class="lead">${ob.status === 'submitted' ? `Sent ${esc(day(ob.submitted_at))}.` : ob.status === 'done' ? 'A form was already created from this onboarding.' : 'Still in progress (not sent yet).'}</p>
+    <p class="lead">${ob.status === 'submitted' || ob.status === 'building' ? `Sent ${esc(day(ob.submitted_at))}.` : ob.status === 'done' ? 'A form was already created from this onboarding.' : 'Still in progress (not sent yet).'}</p>
     <div class="obr-store">${s.logo ? `<img src="${esc(s.logo)}" alt="" />` : ''}<div><b>${esc(s.name || '')}</b><small>${esc(s.website || '')} · ${s.theme === 'light' ? 'Light' : 'Dark'} look <i style="background:${esc(s.accent || '#35d0c4')}"></i></small></div></div>
     ${pieces}
     <dl class="obr-list">
@@ -400,7 +400,7 @@ async function reviewOnboarding(obid) {
     <p class="err-text"></p>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
       <button class="btn" data-obr="close">Close</button>
-      ${ob.status === 'done' && ob.form_id ? `<button class="btn primary" data-obr="open" data-id="${esc(ob.form_id)}">Open the form</button>` : ob.status === 'submitted' ? '<button class="btn primary" data-obr="build">Create form from it</button>' : ''}
+      ${ob.status === 'done' && ob.form_id ? `<button class="btn primary" data-obr="open" data-id="${esc(ob.form_id)}">Open the form</button>` : ob.status === 'submitted' || ob.status === 'building' ? '<button class="btn primary" data-obr="build">Create form from it</button>' : ''}
     </div>`;
   document.body.appendChild(dlg);
   dlg.addEventListener('click', async (e) => {
