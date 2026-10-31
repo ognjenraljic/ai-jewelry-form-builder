@@ -627,9 +627,12 @@ async function createDemoRequest(request, env) {
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const slugify = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36);
 
+// Id mora stati u SLUG_RE (40 znakova) i kad je ime klijenta dugo, zajedno sa nastavkom -custom i brojem -2.
+const fitId = (base, suffix = '') => `${base.slice(0, 40 - suffix.length).replace(/-+$/, '')}${suffix}`;
 async function uniqueId(env, table, base) {
-  let id = base || 'item';
-  for (let i = 2; await env.DB.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).bind(id).first() || (table === 'forms' && FORMS[id]); i++) id = `${base}-${i}`;
+  const root = base || 'item';
+  let id = fitId(root);
+  for (let i = 2; await env.DB.prepare(`SELECT 1 FROM ${table} WHERE id = ?`).bind(id).first() || (table === 'forms' && FORMS[id]); i++) id = fitId(root, `-${i}`);
   return id;
 }
 

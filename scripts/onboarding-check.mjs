@@ -17,7 +17,7 @@ async function req(path, { method = 'GET', body, portal, admin = false } = {}) {
 }
 const post = (path, body, extra = {}) => req(path, { method: 'POST', body, ...extra });
 const run = Date.now().toString(36);
-const client = (await post('/api/admin/clients', { name: `Onboarding QA ${run}` }, { admin: true })).data.client;
+const client = (await post('/api/admin/clients', { name: `Onboarding QA ${run} Long Jewelers Denver Gonzalez` }, { admin: true })).data.client;
 check(client?.id, 'test client created');
 const start = await post(`/api/admin/clients/${client.id}/onboarding`, {}, { admin: true });
 const portal = new URL(start.data.url).hash.slice(3);
