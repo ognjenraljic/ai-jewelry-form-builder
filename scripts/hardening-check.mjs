@@ -25,6 +25,7 @@ const sql = (q) => {
   execFileSync('npx', ['wrangler', 'd1', 'execute', 'konfigurator', '--local', '--file', f], { cwd: ROOT, stdio: 'pipe', env: { ...process.env, WRANGLER_SEND_METRICS: 'false' } });
 };
 const RUN = Date.now().toString(36);
+sql("UPDATE forms SET archived_at = NULL WHERE id = 'landing-demo';"); // migracija 0012 je arhivira, a ovi testovi je koriste lokalno
 const ringA = { type: 'ring', style: 'halo', metal: 'white-gold', karat: '14K', stones: 'lab', coverage: 'accents', budget: '$1,500 - $2,500' };
 const grillzA = { type: 'grillz', style: 'top6', teeth: 'T3,T4,T5,T6,T7,T8', metal: 'yellow-gold', karat: '14K', stones: 'none', budget: 'Under $1,500' };
 async function lead(form, answers, over = {}, files = {}) {

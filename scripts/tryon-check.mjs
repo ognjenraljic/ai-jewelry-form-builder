@@ -34,7 +34,7 @@ async function request(path, body, headers = {}) {
   return data;
 }
 const fd = new FormData();
-for (const [key, value] of Object.entries({ formId: 'landing-demo', name: 'Try-on QA', email: 'tryon@example.com', phone: '555 010 0009', consent: 'yes', answers: JSON.stringify({ type: 'grillz', style: 'other', teeth: 'T5,T6,B5,B6', metal: 'white-gold', karat: '14K', stones: 'lab', coverage: 'full', budget: '$1,500 - $2,500' }) })) fd.set(key, value);
+for (const [key, value] of Object.entries({ formId: 'demo', name: 'Try-on QA', email: 'tryon@example.com', phone: '555 010 0009', consent: 'yes', answers: JSON.stringify({ type: 'grillz', style: 'other', teeth: 'T5,T6,B5,B6', metal: 'white-gold', karat: '14K', stones: 'lab', coverage: 'full', budget: '$1,500 - $2,500' }) })) fd.set(key, value);
 const lead = await request('/api/leads', fd);
 const path = `/api/leads/${lead.leadId}`;
 const renders = [];
@@ -61,4 +61,4 @@ const both = await request(path, null, { 'x-lead-token': lead.token });
 check(second.remaining === 0 && both.tryons.map(t => t.base).join() === '2,3', 'two saved try-ons retain independent source designs after refresh');
 if (process.env.QA_STATE_FILE) writeFileSync(process.env.QA_STATE_FILE, JSON.stringify({ leadId: lead.leadId, token: lead.token }));
 console.log(`Passed ${checks} checks. No paid AI calls.`);
-console.log(`Local UI review: ${base}/f/landing-demo, lead ${lead.leadId}`);
+console.log(`Local UI review: ${base}/f/demo, lead ${lead.leadId}`);

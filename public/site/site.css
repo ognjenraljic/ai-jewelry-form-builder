@@ -146,12 +146,6 @@ section { position: relative; scroll-margin-top: 72px; }
 @keyframes slide { to { transform: translateX(calc(-50% - 7px)); } }
 
 /* Zivi demo */
-.demo { background: radial-gradient(900px 500px at 50% 0%, rgba(53, 208, 196, 0.09), transparent 70%); }
-.demo .sec-head { margin-bottom: 40px; }
-.demo-frame { position: relative; max-width: 860px; min-height: 620px; margin: 0 auto; border-radius: 24px; overflow: hidden; border: 1px solid var(--line-strong); background: #0a1012; box-shadow: 0 50px 120px -60px rgba(53, 208, 196, 0.4); }
-.demo-loading { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--serif); font-size: 24px; font-style: italic; color: var(--ink-faint); }
-.demo-frame iframe { position: relative; }
-.demo-note { text-align: center; font-size: 14px; color: var(--ink-faint); margin: 20px 0 0; }
 
 /* Prica na skrol */
 .story { height: 460vh; background: linear-gradient(180deg, var(--bg), var(--bg-2)); }
@@ -300,7 +294,6 @@ footer a:hover { color: var(--ink); }
 @media (max-width: 760px) {
   .strip figure { width: 180px; }
   .story { height: 380vh; }
-  .demo-frame { min-height: 560px; border-radius: 18px; }
   .tile { padding: 20px; }
   .tile h3 { font-size: 28px; }
   .hero-note { display: none; }
