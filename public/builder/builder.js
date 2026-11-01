@@ -702,19 +702,19 @@ const imgPick = (path, { scope = 'forms', size = 'sm', empty = 'Image' } = {}) =
   return `<label class="pick ${size}" title="${v ? 'Replace image or drag a new photo here' : 'Upload or drop an image'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span>${esc(empty)}${size === 'logo' ? '<small>or drag & drop here</small>' : ''}</span>`}<input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="${path}" data-scope="${scope}" /></label>${v ? `<button class="icon-btn danger" title="Remove image" data-act="unset" data-path="${path}">✕</button>` : ''}`;
 };
 // Card art is selected from the catalogue or this form's own uploaded images.
-const cardImagePick = (path) => {
+const cardImagePick = (path, shown = getP(path)) => {
   const image = getP(path);
-  return `<button class="card-image-select" aria-label="Select image" data-act="image-library" data-path="${esc(path)}">${image ? `<img src="${esc(image)}" alt="Selected card image" />` : `<span class="card-image-placeholder">${nav('image')}</span>`}<span><b>Select image</b><small>Browse library or add your own</small></span>${nav('plus')}</button>${image ? `<button class="icon-btn danger" title="Remove image" aria-label="Remove card image" data-act="unset" data-path="${esc(path)}">✕</button>` : ''}`;
+  return `<button class="card-image-select" aria-label="Change image" data-act="image-library" data-path="${esc(path)}" data-shown="${esc(shown || '')}">${shown ? `<img src="${esc(shown)}" alt="Selected card image" />` : `<span class="card-image-placeholder">${nav('image')}</span>`}<span><b>${shown ? 'Change image' : 'Select image'}</b><small>${shown && !image ? 'Default image. Pick another or add your own' : 'Browse library or add your own'}</small></span>${nav('plus')}</button>${image ? `<button class="icon-btn danger" title="Remove image" aria-label="Remove card image" data-act="unset" data-path="${esc(path)}">✕</button>` : ''}`;
 };
 
-async function openImageLibrary(path) {
+async function openImageLibrary(path, shown = '') {
   const formId = B.id;
   const previous = document.activeElement;
-  const selected = getP(path);
+  const selected = getP(path) || shown;
   const d = document.createElement('dialog');
   d.className = 'image-library';
   d.setAttribute('aria-labelledby', 'image-library-title');
-  let images = [], next = null, category = selected?.startsWith('/media/') ? 'uploads' : path.includes('.options.') ? 'options' : selected?.match(/^\/library\/([a-z]+)\//)?.[1] || B.piece || '', search = '', busy = false;
+  let images = [], next = null, category = selected?.startsWith('/media/') ? 'uploads' : selected?.match(/^\/library\/([a-z]+)\//)?.[1] || (!shown && path.includes('.options.') ? 'options' : B.piece || ''), search = '', busy = false;
   const controller = new AbortController();
   d.innerHTML = `<div class="image-library-head"><div><h2 id="image-library-title">Select image</h2><p class="hint">Choose from the library or upload an image for this form.</p></div><button class="icon-btn" data-library-close aria-label="Close image library">✕</button></div>
     <div class="image-library-upload" data-upload-box><button type="button" data-library-add aria-label="Add new image">${nav('plus')}<b>Add new</b></button><small>Choose a JPG, PNG or WebP, or drag & drop here</small><input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="${esc(path)}" data-scope="forms" /></div>
@@ -866,7 +866,7 @@ function piecesView() {
   if (!opts.some((o) => o.value === B.piece)) B.piece = opts[0]?.value;
   const list = opts.map((o, k) => `
     <div class="piece ${o.value === B.piece ? 'sel' : ''}" data-act="pick-piece" data-v="${esc(o.value)}" tabindex="0" role="button" aria-pressed="${o.value === B.piece}">
-      ${o.image ? `<img class="piece-img" src="${esc(o.image)}" alt="" />` : icon(o.icon)}
+      ${optionArt('type', o) ? `<img class="piece-img" src="${esc(optionArt('type', o))}" alt="" />` : icon(o.icon)}
       <div><b>${esc(o.label)}</b><small>${(B.draft.styles?.[o.value] || []).length} styles · id: ${esc(o.value)}</small></div>
       <span>
         <button class="icon-btn" title="Move up" data-act="move" data-path="${loc.path}.options" data-i="${k}" data-d="-1">↑</button>
@@ -880,6 +880,8 @@ function piecesView() {
   if (k >= 0) {
     const op = `${loc.path}.options.${k}`;
     const o = opts[k];
+    // Ista slika kao u formi: vlastita, a bez nje ugrađena slika komada. Ikonica važi samo za komad bez slike.
+    const art = optionArt('type', o);
     const styles = B.draft.styles?.[o.value] || [];
     const cards = styles.map((s, j) => `
       <div class="style">
@@ -899,8 +901,8 @@ function piecesView() {
       </div>`).join('');
     editor = `
       <div class="card sel" style="margin-top:16px">
-        <div class="row">${inp(`${op}.label`, 'Name shown to customers')}${iconPicker(`${op}.icon`, o.icon)}</div>
-        <div class="f"><span>Card image (optional, replaces the icon)</span><div class="pick-row">${cardImagePick(`${op}.image`)}</div></div>
+        ${art ? inp(`${op}.label`, 'Name shown to customers') : `<div class="row">${inp(`${op}.label`, 'Name shown to customers')}${iconPicker(`${op}.icon`, o.icon)}</div>`}
+        <div class="f"><span>${art ? 'Card image' : 'Card image (optional, replaces the icon)'}</span><div class="pick-row">${cardImagePick(`${op}.image`, art)}</div></div>
         ${area(`${op}.subject`, 'How the AI should describe this piece', { ph: 'e.g. a custom western belt buckle, oval, front view', hint: 'Optional for built-in pieces (pendant, chain, ring, grillz, bracelet, earrings, watch). Needed for new ones.' })}
       </div>
       ${o.value === 'grillz' ? `<div class="toggles" style="margin:14px 0 4px">${toggle('tryOn', 'Offer "See them on your smile" after the render (customer uploads a smiling photo)', { invert: true, title: 'The AI shows the customer wearing the grillz. The photo stays private.' })}</div>` : ''}
@@ -1374,7 +1376,7 @@ app.addEventListener('click', async (e) => {
     pushPreview('products');
   }
   if (act === 'save') save();
-  if (act === 'image-library') openImageLibrary(el.dataset.path);
+  if (act === 'image-library') openImageLibrary(el.dataset.path, el.dataset.shown);
   if (act === 'pick-icon' && Object.hasOwn(ICONS, el.dataset.v)) {
     setP(el.dataset.path, el.dataset.v);
     changed(true);
