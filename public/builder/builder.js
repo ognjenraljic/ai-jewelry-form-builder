@@ -865,12 +865,12 @@ function piecesView() {
   const opts = loc.field.options;
   if (!opts.some((o) => o.value === B.piece)) B.piece = opts[0]?.value;
   const list = opts.map((o, k) => `
-    <div class="piece ${o.value === B.piece ? 'sel' : ''}" data-act="pick-piece" data-v="${esc(o.value)}" tabindex="0" role="button" aria-pressed="${o.value === B.piece}">
-      ${optionArt('type', o) ? `<img class="piece-img" src="${esc(optionArt('type', o))}" alt="" />` : icon(o.icon)}
-      <div><b>${esc(o.label)}</b><small>${(B.draft.styles?.[o.value] || []).length} styles · id: ${esc(o.value)}</small></div>
-      <span>
-        <button class="icon-btn" title="Move up" data-act="move" data-path="${loc.path}.options" data-i="${k}" data-d="-1">↑</button>
-        <button class="icon-btn" title="Move down" data-act="move" data-path="${loc.path}.options" data-i="${k}" data-d="1">↓</button>
+    <div class="piece ${o.value === B.piece ? 'sel' : ''}" data-act="pick-piece" data-v="${esc(o.value)}" tabindex="0" role="button" aria-pressed="${o.value === B.piece}" title="id: ${esc(o.value)}">
+      <span class="piece-pic">${optionArt('type', o) ? `<img src="${esc(optionArt('type', o))}" alt="" loading="lazy" />` : icon(o.icon)}</span>
+      <div class="piece-txt"><b>${esc(o.label)}</b><small>${(B.draft.styles?.[o.value] || []).length} styles</small></div>
+      <span class="piece-tools">
+        <button class="icon-btn" title="Move left" data-act="move" data-path="${loc.path}.options" data-i="${k}" data-d="-1">←</button>
+        <button class="icon-btn" title="Move right" data-act="move" data-path="${loc.path}.options" data-i="${k}" data-d="1">→</button>
         <button class="icon-btn danger" title="Remove piece" data-act="del-piece" data-v="${esc(o.value)}">✕</button>
       </span>
     </div>`).join('');
