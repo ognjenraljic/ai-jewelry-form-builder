@@ -6,3 +6,8 @@ node_modules/
 out/
 .DS_Store
 *.log
+
+.option-art-raw/
+
+.option-art-fix.json
+.option-art-raw.log

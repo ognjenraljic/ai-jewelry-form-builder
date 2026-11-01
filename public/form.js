@@ -1,5 +1,6 @@
 import { SMILE_TEETH, SMILE_DEFS } from './teeth-art.js';
-import { applyPresetTeeth, customTeethVisible } from './grillz-selection.js';
+import { applyPresetTeeth } from './grillz-selection.js';
+import { stepNeedsAnswer, fieldRequired } from './step-rules.js';
 
 // Widget forme: crta korake iz konfiguracije, šalje lead, traži render i doradu.
 const formId = location.pathname.split('/')[2] || 'demo';
@@ -161,7 +162,6 @@ function visible(f) {
   if (f.enabled === false) return false;
   // Pitanje koje zlatar za ovaj komad ne nudi (perPiece: []) se preskače.
   if (Array.isArray(f.perPiece?.[S.a.type]) && !f.perPiece[S.a.type].length) return false;
-  if (f.type === 'teeth' && !customTeethVisible(S.cfg, S.a)) return false;
   const c = f.showIf;
   if (!c) return true;
   const v = S.a[c.field];
@@ -187,12 +187,16 @@ function stepValid(step) {
     const c = S.contact;
     return c.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(c.email.trim()) && c.phone.replace(/\D/g, '').length >= 7 && c.consent && (!S.cfg.turnstile || !!S.ts);
   }
-  return (step.fields || []).filter(visible).every((f) => !f.required || (f.type === 'upload' ? !!S.files[f.id] : S.a[f.id] != null && S.a[f.id] !== ''));
+  const shown = (step.fields || []).filter(visible);
+  const filled = (f) => (f.type === 'upload' ? !!S.files[f.id] : String(S.a[f.id] ?? '').trim() !== '');
+  if (stepNeedsAnswer(step, S.a) && shown.length && !shown.some(filled)) return false;
+  return shown.every((f) => !fieldRequired(S.cfg, step, f, S.a) || filled(f));
 }
+// Korak bez kojeg se ne može dalje (oznaka u formi).
+const stepIsRequired = (step) => stepNeedsAnswer(step, S.a) || step.fields.filter(visible).some((f) => fieldRequired(S.cfg, step, f, S.a));
 
 function render() {
   const restoreImages = JLUI.images(app);
-  prefillTeeth();
   const step = cur();
   const all = steps();
   const canBack = S.i > 0 && (step.id !== '_result' || S.test);
@@ -233,10 +237,10 @@ function render() {
 function stepView(step) {
   const fields = step.fields.filter(visible).map(fieldView).join('');
   const valid = stepValid(step);
-  const subtitle = S.a.type === 'grillz' && step.fields.some(f => f.id === 'style') ? 'Pick a style, or choose Something else to select individual teeth.' : step.subtitle;
+  const subtitle = S.a.type === 'grillz' && step.fields.some(f => f.id === 'style') ? 'Pick a style. You can change the exact teeth in the next step.' : step.subtitle;
   return `
     <section class="step">
-      <p class="eyebrow">Step ${S.i + 1} of ${steps().length - 1}</p>
+      <p class="eyebrow">Step ${S.i + 1} of ${steps().length - 1}${stepIsRequired(step) ? ' · Required' : ''}</p>
       <h1>${esc(step.title)}</h1>
       <p class="sub">${esc(subtitle || '')}</p>
       ${fields}
@@ -255,7 +259,7 @@ function footHint(step, valid) {
     const top = [...set].filter((t) => t[0] === 'T').length;
     if (set.size) return `<span class="foot-teeth"><b>${top}</b> top + <b>${set.size - top}</b> bottom = <b>${set.size}</b> teeth</span>`;
   }
-  return valid ? '' : 'Choose an option to continue';
+  return valid ? '' : step.fields.some((f) => visible(f) && f.options) || step.fields.some((f) => f.optionsFrom) ? 'Choose an option to continue' : 'Fill this in to continue';
 }
 
 // Pregled u builderu: pokaži i kratko istakni pitanje koje je admin otvorio lijevo.
@@ -410,7 +414,8 @@ function choiceView(f, label, v) {
       .join('')}</div></div>`;
   }
   if (f.type === 'chips' || f.type === 'yesno') {
-    return `<div class="field">${label}<div class="chips ${f.big ? 'big' : ''}" role="radiogroup" aria-labelledby="${f.label ? `lbl-${esc(f.id)}` : 'step-title'}">${optionsOf(f)
+    const opts = optionsOf(f);
+    return `<div class="field">${label}<div class="chips ${f.big ? 'big' : ''} ${opts.some((o) => o.image) ? 'pics' : ''}" role="radiogroup" aria-labelledby="${f.label ? `lbl-${esc(f.id)}` : 'step-title'}">${opts
       .map((o) => `<button type="button" class="chip ${o.image ? 'pic' : ''} ${v === o.value ? 'on' : ''}" role="radio" aria-checked="${v === o.value}" data-pick="${esc(f.id)}" data-val="${esc(o.value)}">${o.image ? `<img src="${esc(o.image)}" alt="" loading="lazy" />` : o.swatch ? `<i class="dot" style="background:${esc(o.swatch)}"></i>` : ''}${esc(o.label)}</button>`)
       .join('')}</div></div>`;
   }
@@ -442,17 +447,8 @@ const T_PRESETS = [
   ['six-six', '6 on 6', [...T_RANGE('T', 6), ...T_RANGE('B', 6)]],
   ['full', 'Full Set', [...T_RANGE('T', 10), ...T_RANGE('B', 10)]],
 ];
-// Stil iz prethodnog koraka popuni zube dok kupac sam ne izabere.
-const STYLE_TEETH = { top6: T_RANGE('T', 6), top8: T_RANGE('T', 8), set: [...T_RANGE('T', 8), ...T_RANGE('B', 8)], fangs: ['T3', 'T8'] };
 const teethSet = (v) => new Set(String(v || '').split(',').filter(Boolean));
 const teethVal = (set) => [...set].sort((x, y) => (x[0] === y[0] ? +x.slice(1) - +y.slice(1) : x[0] === 'T' ? -1 : 1)).join(',');
-
-function prefillTeeth() {
-  const st = steps()[S.i];
-  for (const f of st?.fields || []) {
-    if (f.type === 'teeth' && visible(f) && !S.a[f.id] && STYLE_TEETH[S.a.style]) S.a[f.id] = STYLE_TEETH[S.a.style].join(',');
-  }
-}
 
 // Smile approved in the visual preview. IDs retain their existing server/prompt meaning.
 const SELECTED_FILL = { 'yellow-gold': '#e3b85a', 'white-gold': '#dfe2e5', platinum: '#d6d9dd', 'rose-gold': '#e2a690', 'two-tone': '#e3b85a' };

@@ -119,4 +119,35 @@ check(!JSON.stringify(publicForm).includes('Final unsaved note'), 'internal note
 const savedClient = (await req('/api/admin/forms', { admin: true })).data.clients.find((c) => c.id === client.id);
 check(savedClient.notes.includes('Final unsaved note') && savedClient.notes.includes('Legacy request'), 'team notes and earlier question requests are retained for admin');
 check((await post(`${obPath}/build`, {}, { admin: true })).status === 409, 'second build cannot create a duplicate form');
+
+// Provjera prije slanja: šta ne valja stoji uz korak i polje, a server ne prima takav onboarding ni kad portal zakaže.
+const bad = (await post('/api/admin/clients', { name: `Check QA ${run}` }, { admin: true })).data.client;
+const badStart = await post(`/api/admin/clients/${bad.id}/onboarding`, {}, { admin: true });
+const badPortal = new URL(badStart.data.url).hash.slice(3);
+const badMe = (await req('/api/portal/me', { portal: badPortal })).data;
+check(badMe.onboardingSuggestions.metals.some((m) => m.label === 'Stainless Steel'), 'library metals are offered in the next onboarding');
+check(badMe.onboardingSuggestions.metals.some((m) => m.label === 'Silver') && badMe.onboardingSuggestions.stones.some((m) => m.label === 'Ruby'), 'options added in an earlier onboarding are offered in the next one');
+check(!JSON.stringify(badMe.onboardingSuggestions).includes('/media/'), 'suggestions never carry another store\'s photos');
+const piece = { uid: 'p1', value: 'grillz', label: 'Grillz', metals: ['yellow-gold', 'custom-steel'], karats: ['14K', '22K'], stones: ['none'], budgets: ['$500', ''], specs: { length: [] }, styles: [{ uid: 's1', value: '', label: '', custom: true, keep: true }], questions: [{ uid: 'q1', label: 'Finish', options: 'Matte' }], required: { styles: true, materials: false, details: true } };
+const broken = { store: { name: 'Check QA' }, pieces: [piece], customMetals: [{ uid: 'm1', value: 'custom-steel', label: 'Stainless Steel', swatch: '#b9bec2' }], customKarats: ['22K'], products: [{ uid: 'x1', name: '', price: '$10', url: 'shop.example', image: '', pieces: [] }] };
+const sent = await post('/api/portal/onboarding/submit', { data: broken, rev: 0 }, { portal: badPortal });
+const steps = new Set(sent.data.problems?.map((x) => x.step));
+check(sent.status === 422 && steps.has('p:p1:styles') && steps.has('p:p1:materials') && steps.has('p:p1:details') && steps.has('products'), 'send is refused and each problem points to its step');
+check(sent.data.problems.some((x) => x.field === 'pieces.0.budgets.1') && sent.data.problems.some((x) => x.field === 'products.0.url'), 'problems name the exact field');
+check((await req('/api/portal/me', { portal: badPortal })).data.onboarding.status === 'draft', 'a refused onboarding stays editable');
+piece.styles[0].label = 'Signature'; piece.budgets = ['$500']; piece.questions[0].options = 'Matte, Polished';
+broken.products = [];
+const okSend = await post('/api/portal/onboarding/submit', { data: broken, rev: 0 }, { portal: badPortal });
+check(okSend.status === 200, 'once fixed it can be sent');
+const obs = (await req('/api/admin/onboardings', { admin: true })).data.onboardings.find((o) => o.client_id === bad.id);
+const madeForm = await post(`/api/admin/onboardings/${obs.id}/build`, {}, { admin: true });
+const f = madeForm.data.form;
+const designStep = f.steps.find((s) => s.id === 'design');
+check(designStep.fields.find((x) => x.id === 'karat').options.some((o) => o.value === '22K') && designStep.fields.find((x) => x.id === 'metal').options.some((o) => o.label === 'Stainless Steel'), 'added karat and metal reach the form');
+check(designStep.optionalFor?.includes('grillz') && f.steps.find((s) => s.id === 'budget').optionalFor?.includes('grillz'), 'an optional Materials step is optional in the form');
+check(f.steps.find((s) => s.id.startsWith('d-')).required === true, 'a required Details step stays required in the form');
+const pub = (await req(`/api/forms/${f.id}`)).data;
+const metalPublic = pub.steps.find((s) => s.id === 'design').fields.find((x) => x.id === 'metal').options;
+check(metalPublic.every((o) => o.image?.startsWith('/library/options/metal/')), 'every metal has a picture in the public form');
+check(pub.steps.find((s) => s.id === 'teeth')?.fields[0].type === 'teeth', 'grillz forms keep the teeth step');
 console.log(`Passed ${count} onboarding checks. No AI calls.`);

@@ -5,6 +5,7 @@
 import LIBRARY from './library.json' with { type: 'json' };
 import { PRESET_TEETH, presetTeeth } from '../public/grillz-selection.js';
 import { parseTeeth } from './teeth.js';
+import { optionArt } from '../public/option-art.js';
 
 // Početni stilovi po tipu iz src/library.json. Slika ide i u karticu i modelu kao referenca oblika.
 export const DEFAULT_STYLES = Object.fromEntries(
@@ -260,12 +261,15 @@ export function fromTemplate(template, { id, brand, name, clientId, logo, piece 
 // Ugrađena demo forma (demo sajt i JewelryLead početna). Važi dok se ne sačuva u bazi.
 export const FORMS = { demo: { ...fromTemplate('custom-enquiry', { id: 'demo', brand: 'Maison Demo', name: 'Demo (JewelryLead site)', clientId: null }) } };
 
+// Izbor bez svoje slike dobija sliku iz biblioteke izbora (po pitanju i natpisu), i u već postojećim formama.
+export const withArt = (field, o) => { const image = optionArt(field.id, o); return image ? { ...o, image } : o; };
+
 export function publicForm(form) {
   // Sve što ide u browser. Opis oblika (shape) i napomene za AI (note) nisu za kupca.
   const { id, brand, theme, maxRenders, contact, result, tryOn, products } = form;
   const steps = (form.steps || []).map((s) => ({
     ...s,
-    fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => o) } : f)),
+    fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => withArt(f, o)) } : f)),
   }));
   const styles = Object.fromEntries(Object.entries(form.styles || {}).map(([t, list]) => [t, list.map(({ value, label, image }) => {
     const teeth = t === 'grillz' ? styleOf(form, { type: t, style: value })?.teeth : null;
@@ -323,6 +327,8 @@ export function validateFormDef(f, id) {
     str(s.label, 30, `Label of step ${s.id}`);
     bool(s.enabled, `Step ${s.id} enabled`);
     bool(s.autoAdvance, `Step ${s.id} auto advance`);
+    bool(s.required, `Step ${s.id} required`);
+    if (s.optionalFor != null && (!Array.isArray(s.optionalFor) || s.optionalFor.some((v) => !SLUG.test(v || '')))) err(`Step ${s.id}: invalid list of optional pieces`);
     if (!Array.isArray(s.fields) || !s.fields.length || s.fields.length > 10) err(`Step ${s.id}: 1 to 10 questions`);
     for (const fl of s.fields) {
       if (!KEY.test(fl.id || '') || fieldIds.has(fl.id) || fl.id.endsWith('__more')) err(`Question "${fl.id}": ID must be unique`);
@@ -374,6 +380,7 @@ export function validateFormDef(f, id) {
   if (!typeStepOn && typeField.options.length !== 1) err('The piece step can only be turned off when there is exactly one piece');
   const pieceVals = new Set(typeField.options.map((o) => o.value));
   for (const [fid, pc] of perPieceKeys) if (!pieceVals.has(pc)) err(`Question ${fid}: piece "${pc}" is not in this form`);
+  for (const s of f.steps) for (const pc of s.optionalFor || []) if (!pieceVals.has(pc)) err(`Step ${s.id}: piece "${pc}" is not in this form`);
 
   // Proizvodi iz radnje: prikazuju se ispod rendera (filtrirani po komadu kupca).
   if (f.products != null) {
@@ -467,6 +474,13 @@ export const ONBOARDING_DEFAULTS = {
   specs: Object.fromEntries(Object.entries(PIECE_SPECS).map(([k, list]) => [k, list.map(({ id, label, options, on }) => ({ id, label, on: on !== false, options: options.map(({ value, label }) => ({ value, label })) }))])),
 };
 
+// Ponuda pri dodavanju, i kad nijedna ranija radnja nije dodala tu opciju: ima sliku u biblioteci izbora.
+export const ONBOARDING_EXTRAS = {
+  metals: [['Stainless Steel', '#b9bec2'], ['Dental Gold', '#cf9f3f'], ['Sterling Silver', '#d8dade'], ['Black Gold', '#2b2b2e']].map(([label, swatch]) => ({ label, swatch })),
+  stones: ['Cubic Zirconia', 'Ruby', 'Sapphire', 'Emerald', 'Black Diamonds'].map((label) => ({ label })),
+  karats: ['22K', '24K'],
+};
+
 const LIGHT_THEME = { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#6f675b' };
 function slugOf(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36) || 'item'; }
 const uniqOf = (base, taken) => { let v = base; for (let i = 2; taken.has(v); i++) v = `${base}-${i}`; taken.add(v); return v; };
@@ -501,7 +515,8 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
     const base = known[p.value];
     const value = base && !taken.has(base.value) ? uniqOf(base.value, taken) : uniqOf(slugOf(label), taken);
     if (p.uid) pv.set(p.uid, value);
-    options.push(base ? { ...base, value, label } : opt(value, label, { icon: 'gem', subject: `a custom ${label.toLowerCase()}` }));
+    const pieceImage = p.image && !base ? img(p.image) : '';
+    options.push(base ? { ...base, value, label } : opt(value, label, { icon: 'gem', subject: `a custom ${label.toLowerCase()}`, ...(pieceImage ? { image: pieceImage } : {}) }));
     const lib = DEFAULT_STYLES[p.value] || [];
     const st = new Set(['other']);
     styles[value] = (Array.isArray(p.styles) ? p.styles : [])
@@ -518,6 +533,12 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
   form.styles = styles;
   if (!options.some((o) => o.value === 'grillz')) form.steps = form.steps.filter((s) => s.id !== 'teeth');
   const valueOf = (p, i) => options[i].value;
+  // Required step: zlatar bira po komadu. Stilovi i materijali su podrazumijevano obavezni, detalji nisu.
+  const optionalPieces = (key) => pieces.map((p, i) => (p.required?.[key] === false ? valueOf(p, i) : null)).filter(Boolean);
+  const markOptional = (id, key) => { const s = form.steps.find((x) => x.id === id); const list = optionalPieces(key); if (s && list.length) s.optionalFor = list; };
+  markOptional('style', 'styles');
+  markOptional('design', 'materials');
+  markOptional('budget', 'materials');
 
   const design = form.steps.find((s) => s.id === 'design');
   const field = (fid) => design?.fields.find((f) => f.id === fid);
@@ -538,6 +559,7 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
   // Metali: katalog + vlastiti (npr. "Black gold", sa bojom); komad bez izbora ne dobija pitanje o metalu.
   const extraMetals = String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 6);
   const customMetals = Array.isArray(d.customMetals) ? d.customMetals : [];
+  const ownImage = (x) => { const u = x.image ? img(x.image) : ''; return u ? { image: u } : {}; };
   if (field('metal')) {
     const chosen = new Set(pieces.flatMap((p) => listOf(p, 'metals') || []));
     const mt = new Set();
@@ -545,7 +567,7 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
     const opts = [
       ...field('metal').options.filter((o) => chosen.has(o.value)).map((o) => (mt.add(o.value), map.set(o.value, o.value), o)),
       ...extraMetals.map((m) => opt(uniqOf(slugOf(m), mt), m.slice(0, 40))),
-      ...customMetals.filter((m) => chosen.has(m.value)).map((m) => { const o = opt(uniqOf(slugOf(m.label), mt), String(m.label).slice(0, 40), { swatch: /^#[0-9a-f]{6}$/i.test(m.swatch || '') ? m.swatch : '#c0c4c8' }); map.set(m.value, o.value); return o; }),
+      ...customMetals.filter((m) => chosen.has(m.value)).map((m) => { const o = opt(uniqOf(slugOf(m.label), mt), String(m.label).slice(0, 40), { swatch: /^#[0-9a-f]{6}$/i.test(m.swatch || '') ? m.swatch : '#c0c4c8', ...ownImage(m) }); map.set(m.value, o.value); return o; }),
     ];
     const noLists = pieces.every((p) => !listOf(p, 'metals'));
     if (opts.length) {
@@ -557,7 +579,11 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
     }
   }
   // Karati: samo kad ih je zlatar birao po komadu (stariji onboarding ih nema, pa ostaju svi).
-  if (field('karat') && pieces.some((p) => Array.isArray(p.karats))) perPiece(field('karat'), (p) => (Array.isArray(p.karats) ? p.karats : KARATS));
+  if (field('karat') && pieces.some((p) => Array.isArray(p.karats))) {
+    const extra = [...new Set((Array.isArray(d.customKarats) ? d.customKarats : []).map((k) => String(k).trim().slice(0, 40)))].filter((k) => k && !KARATS.includes(k) && pieces.some((p) => p.karats?.includes(k)));
+    field('karat').options.push(...extra.map((k) => opt(k, k)));
+    perPiece(field('karat'), (p) => (Array.isArray(p.karats) ? p.karats : KARATS));
+  }
 
   // Kamenje: samo izabrano; komad koji nudi samo "bez kamena" ne dobija pitanja o kamenu.
   const customStones = Array.isArray(d.customStones) ? d.customStones : [];
@@ -567,7 +593,7 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
     const map = new Map();
     const opts = [
       ...field('stones').options.filter((o) => chosen.has(o.value)).map((o) => (st.add(o.value), map.set(o.value, o.value), o)),
-      ...customStones.filter((s) => chosen.has(s.value)).map((s) => { const o = opt(uniqOf(slugOf(s.label), st), String(s.label).slice(0, 40)); map.set(s.value, o.value); return o; }),
+      ...customStones.filter((s) => chosen.has(s.value)).map((s) => { const o = opt(uniqOf(slugOf(s.label), st), String(s.label).slice(0, 40), ownImage(s)); map.set(s.value, o.value); return o; }),
     ];
     if (opts.length) {
       field('stones').options = opts;
@@ -600,7 +626,11 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
     const fields = [];
     for (const sp of PIECE_SPECS[p.value] || []) {
       const picked = p.specs && typeof p.specs === 'object' && Array.isArray(p.specs[sp.id]) ? p.specs[sp.id] : sp.on === false ? [] : sp.options.map((o) => o.value);
-      const opts = sp.options.filter((o) => picked.includes(o.value));
+      // Vlastite opcije zlatara (npr. lanac 28") idu iza kataloga; AI ih razumije preko napomene.
+      const taken = new Set(sp.options.map((o) => o.value));
+      const own = (Array.isArray(p.customSpecs?.[sp.id]) ? p.customSpecs[sp.id] : []).filter((c) => picked.includes(c.value) && String(c.label || '').trim())
+        .map((c) => { const label = String(c.label).trim().slice(0, 60); return opt(uniqOf(slugOf(label), taken), label, { ...(sp.ai === false ? {} : { note: `${sp.label}: ${label}` }), ...ownImage(c) }); });
+      const opts = [...sp.options.filter((o) => picked.includes(o.value)), ...own];
       if (!opts.length) continue;
       fields.push({ id: uniqOf(`${value}_${sp.id}`.replace(/-/g, '_').slice(0, 40), fieldIds), type: sp.type || 'chips', label: sp.label, required: false, ...(sp.ai === false ? { ai: false } : {}), options: structuredClone(opts), showIf });
     }
@@ -614,7 +644,7 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
     }
     if (!fields.length) return;
     const label = options[i].label;
-    details.push({ id: uniqOf(`d-${value}`.slice(0, 40), stepIds), label: 'Details', title: `${label} details`.slice(0, 120), subtitle: 'A few specifics so we get it just right.', fields: fields.slice(0, 10) });
+    details.push({ id: uniqOf(`d-${value}`.slice(0, 40), stepIds), label: 'Details', title: `${label} details`.slice(0, 120), subtitle: 'A few specifics so we get it just right.', ...(p.required?.details === true ? { required: true } : {}), fields: fields.slice(0, 10) });
   });
   if (details.length) form.steps.splice(form.steps.findIndex((s) => s.id === 'design') + 1, 0, ...details);
 

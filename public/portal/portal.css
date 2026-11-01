@@ -274,3 +274,37 @@ textarea.in { resize: vertical; line-height: 1.5; }
 .usage.near .usage-bar i { background: var(--warn); }
 .usage.over { border-color: color-mix(in srgb, #ef6f6f 60%, var(--line)); }
 .usage.over .usage-bar i { background: #ef6f6f; }
+
+/* Slike na izborima, vlastite opcije i brzo dodavanje */
+.ob-chips.pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 16px 10px; }
+.ob-chip.pic { flex-direction: column; justify-content: flex-start; align-items: stretch; gap: 7px; padding: 0 8px 9px; border-radius: 14px; font-size: 13px; line-height: 1.25; text-align: center; min-height: 0; }
+.ob-chip.pic img { width: calc(100% + 16px); margin: 0 -8px; aspect-ratio: 1; object-fit: cover; border-radius: 13px 13px 0 0; display: block; }
+.ob-chips.pics .ob-chip:not(.pic) { justify-content: center; border-radius: 14px; text-align: center; }
+.ob-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.ob-suggest small { color: var(--ink-faint); font-size: 12px; }
+.ob-own { display: grid; gap: 8px; margin-top: 12px; }
+.ob-own-item { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.ob-own-item span { flex: 1; min-width: 0; }
+.ob-photo.mini { width: 54px; height: 54px; min-height: 0; flex: none; padding: 0; }
+.ob-photo.mini span small { display: none; }
+.ob-photo.mini span b { font-size: 11px; }
+.ob-thumb { width: 42px; height: 42px; border-radius: 10px; object-fit: cover; flex: none; }
+/* Required step */
+.ob-required { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin: 0 0 18px; border-radius: 14px; border: 1px solid var(--line-strong); background: var(--surface); cursor: pointer; }
+.ob-required input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+.ob-required b { display: block; font-size: 14px; }
+.ob-required small { color: var(--ink-faint); font-size: 12px; }
+/* Provjera prije slanja */
+.ob-problems { margin: 18px 0; padding: 14px 16px; border-radius: 14px; border: 1px solid color-mix(in srgb, #ef8f80 55%, transparent); background: color-mix(in srgb, #ef8f80 10%, var(--surface)); }
+.ob-problems ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.ob-problems li { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; }
+.ob-fix { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 16px; margin-bottom: 14px; border-radius: 14px; border: 1px solid color-mix(in srgb, #ef8f80 55%, transparent); background: color-mix(in srgb, #ef8f80 12%, var(--surface)); }
+#ob-fix { position: sticky; top: 8px; z-index: 5; }
+.ob-fix.ok { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.ob-fix b { display: block; font-size: 14px; }
+.ob-fix small { color: var(--ink-soft); font-size: 12px; }
+.ob-fix-count { flex: none; color: var(--ink-soft); font-size: 12px; }
+.ob-invalid { border-color: #ef8f80 !important; outline: 2px solid color-mix(in srgb, #ef8f80 40%, transparent); }
+.ob-field-err { color: #ef8f80; font-size: 12px; margin: 5px 0 6px; }
+.ob-dot.bad > span { background: #ef8f80; color: #2a0f0b; }
+@media (max-width: 560px) { .ob-problems li { flex-direction: column; align-items: flex-start; } .ob-fix { flex-direction: column; align-items: flex-start; } }

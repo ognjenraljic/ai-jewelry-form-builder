@@ -19,7 +19,10 @@ const r = await lead({ ...base, teeth: 'T3,T4,T5,T6,T7,T8,B3,B4,B5,B6,B7,B8' });
 ok(r.status === 200 && r.data.leadId, 'dobar izbor (6 on 6) prihvaćen');
 const preset = await lead({ ...base, style: 'top6', teeth: 'B5,B6' });
 const saved = preset.data.leadId && await fetch(`${BASE}/api/leads/${preset.data.leadId}`, { headers: { 'x-lead-token': preset.data.token } }).then(r => r.json());
-ok(preset.status === 200 && saved.answers.teeth === 'T3,T4,T5,T6,T7,T8', 'ponuđeni Top 6 određuje zube i uklanja stari ručni izbor');
+ok(preset.status === 200 && saved.answers.teeth === 'B5,B6', 'zubi koje je kupac promijenio poslije Top 6 ostaju kako ih je izabrao');
+const marked = await lead({ ...base, style: 'top6', teeth: undefined });
+const markedSaved = marked.data.leadId && await fetch(`${BASE}/api/leads/${marked.data.leadId}`, { headers: { 'x-lead-token': marked.data.token } }).then(r => r.json());
+ok(marked.status === 200 && markedSaved.answers.teeth === 'T3,T4,T5,T6,T7,T8', 'bez ručnog izbora Top 6 sam označi svoje zube');
 
 if (process.env.RENDER === '1' && r.data.leadId) {
   const res = await fetch(`${BASE}/api/leads/${r.data.leadId}/renders`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: r.data.token, model: process.env.MODEL || 'auto' }) });

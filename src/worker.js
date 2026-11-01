@@ -1,8 +1,11 @@
-import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
+import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, ONBOARDING_EXTRAS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
 import { buildPrompt, buildTweakPrompt } from './prompt.js';
 import { parseTeeth, teethSummary } from './teeth.js';
 import { buildTryOnPrompt } from './tryon.js';
-import { applyPresetTeeth, customTeethVisible } from '../public/grillz-selection.js';
+import { applyPresetTeeth } from '../public/grillz-selection.js';
+import { stepNeedsAnswer, fieldRequired } from '../public/step-rules.js';
+import { onboardingProblems } from '../public/onboarding-check.js';
+import { artList } from '../public/option-art.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
@@ -654,6 +657,7 @@ async function adminForms(request, env, p) {
     const library = cursor ? [] : [
       ...ONBOARDING_DEFAULTS.pieces.filter((p) => p.value === 'chain').map((p) => ({ image: p.image, label: 'Chain', category: p.value })),
       ...Object.entries(ONBOARDING_DEFAULTS.styles).flatMap(([category, styles]) => styles.map(({ image, label }) => ({ image, label, category }))),
+      ...artList().map((x) => ({ ...x, category: 'options' })),
     ];
     return json({ images: [...library, ...images], next: list.truncated ? list.cursor : null });
   }
@@ -971,7 +975,7 @@ async function adminOnboardings(request, env, p) {
         return `/media/${key}`;
       };
       const map = new Map();
-      const images = [...(d.pieces || []).flatMap((piece) => (piece.styles || []).map((s) => s?.image)), ...(d.products || []).map((x) => x?.image)];
+      const images = [...(d.pieces || []).flatMap((piece) => [piece?.image, ...(piece.styles || []).map((s) => s?.image), ...Object.values(piece.customSpecs || {}).flat().map((x) => x?.image)]), ...(d.products || []).map((x) => x?.image), ...(d.customMetals || []).map((x) => x?.image), ...(d.customStones || []).map((x) => x?.image)];
       for (const u of images) if (u?.startsWith(prefix) && !map.has(u)) map.set(u, await copy(u, `forms/${id}`));
       const logo = d.store?.logo?.startsWith(prefix) ? await copy(d.store.logo, `clients/${client.id}`) : d.store?.logo?.startsWith('/media/clients/') ? d.store.logo : '';
       const form = formFromOnboarding(d, { id, clientId: client.id, brand: clean(d.store?.name, 60) || client.name, logo, img: (u) => (u.startsWith('/library/') ? u : map.get(u) || '') });
@@ -1108,7 +1112,7 @@ async function portalApi(request, env, p, secure) {
       session: { kind: sess.kind, expiresAt: sess.expires_at || null },
       client: { id: client.id, name: client.name, logo: d.logo || null, website: d.website || '' },
       onboarding: ob ? { id: ob.id, status: ob.status, rev: ob.rev, data: JSON.parse(ob.data || '{}'), updatedAt: ob.updated_at, submittedAt: ob.submitted_at } : null,
-      ...(ob && ob.status === 'draft' ? { onboardingDefaults: ONBOARDING_DEFAULTS } : {}),
+      ...(ob && ob.status === 'draft' ? { onboardingDefaults: ONBOARDING_DEFAULTS, onboardingSuggestions: await onboardingSuggestions(env, client.id) } : {}),
       forms: formRows.filter((r) => !r.archived_at).map((r) => ({
         id: r.id, name: forms[r.id].name, template: r.template, label: TEMPLATES[r.template]?.label || 'Custom', updated_at: r.updated_at,
         leads: per[r.id]?.leads || 0, renders: per[r.id]?.renders || 0, lastLead: per[r.id]?.last_lead || null,
@@ -1182,17 +1186,19 @@ async function demoHandled(request, env, id) {
 function cleanOnboarding(d, clientId) {
   d = d && typeof d === 'object' && !Array.isArray(d) ? d : {};
   const own = `/media/onboarding/${clientId}/`;
-  const img = (u) => (typeof u === 'string' && !u.includes('..') && (u.startsWith(own) || u.startsWith(`/media/clients/${clientId}/`) || /^\/library\/[a-z]+\/[\w-]+\.webp$/.test(u)) ? u : '');
+  const img = (u) => (typeof u === 'string' && !u.includes('..') && (u.startsWith(own) || u.startsWith(`/media/clients/${clientId}/`) || /^\/library\/[a-z]+\/[\w-]+\.webp$/.test(u) || /^\/library\/options\/[a-z-]+\/[\w-]+\.(webp|svg)$/.test(u)) ? u : '');
   const str = (v, max) => String(v ?? '').slice(0, max);
   const list = (v, n) => (Array.isArray(v) ? v.slice(0, n) : []);
   const st = d.store || {};
   const vals = (v, n = 12) => list(v, n).map((x) => str(x, 40));
+  // Vlastite opcije zlatara: isti oblik svuda (metali, kamenje, specifikacije), sa opcionom slikom.
+  const customOptions = (v, n) => list(v, n).filter((x) => x && typeof x === 'object' && /^custom-[a-z0-9-]+$/.test(x.value || '') && String(x.label || '').trim()).map((x) => ({ uid: str(x.uid, 24), value: str(x.value, 40), label: str(x.label, 40), image: img(x.image) }));
   const stepKey = typeof d.step === 'string' && /^[a-z0-9:_-]{1,60}$/i.test(d.step) ? d.step : Math.max(0, Math.min(5, Number(d.step) || 0));
   return {
     step: stepKey,
     store: { name: str(st.name, 60), website: str(st.website, 200), logo: img(st.logo), accent: /^#[0-9a-f]{6}$/i.test(st.accent || '') ? st.accent : '#35d0c4', theme: st.theme === 'light' ? 'light' : 'dark' },
     pieces: list(d.pieces, 12).filter((x) => x && typeof x === 'object').map((x) => ({
-      uid: str(x.uid, 24), value: str(x.value, 40), label: str(x.label, 60),
+      uid: str(x.uid, 24), value: str(x.value, 40), label: str(x.label, 60), image: img(x.image),
       styles: list(x.styles, 24).filter((y) => y && typeof y === 'object').map((y) => ({
         uid: str(y.uid, 24), value: str(y.value, 40), label: str(y.label, 40), image: img(y.image), note: str(y.note, 300), custom: !!y.custom, keep: y.keep !== false,
       })),
@@ -1203,20 +1209,45 @@ function cleanOnboarding(d, clientId) {
       ...(Array.isArray(x.budgets) ? { budgets: vals(x.budgets, 10) } : {}),
       ...(x.specs && typeof x.specs === 'object' && !Array.isArray(x.specs) ? { specs: Object.fromEntries(Object.entries(x.specs).slice(0, 8).filter(([k, v]) => /^[a-z_]{1,30}$/.test(k) && Array.isArray(v)).map(([k, v]) => [k, vals(v, 20)])) } : {}),
       questions: list(x.questions, 6).filter((q) => q && typeof q === 'object').map((q) => ({ uid: str(q.uid, 24), label: str(q.label, 120), options: str(q.options, 600) })),
+      ...(x.customSpecs && typeof x.customSpecs === 'object' && !Array.isArray(x.customSpecs) ? { customSpecs: Object.fromEntries(Object.entries(x.customSpecs).slice(0, 8).filter(([k, v]) => /^[a-z_]{1,30}$/.test(k) && Array.isArray(v)).map(([k, v]) => [k, customOptions(v, 12).map(({ uid, value, label, image }) => ({ uid, value, label, image }))])) } : {}),
+      ...(x.required && typeof x.required === 'object' ? { required: { styles: x.required.styles !== false, materials: x.required.materials !== false, details: x.required.details === true } } : {}),
     })),
     products: list(d.products, 24).filter((x) => x && typeof x === 'object').map((x) => ({
       uid: str(x.uid, 24), name: str(x.name, 80), price: str(x.price, 30), url: str(x.url, 500), description: str(x.description, 300), image: img(x.image), pieces: vals(x.pieces, 12),
     })),
     metals: list(d.metals, 12).map((x) => str(x, 40)),
     metalsOther: str(d.metalsOther, 200),
-    customMetals: list(d.customMetals, 6).filter((x) => x && typeof x === 'object').map((x) => ({ value: str(x.value, 40), label: str(x.label, 40), swatch: /^#[0-9a-f]{6}$/i.test(x.swatch || '') ? x.swatch : '#c0c4c8' })).filter((x) => /^custom-[a-z0-9-]+$/.test(x.value) && x.label.trim()),
+    customMetals: customOptions(d.customMetals, 12).map((x) => { const swatch = d.customMetals.find((m) => m?.value === x.value)?.swatch; return { ...x, swatch: /^#[0-9a-f]{6}$/i.test(swatch || '') ? swatch : '#c0c4c8' }; }),
     stones: list(d.stones, 12).map((x) => str(x, 40)),
-    customStones: list(d.customStones, 6).filter((x) => x && typeof x === 'object').map((x) => ({ value: str(x.value, 40), label: str(x.label, 40) })).filter((x) => /^custom-[a-z0-9-]+$/.test(x.value) && x.label.trim()),
+    customStones: customOptions(d.customStones, 12),
+    customKarats: list(d.customKarats, 12).map((x) => str(x, 40)),
     budgets: list(d.budgets, 10).map((x) => str(x, 40)),
     questions: str(d.questions, 2000),
     notes: str(d.notes, 2000),
   };
 }
+
+// Izbori koje su dodale ranije radnje, ponuđeni pri novom onboardingu uz ONBOARDING_EXTRAS. Tuđe fotografije i opisi se ne dijele, samo natpisi.
+async function onboardingSuggestions(env, clientId) {
+  const rows = (await env.DB.prepare("SELECT data FROM onboardings WHERE status != 'draft' AND client_id != ? ORDER BY updated_at DESC LIMIT 200").bind(clientId).all()).results;
+  const out = { pieces: [], metals: [...ONBOARDING_EXTRAS.metals], stones: [...ONBOARDING_EXTRAS.stones], karats: [...ONBOARDING_EXTRAS.karats], styles: {}, specs: {}, budgets: [] };
+  const put = (list, key, item) => { if (key && !list.some((x) => String(x.label ?? x).toLowerCase() === key.toLowerCase())) list.push(item); };
+  const known = new Set(ONBOARDING_DEFAULTS.budgets);
+  for (const r of rows) {
+    const d = safeJson(r.data);
+    for (const m of d.customMetals || []) put(out.metals, m.label, { label: m.label, swatch: m.swatch });
+    for (const s of d.customStones || []) put(out.stones, s.label, { label: s.label });
+    for (const k of d.customKarats || []) put(out.karats, k, k);
+    for (const pc of d.pieces || []) {
+      if (!pc.value) put(out.pieces, pc.label, pc.label);
+      for (const s of pc.styles || []) if (s.custom && s.keep !== false && pc.value) put((out.styles[pc.value] ||= []), s.label, s.label);
+      for (const [id, list] of Object.entries(pc.customSpecs || {})) for (const c of list) put((out.specs[`${pc.value}.${id}`] ||= []), c.label, c.label);
+      for (const b of pc.budgets || []) if (!known.has(b)) put(out.budgets, b, b);
+    }
+  }
+  return out;
+}
+const safeJson = (s) => { try { return JSON.parse(s || '{}'); } catch { return {}; } };
 
 async function portalOnboarding(request, env, p, client, sess) {
   const ob = await env.DB.prepare('SELECT * FROM onboardings WHERE client_id = ? ORDER BY created_at DESC LIMIT 1').bind(client.id).first();
@@ -1281,8 +1312,15 @@ async function portalOnboarding(request, env, p, client, sess) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ error: 'Invalid data.' }, 400);
     if (body.data != null && (typeof body.data !== 'object' || Array.isArray(body.data))) return json({ error: 'Invalid data.' }, 400);
     const d = cleanOnboarding(body.data ?? JSON.parse(ob.data || '{}'), client.id);
-    if (!d.store.name.trim()) return json({ error: 'Please enter your store name.' }, 400);
-    if (!d.pieces.some((x) => x.label.trim())) return json({ error: 'Pick at least one piece you make.' }, 400);
+    // Ista provjera kao u portalu, pa probna forma: šta god bi kasnije oborilo pravljenje forme ne prolazi slanje.
+    const problems = onboardingProblems(d);
+    if (!problems.length) {
+      try {
+        const id = 'onboarding-check';
+        validateFormDef(formFromOnboarding(d, { id, clientId: client.id, brand: d.store.name.trim(), img: (u) => (u.startsWith('/library/') ? u : '') }), id);
+      } catch (e) { console.error('onboarding check failed', ob.id, e); problems.push({ step: 'send', field: '', message: e.message }); }
+    }
+    if (problems.length) return json({ error: problems[0].message, problems }, 422);
     const rev = body.rev == null ? ob.rev : Number(body.rev);
     const now = Date.now();
     // D1 batch je transakcija: odgovori, status i obavještenje ili svi prođu ili svi ostanu nepromijenjeni.
@@ -1366,11 +1404,13 @@ function validateAnswers(form, a) {
       if (f.followup !== 'text' || typeof a[k] !== 'string' || a[k].length > 500) return 'Invalid answer.';
     }
   }
+  applyPresetTeeth(form, a, styleOf(form, a));
+  const stepOf = new Map((form.steps || []).flatMap((st) => st.fields.map((f) => [f.id, st])));
   for (const f of on.values()) {
     if (f.type === 'upload') continue;
     if (!visible(f, a, form)) { delete a[f.id]; delete a[`${f.id}__more`]; continue; }
     const v = a[f.id];
-    if (f.required && (v == null || v === '')) return `Please complete: ${f.label || f.id}`;
+    if (fieldRequired(form, stepOf.get(f.id), f, a) && (v == null || v === '')) return `Please complete: ${f.label || f.id}`;
     if (v == null || v === '') continue;
     if (typeof v !== 'string') return 'Invalid answer.';
     if (f.type === 'teeth') {
@@ -1382,12 +1422,16 @@ function validateAnswers(form, a) {
     if (opts && !opts.some((o) => o.value === v)) return 'Invalid choice.';
     if (!opts && v.length > (f.max || 1000)) return 'Text is too long.';
   }
-  applyPresetTeeth(form, a, styleOf(form, a));
+  // Obavezan korak: bar jedan odgovor. Korak sa fotografijom provjerava forma (fajlovi nisu među odgovorima).
+  for (const st of form.steps || []) {
+    if (st.enabled === false || !stepNeedsAnswer(st, a)) continue;
+    const shown = st.fields.filter((f) => f.enabled !== false && visible(f, a, form));
+    if (shown.length && !shown.some((f) => f.type === 'upload' || (a[f.id] != null && a[f.id] !== ''))) return `Please complete: ${st.title}`;
+  }
   return null;
 }
 
 function visible(field, a, form) {
-  if (field.type === 'teeth' && !customTeethVisible(form, a)) return false;
   if (!offeredFor(field, a)) return false;
   const c = field.showIf;
   if (!c) return true;

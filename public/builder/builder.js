@@ -1,5 +1,6 @@
 // JewelryLead Builder: klijenti (zlatari) -> forme iz šablona -> uređivanje bez koda, sa živim pregledom.
 // Čuvanje forme: PUT /api/admin/forms/:id (server provjerava validateFormDef). Klijent: PUT /api/admin/clients/:id.
+import { optionArt } from '/option-art.js';
 
 const ICONS = {
   pendant: '<path d="M8 6c4 9 9 14 16 14s12-5 16-14"/><path d="M24 20v4"/><path d="M24 24l-7 8 7 11 7-11z"/><path d="M17 32h14M24 24v19"/>',
@@ -52,13 +53,13 @@ const PRESETS = {
   Rose: { accent: '#e7a9a0', 'accent-ink': '#2a1210', bg: '#0d0a0a', surface: '#171112', 'surface-2': '#201819', line: '#302526', 'line-strong': '#4d3c3d', ink: '#f6eeec', 'ink-soft': '#b3a2a0', 'ink-faint': '#93807e' },
   Light: { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#6f675b' },
 };
-const TABS = [['client', 'Client'], ['brand', 'Brand'], ['pieces', 'Pieces & styles'], ['questions', 'Questions'], ['products', 'Shop products'], ['texts', 'Texts'], ['embed', 'Embed'], ['history', 'History'], ['json', 'JSON']];
+const TABS = [['client', 'Client'], ['brand', 'Brand'], ['pieces', 'Pieces & styles'], ['products', 'Shop products'], ['texts', 'Texts'], ['embed', 'Embed'], ['history', 'History'], ['json', 'JSON']];
 const FIELD_TYPES = [['chips', 'Choice (chips)'], ['cards', 'Choice (big cards)'], ['yesno', 'Yes / No'], ['dropdown', 'Dropdown'], ['text', 'Short text'], ['textarea', 'Long text'], ['upload', 'Photo upload'], ['teeth', 'Teeth picker (grillz)']];
 
 const app = document.getElementById('app');
 const B = {
   authed: false, clients: [], forms: [], templates: [], clientId: null, id: null, draft: null, saved: '', updatedAt: 0,
-  client: null, clientSaved: '', tab: store.get('aik_builder_tab') || 'client', piece: null, device: 'desktop', open: new Set([0]), status: '', kind: '',
+  editor: null, client: null, clientSaved: '', tab: (store.get('aik_builder_tab') || 'client').replace('questions', 'pieces'), piece: null, device: 'desktop', status: '', kind: '',
   view: 'hub', overview: { stats: {}, links: {} }, q: '',
 };
 
@@ -173,7 +174,6 @@ async function openForm(id, force = false) {
   B.view = 'editor';
   store.set('aik_builder_view', 'editor');
   B.piece = typeLoc()?.field.options[0]?.value || null;
-  B.open = new Set([0]);
   B.pv = Math.max(0, form.steps.findIndex((st) => st.enabled !== false && st.fields.some((f) => f.enabled !== false)));
   store.set('aik_builder_form', id);
   setStatus('');
@@ -554,7 +554,9 @@ function renderShell() {
           <div class="pstage"><iframe id="frame" class="pframe ${B.device === 'mobile' ? 'mobile' : ''}" src="/f/${esc(B.id)}?preview=1&t=${Date.now()}" title="Live preview"></iframe></div>
         </section>
       </div>
+      <dialog class="field-editor" id="field-editor" aria-label="Edit step"></dialog>
     </div>`;
+  document.getElementById('field-editor').addEventListener('close', () => { B.editor = null; renderPane(); });
   renderTop();
   renderTabs();
   renderPane();
@@ -608,10 +610,11 @@ function renderPbar() {
 function renderPane() {
   const pane = document.getElementById('pane');
   const top = pane.scrollTop;
-  const views = { client: clientView, brand: brandView, pieces: piecesView, questions: questionsView, products: productsView, texts: textsView, embed: embedView, history: historyView, json: jsonView };
+  const views = { client: clientView, brand: brandView, pieces: piecesView, products: productsView, texts: textsView, embed: embedView, history: historyView, json: jsonView };
   pane.innerHTML = (views[B.tab] || brandView)();
   pane.scrollTop = top;
   renderPbar();
+  if (B.editor) renderEditor();
 }
 
 // ---------- Pomoćni prikazi ----------
@@ -647,7 +650,7 @@ async function openImageLibrary(path) {
   const d = document.createElement('dialog');
   d.className = 'image-library';
   d.setAttribute('aria-labelledby', 'image-library-title');
-  let images = [], next = null, category = selected?.startsWith('/media/') ? 'uploads' : selected?.match(/^\/library\/([a-z]+)\//)?.[1] || B.piece || '', search = '', busy = false;
+  let images = [], next = null, category = selected?.startsWith('/media/') ? 'uploads' : path.includes('.options.') ? 'options' : selected?.match(/^\/library\/([a-z]+)\//)?.[1] || B.piece || '', search = '', busy = false;
   const controller = new AbortController();
   d.innerHTML = `<div class="image-library-head"><div><h2 id="image-library-title">Select image</h2><p class="hint">Choose from the library or upload an image for this form.</p></div><button class="icon-btn" data-library-close aria-label="Close image library">✕</button></div>
     <div class="image-library-upload" data-upload-box><button type="button" data-library-add aria-label="Add new image">${nav('plus')}<b>Add new</b></button><small>Choose a JPG, PNG or WebP, or drag & drop here</small><input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="${esc(path)}" data-scope="forms" /></div>
@@ -660,9 +663,9 @@ async function openImageLibrary(path) {
   const error = d.querySelector('.image-library-error');
   const filters = d.querySelector('.image-library-filters');
   const show = () => {
-    filters.innerHTML = [['', 'All images'], ...B.pieces.map((p) => [p.value, p.label]), ['uploads', 'Your uploads']].map(([value, label]) => `<button class="btn small ${category === value ? 'on' : ''}" data-category="${esc(value)}" aria-pressed="${category === value}">${esc(label)}</button>`).join('');
+    filters.innerHTML = [['', 'All images'], ...B.pieces.map((p) => [p.value, p.label]), ['options', 'Choices'], ['uploads', 'Your uploads']].map(([value, label]) => `<button class="btn small ${category === value ? 'on' : ''}" data-category="${esc(value)}" aria-pressed="${category === value}">${esc(label)}</button>`).join('');
     const filtered = images.filter((image) => (!category || image.category === category) && `${image.label} ${image.category}`.toLowerCase().includes(search));
-    results.innerHTML = busy && !images.length ? '<div class="jl-loading" role="status"><span class="jl-spinner"></span>Loading images…</div>' : filtered.length ? `<div class="image-library-grid">${filtered.map((image) => `<button class="library-image ${image.image === selected ? 'selected' : ''}" data-library-image="${esc(image.image)}" aria-label="Select ${esc(image.label)}" aria-pressed="${image.image === selected}"><span class="library-image-art"><img src="${esc(image.image)}" alt="" loading="lazy" />${image.image === selected ? '<span class="library-image-check" aria-hidden="true">✓</span>' : ''}</span><b>${esc(image.label)}</b><small>${esc(image.category === 'uploads' ? 'Your upload' : B.pieces.find((p) => p.value === image.category)?.label || image.category)}</small></button>`).join('')}</div>` : '<p class="image-library-empty">No images here yet. Choose another category or add a new image above.</p>';
+    results.innerHTML = busy && !images.length ? '<div class="jl-loading" role="status"><span class="jl-spinner"></span>Loading images…</div>' : filtered.length ? `<div class="image-library-grid">${filtered.map((image) => `<button class="library-image ${image.image === selected ? 'selected' : ''}" data-library-image="${esc(image.image)}" aria-label="Select ${esc(image.label)}" aria-pressed="${image.image === selected}"><span class="library-image-art"><img src="${esc(image.image)}" alt="" loading="lazy" />${image.image === selected ? '<span class="library-image-check" aria-hidden="true">✓</span>' : ''}</span><b>${esc(image.label)}</b><small>${esc(image.category === 'uploads' ? 'Your upload' : image.category === 'options' ? 'Choice' : B.pieces.find((p) => p.value === image.category)?.label || image.category)}</small></button>`).join('')}</div>` : '<p class="image-library-empty">No images here yet. Choose another category or add a new image above.</p>';
     const more = d.querySelector('[data-library-more]');
     more.hidden = !next || !!(category && category !== 'uploads'); more.disabled = busy; more.textContent = busy ? 'Loading…' : 'Load more uploads';
   };
@@ -842,47 +845,120 @@ function piecesView() {
       <div class="styles">${cards}</div>
       <button class="btn small" style="margin-top:12px" data-act="add-style">+ Add style</button>
       ${(() => { const si = styleStepIndex(); const sj = si >= 0 ? B.draft.steps[si].fields.findIndex((f) => f.optionsFrom?.styles) : -1; return sj >= 0 ? `<div class="toggles" style="margin-top:14px">${otherToggle(si, sj)}</div>` : ''; })()}
-      ${perPieceView(o)}`;
+      ${stepsView(o)}`;
   }
-  const single = opts.length === 1 ? `<p class="note">One piece only, so the piece step is ${loc.step.enabled === false ? 'hidden and the piece is picked automatically' : 'shown'}. Turn it on or off in Questions.</p>` : '';
+  const single = opts.length === 1 ? `<p class="note">One piece only, so the piece step is ${loc.step.enabled === false ? 'hidden and the piece is picked automatically' : 'shown'}. Turn it on or off under Form steps below.</p>` : '';
   return `
     <h2>Pieces &amp; styles</h2>
-    <p class="lead">What customers can design, and the style pictures that guide the AI.</p>
+    <p class="lead">Everything for one piece in one place: its styles, every step and question customers see, and the options they choose from.</p>
     ${single}
     <div class="pieces">${list}</div>
     <button class="btn small" style="margin-top:10px" data-act="add-piece">+ Add piece</button>
     ${editor}`;
 }
 
-// Svaki komad za sebe: koje opcije zajedničkih pitanja nudi (perPiece) i pitanja samo za njega (showIf na komadu).
-function perPieceView(o) {
-  const pv = o.value;
-  const shared = [];
-  const own = [];
-  B.draft.steps.forEach((s, si) => s.fields.forEach((f, fj) => {
-    if (f.showIf?.field === 'type') { if ((f.showIf.in || []).includes(pv)) own.push({ si, s, f }); return; }
-    if (f.id !== 'type' && !f.optionsFrom && CHOICE.includes(f.type) && f.options?.length) shared.push({ si, fj, f, s });
-  }));
-  const rows = shared.map(({ si, fj, f, s }) => {
-    const allow = f.perPiece?.[pv];
-    const limited = Array.isArray(allow);
-    return `
-      <div class="pp ${limited && !allow.length ? 'is-off' : ''}">
-        <div class="pp-head"><b>${esc(f.label || s.label || s.title || f.id)}</b><small>${limited ? (allow.length ? `${allow.length} of ${f.options.length} for this piece` : 'Not asked for this piece') : 'All options'}</small></div>
-        <div class="cond-vals">${f.options.map((op) => `<label class="check"><input type="checkbox" data-pp="steps.${si}.fields.${fj}" data-piece="${esc(pv)}" value="${esc(op.value)}" ${!limited || allow.includes(op.value) ? 'checked' : ''} /> ${esc(op.label)}</label>`).join('')}</div>
-      </div>`;
-  }).join('');
-  const ownRows = own.map(({ si, s, f }) => `
-    <div class="pp-q"><span class="grow"><b>${esc(f.label || s.title || f.id)}</b><small>${esc(FIELD_TYPES.find(([v]) => v === f.type)?.[1] || f.type)} · step "${esc(s.label || s.title)}"${f.showIf.in.length > 1 ? ' · also for other pieces' : ''}${f.enabled === false ? ' · off' : ''}</small></span>
-      <button class="btn small" data-act="edit-field" data-i="${si}" data-fid="${esc(f.id)}">Edit</button></div>`).join('');
+// Pitanja koja kupac vidi za ovaj komad (pitanja vezana za drugi komad se preskaču).
+const appliesTo = (f, pv) => f.showIf?.field !== 'type' || (f.showIf.in ? f.showIf.in.includes(pv) : !(f.showIf.notIn || []).includes(pv));
+const stepFields = (s, pv) => s.fields.filter((f) => appliesTo(f, pv));
+const stepRequiredFor = (s, pv) => !(s.optionalFor || []).includes(pv) && (s.required === true || s.fields.some((f) => f.required));
+const fieldName = (f, s) => f.label || s.label || s.title || f.id;
+const optionImage = (f, o) => optionArt(f.id, o);
+
+// Svaki komad za sebe, korak po korak: šta nudi (perPiece), šta je obavezno, i pitanja samo za njega. Edit otvara popup.
+function fieldRow(s, si, f, pv) {
+  const name = esc(fieldName(f, s));
+  const edit = `<button class="btn small" data-act="edit-field" data-i="${si}" data-fid="${esc(f.id)}">Edit</button>`;
+  const flags = `${f.required ? '<span class="pill">Required</span>' : ''}${f.enabled === false ? '<span class="pill">Off</span>' : ''}`;
+  if (!CHOICE.includes(f.type) || !f.options?.length) {
+    return `<div class="pp-q fstep-row ${f.enabled === false ? 'is-off' : ''}" data-si="${si}" data-fid="${esc(f.id)}"><span class="grow"><b>${name}</b><small>${esc(FIELD_TYPES.find(([v]) => v === f.type)?.[1] || f.type)}</small></span>${flags}${edit}</div>`;
+  }
+  const own = f.showIf?.field === 'type';
+  const allow = f.perPiece?.[pv];
+  const limited = Array.isArray(allow);
+  const count = limited ? (allow.length ? `${allow.length} of ${f.options.length} for this piece` : 'Not asked for this piece') : 'All options';
+  const thumb = (o) => { const src = optionImage(f, o); return src ? `<img class="opt-thumb" src="${esc(src)}" alt="" loading="lazy" />` : ''; };
+  const body = own
+    ? f.options.map((o) => `<span class="opt-plain">${thumb(o)}${esc(o.label)}</span>`).join('')
+    : f.options.map((o) => `<label class="check"><input type="checkbox" data-pp="${esc(fieldPath(si, f))}" data-piece="${esc(pv)}" value="${esc(o.value)}" ${!limited || allow.includes(o.value) ? 'checked' : ''} /> ${thumb(o)}${esc(o.label)}</label>`).join('');
   return `
-    <h3>Options for ${esc(o.label)}</h3>
-    <p class="hint" style="margin:-6px 0 12px">Tick what this piece offers. Customers who pick ${esc(o.label.toLowerCase())} see only these; untick everything and the question is skipped for it.</p>
-    ${rows || '<p class="note">This form has no shared choice questions.</p>'}
-    <h3>Questions only for ${esc(o.label)}</h3>
-    <p class="hint" style="margin:-6px 0 12px">Asked only when a customer picks this piece, e.g. chain length or ring size.</p>
-    ${ownRows || '<p class="note">None yet.</p>'}
-    <button class="btn small" data-act="add-piece-question" data-v="${esc(pv)}">+ Add question for ${esc(o.label)}</button>`;
+    <div class="pp fstep-row ${(limited && !allow.length) || f.enabled === false ? 'is-off' : ''}" data-si="${si}" data-fid="${esc(f.id)}">
+      <div class="pp-head"><b>${name}</b><small>${own ? `Only for this piece · ${f.options.length} options` : count}</small>${flags}${edit}</div>
+      <div class="cond-vals">${body}</div>
+    </div>`;
+}
+const fieldPath = (si, f) => `steps.${si}.fields.${B.draft.steps[si].fields.indexOf(f)}`;
+
+function stepsView(o) {
+  const pv = o.value;
+  const tl = typeLoc();
+  const rows = B.draft.steps.map((s, si) => {
+    const fields = stepFields(s, pv);
+    if (!fields.length) return '';
+    const isType = s.fields.some((f) => f.id === 'type');
+    const locked = isType || s.fields.some((f) => f.optionsFrom);
+    const canToggle = !isType || tl.field.options.length === 1;
+    const canDelete = !locked && !s.fields.some((f) => f.builtin);
+    const shown = fields.filter((f) => f.id !== 'type' && !f.optionsFrom);
+    return `
+      <section class="fstep ${s.enabled === false ? 'is-off' : ''}" data-step="${si}">
+        <div class="fstep-head">
+          <span class="num">${si + 1}</span>
+          <span class="grow"><b>${esc(s.label || s.title)}</b>${s.label && s.title ? `<small>${esc(s.title)}</small>` : ''}</span>
+          ${isType ? '' : `<label class="check req" title="Customers must complete this step for ${esc(o.label)} before they can continue."><input type="checkbox" data-step-required="${si}" data-piece="${esc(pv)}" ${stepRequiredFor(s, pv) ? 'checked' : ''} /> Required step</label>`}
+          ${canToggle ? toggle(`steps.${si}.enabled`, 'Show', { invert: true, title: isType ? 'With one piece the step can be hidden; the piece is picked automatically.' : '' }) : ''}
+          <span class="nowrap">
+            <button class="icon-btn" title="Move step up" data-act="move" data-path="steps" data-i="${si}" data-d="-1">↑</button>
+            <button class="icon-btn" title="Move step down" data-act="move" data-path="steps" data-i="${si}" data-d="1">↓</button>
+            ${canDelete ? `<button class="icon-btn danger" title="Remove step" data-act="del" data-path="steps" data-i="${si}" data-confirm="Remove this step and its questions?">✕</button>` : ''}
+          </span>
+          <button class="btn small" data-act="edit-step" data-i="${si}">Edit step</button>
+        </div>
+        ${shown.map((f) => fieldRow(s, si, f, pv)).join('')}
+      </section>`;
+  }).join('');
+  return `
+    <h3>Form steps for ${esc(o.label)}</h3>
+    <p class="hint" style="margin:-6px 0 12px">Every step customers see for ${esc(o.label.toLowerCase())}. Tick what this piece offers; untick everything and the question is skipped for it. Edit opens the options, questions and images. Required step means customers cannot continue without it.</p>
+    ${rows}
+    <div class="pick-row" style="margin-top:12px"><button class="btn small" data-act="add-piece-question" data-v="${esc(pv)}">+ Add question for ${esc(o.label)}</button><button class="btn small" data-act="add-step">+ Add step</button></div>`;
+}
+
+// Stakleni popup: sva pitanja ovog komada kao tabovi (Metal, Karat, Stones...), postavke koraka i opcije sa slikama.
+function openEditor(si, fid = null, stepOpen = false) {
+  const first = stepFields(B.draft.steps[si], B.piece).find((f) => f.id !== 'type' && !f.optionsFrom) || stepFields(B.draft.steps[si], B.piece)[0];
+  B.editor = { si, fid: fid || first?.id, stepOpen };
+  renderEditor();
+  const d = document.getElementById('field-editor');
+  if (!d.open) d.showModal();
+  if (B.editor) previewTo(si, B.editor.fid);
+}
+function renderEditor() {
+  const d = document.getElementById('field-editor');
+  if (!d || !B.editor) return;
+  const tabs = B.draft.steps.flatMap((s, si) => stepFields(s, B.piece).map((f) => ({ s, si, f })));
+  const cur = tabs.find((t) => t.f.id === B.editor.fid) || tabs.find((t) => t.si === B.editor.si) || tabs[0];
+  if (!cur) { B.editor = null; if (d.open) d.close(); return; }
+  B.editor = { ...B.editor, si: cur.si, fid: cur.f.id };
+  const { s, si, f } = cur;
+  const top = d.querySelector('.fe-body')?.scrollTop || 0;
+  const pieceName = typeLoc()?.field.options.find((o) => o.value === B.piece)?.label || '';
+  const isType = f.id === 'type';
+  const fixed = isType || f.optionsFrom;
+  const sj = s.fields.findIndex((x) => x.optionsFrom?.styles);
+  d.innerHTML = `
+    <div class="fe-head"><div><small>${esc(pieceName)}</small><h2>${esc(s.label || s.title)}</h2></div><button class="icon-btn" data-act="editor-close" aria-label="Close">✕</button></div>
+    <nav class="fe-tabs" aria-label="Questions">${tabs.map((t) => `<button class="fe-tab ${t.f === f ? 'on' : ''} ${t.s.enabled === false || t.f.enabled === false ? 'off' : ''}" data-act="editor-tab" data-i="${t.si}" data-fid="${esc(t.f.id)}" ${t.f === f ? 'aria-current="true"' : ''}>${esc(fieldName(t.f, t.s))}</button>`).join('')}</nav>
+    <div class="fe-body">
+      <details class="fe-step" ${B.editor.stepOpen ? 'open' : ''}>
+        <summary>Step settings <small>${esc(s.title || '')}</small></summary>
+        <div class="toggles">${toggle(`steps.${si}.autoAdvance`, 'Go to the next step right after a choice')}</div>
+        <div class="row">${inp(`steps.${si}.title`, 'Title')}${inp(`steps.${si}.label`, 'Progress label')}</div>
+        ${inp(`steps.${si}.subtitle`, 'Subtitle')}
+      </details>
+      ${fixed ? `<p class="note">${isType ? 'Pieces are managed in the list on the Pieces & styles tab.' : `The styles for ${esc(pieceName)} are managed on the Pieces & styles tab.`}</p>${sj >= 0 ? `<div class="toggles">${otherToggle(si, sj)}</div>` : ''}` : fieldEditor(si, s.fields.indexOf(f), f)}
+    </div>
+    <div class="fe-foot">${fixed ? '<span></span>' : `<button class="btn small" data-act="add-field" data-i="${si}">+ Add question to this step</button>`}<span class="hint">Changes go live when you press Save.</span><button class="btn primary small" data-act="editor-close">Done</button></div>`;
+  d.querySelector('.fe-body').scrollTop = top;
 }
 
 // Proizvodi iz radnje zlatara: kupac ih vidi ispod AI pregleda, prvo one za svoj komad (do 6).
@@ -924,45 +1000,16 @@ function tidyDraft() {
     if (!Object.keys(f.perPiece).length || !CHOICE.includes(f.type)) delete f.perPiece;
   }
   for (const x of B.draft.products || []) if (x.pieces) x.pieces = x.pieces.filter((v) => pieces.has(v));
+  for (const s of B.draft.steps) if (s.optionalFor) { s.optionalFor = s.optionalFor.filter((v) => pieces.has(v)); if (!s.optionalFor.length) delete s.optionalFor; }
 }
 
 // "Something else" na kraju liste stilova: kupac opisuje svoj stil. Uključeno dok se ne isključi.
 const otherToggle = (i, j) => toggle(`steps.${i}.fields.${j}.other`, 'Offer "Something else" at the end of the styles', { invert: true, title: 'Lets customers describe a style that is not in the list.' });
 
-function questionsView() {
-  const tl = typeLoc();
-  const steps = B.draft.steps.map((s, i) => {
-    const isType = s.fields.some((f) => f.id === 'type');
-    const locked = isType || s.fields.some((f) => f.optionsFrom);
-    const canToggle = !isType || tl.field.options.length === 1;
-    const builtinStep = s.fields.some((f) => f.builtin);
-    const sj = s.fields.findIndex((f) => f.optionsFrom?.styles);
-    const fields = locked
-      ? `<p class="note">Choices for this step are managed in <b>Pieces &amp; styles</b>.</p>${sj >= 0 ? `<div class="toggles">${otherToggle(i, sj)}</div>` : ''}`
-      : s.fields.map((f, j) => fieldEditor(i, j, f)).join('') + `<button class="btn small" data-act="add-field" data-i="${i}">+ Add question</button>`;
-    return `
-      <details class="step ${s.enabled === false ? 'is-off' : ''}" data-step="${i}" ${B.open.has(i) ? 'open' : ''}>
-        <summary>
-          <span class="num">${i + 1}</span><span class="grow"><b>${esc(s.label || s.title)}</b>${s.label && s.title ? `<small>${esc(s.title)}</small>` : ''}</span>
-          ${s.enabled === false ? '<span class="pill">Off</span>' : ''}<span class="pill">${s.fields.length} ${s.fields.length === 1 ? 'question' : 'questions'}</span>
-          <button class="icon-btn" title="Move up" data-act="move" data-path="steps" data-i="${i}" data-d="-1">↑</button>
-          <button class="icon-btn" title="Move down" data-act="move" data-path="steps" data-i="${i}" data-d="1">↓</button>
-          ${locked || builtinStep ? '' : `<button class="icon-btn danger" title="Remove step" data-act="del" data-path="steps" data-i="${i}" data-confirm="Remove this step and its questions?">✕</button>`}
-        </summary>
-        <div class="step-body">
-          <div class="toggles">${canToggle ? toggle(`steps.${i}.enabled`, 'Show this step', { invert: true, title: isType ? 'With one piece the step can be hidden; the piece is picked automatically.' : '' }) : '<span class="hint">Piece step stays on while there is more than one piece.</span>'}
-            ${toggle(`steps.${i}.autoAdvance`, 'Go to the next step right after a choice')}</div>
-          <div class="row">${inp(`steps.${i}.title`, 'Title')}${inp(`steps.${i}.label`, 'Progress label')}</div>
-          ${inp(`steps.${i}.subtitle`, 'Subtitle')}
-          ${fields}
-        </div>
-      </details>`;
-  }).join('');
-  return `
-    <h2>Questions</h2>
-    <p class="lead"><b>Default</b> questions come from the template: turn them off or make them required, the AI understands them. <b>Custom</b> questions are yours: any type, options with images and AI notes, an optional follow-up.</p>
-    ${steps}
-    <button class="btn small" data-act="add-step">+ Add step</button>`;
+// Slika opcije: svoja, ili automatska iz biblioteke izbora (blijeđa, dok se ne izabere druga).
+function optionPick(path, f, o) {
+  const src = optionImage(f, o);
+  return `<button class="opt-img ${src && !o.image ? 'auto' : ''}" data-act="image-library" data-path="${esc(path)}" title="${o.image ? 'Change image' : src ? 'Automatic image. Click to choose another or upload your own.' : 'Add an image'}">${src ? `<img src="${esc(src)}" alt="" />` : nav('image')}</button>${o.image ? `<button class="icon-btn danger" title="Remove image" data-act="unset" data-path="${esc(path)}">✕</button>` : ''}`;
 }
 
 function fieldEditor(i, j, f) {
@@ -975,13 +1022,13 @@ function fieldEditor(i, j, f) {
   } else if (f.type === 'upload') {
     extra = inp(`${p}.hint`, 'Hint under the upload');
   } else if (f.type === 'teeth') {
-    extra = '<p class="hint">Shown after Something else in Choose a style. Preset styles use their own layout; customers choosing Something else tap individual teeth or pick a set.</p>';
+    extra = '<p class="hint">Always shown for grillz. A preset style marks its teeth here and customers can change any tooth; with Something else they pick from scratch.</p>';
   } else if (f.type !== 'yesno') {
     const chips = f.type === 'chips';
     const rows = (f.options || []).map((o, k) => `
       <div class="opt2">
         <div class="opt2-main">
-          <span class="pick-row">${imgPick(`${p}.options.${k}.image`, { empty: '+' })}</span>
+          <span class="pick-row">${optionPick(`${p}.options.${k}.image`, f, o)}</span>
           <input class="in" data-bind="${p}.options.${k}.label" value="${esc(o.label)}" title="id: ${esc(o.value)}" placeholder="Option" />
           ${chips ? `<span class="sw"><input type="color" data-bind="${p}.options.${k}.swatch" data-kind="color" value="${hex6(o.swatch)}" title="Color dot (optional)" /><input class="in" data-bind="${p}.options.${k}.swatch" data-kind="optcolor" value="${esc(o.swatch || '')}" placeholder="no color" /></span>` : ''}
           <span class="nowrap"><button class="icon-btn" data-act="move" data-path="${p}.options" data-i="${k}" data-d="-1" title="Move up">↑</button><button class="icon-btn danger" data-act="del" data-path="${p}.options" data-i="${k}" title="Remove option">✕</button></span>
@@ -1172,6 +1219,18 @@ app.addEventListener('change', async (e) => {
     if (list.length === f.options.length) delete f.perPiece[pv]; else f.perPiece[pv] = list;
     if (!Object.keys(f.perPiece).length) delete f.perPiece;
     changed(true);
+  } else if (el.dataset.stepRequired !== undefined) {
+    // Po komadu: korak ostaje obavezan za ostale komade. Korak bez obaveznih pitanja postaje "bar jedan odgovor", samo za ovaj komad.
+    const s = B.draft.steps[+el.dataset.stepRequired];
+    const pv = el.dataset.piece;
+    const off = new Set(s.optionalFor || []);
+    if (!el.checked) off.add(pv);
+    else {
+      off.delete(pv);
+      if (s.required !== true && !s.fields.some((f) => f.required)) { s.required = true; for (const o of typeLoc().field.options) if (o.value !== pv) off.add(o.value); }
+    }
+    if (off.size) s.optionalFor = [...off]; else delete s.optionalFor;
+    changed(true);
   } else if (el.dataset.prodPiece !== undefined) {
     const x = B.draft.products[+el.dataset.prodPiece];
     const set = new Set(x.pieces || []);
@@ -1189,13 +1248,7 @@ app.addEventListener('toggle', (e) => {
     d.querySelector('summary').setAttribute('aria-expanded', String(d.open));
     if (d.open) app.querySelectorAll('[data-icon-picker][open]').forEach((other) => { if (other !== d) other.open = false; });
   }
-  if (d.matches?.('details.step')) {
-    const i = +d.dataset.step;
-    if (d.open) B.open.add(i); else B.open.delete(i);
-    // Ručno otvoren korak se pokaže u pregledu; otvaranje koje je pokrenuo pregled ne vraća skok nazad.
-    if (d.open && !d.dataset.silent) previewTo(i);
-    delete d.dataset.silent;
-  }
+  if (d.matches?.('.fe-step') && B.editor) B.editor.stepOpen = d.open;
 }, true);
 
 document.addEventListener('click', (e) => {
@@ -1225,7 +1278,10 @@ app.addEventListener('click', async (e) => {
   if (el.closest('summary') && el.tagName === 'BUTTON') e.preventDefault();
   const i = +el.dataset.i;
   if (act === 'tab') { B.tab = el.dataset.tab; store.set('aik_builder_tab', B.tab); renderTabs(); renderPane(); if (B.tab === 'products') pushPreview('products'); }
-  if (act === 'edit-field') { B.tab = 'questions'; store.set('aik_builder_tab', B.tab); B.open.add(i); renderTabs(); renderPane(); revealLeft(i, el.dataset.fid); previewTo(i, el.dataset.fid); }
+  if (act === 'edit-field') openEditor(i, el.dataset.fid);
+  if (act === 'edit-step') openEditor(i, null, true);
+  if (act === 'editor-tab') { B.editor = { ...B.editor, si: i, fid: el.dataset.fid }; renderEditor(); previewTo(i, el.dataset.fid); }
+  if (act === 'editor-close') document.getElementById('field-editor').close();
   if (act === 'add-piece-question') {
     const pv = el.dataset.v;
     const o = typeLoc().field.options.find((x) => x.value === pv);
@@ -1239,16 +1295,10 @@ app.addEventListener('click', async (e) => {
       const after = Math.max(...B.draft.steps.map((s, k) => (['type', 'style', 'teeth', 'design'].includes(s.id) || s.id.startsWith('d-') ? k : -1)));
       si = after + 1;
       B.draft.steps.splice(si, 0, { id: uniq(`d-${pv}`.slice(0, 40), new Set(B.draft.steps.map((s) => s.id))), label: 'Details', title: `${o.label} details`.slice(0, 120), subtitle: 'A few specifics so we get it just right.', fields: [] });
-      B.open = new Set();
     }
     B.draft.steps[si].fields.push(field);
-    B.open.add(si);
-    B.tab = 'questions';
-    store.set('aik_builder_tab', B.tab);
-    renderTabs();
     changed(true);
-    revealLeft(si, field.id);
-    previewTo(si, field.id);
+    openEditor(si, field.id);
   }
   if (act === 'add-product') {
     const name = await askText('New product', { placeholder: 'e.g. Miami Cuban chain 18"' });
@@ -1305,8 +1355,7 @@ app.addEventListener('click', async (e) => {
     const j = i + +el.dataset.d;
     if (j < 0 || j >= arr.length) return;
     [arr[i], arr[j]] = [arr[j], arr[i]];
-    // Otvoreni koraci prate pomjereni korak; uslov "prikaži samo ako" ne smije gledati na pitanje koje dolazi kasnije.
-    if (el.dataset.path === 'steps') { const a = B.open.has(i); const b = B.open.has(j); B.open.delete(i); B.open.delete(j); if (a) B.open.add(j); if (b) B.open.add(i); }
+    // Uslov "prikaži samo ako" ne smije gledati na pitanje koje dolazi kasnije.
     const bad = showIfProblems();
     if (bad.length) toast(`Check "Show only if" on: ${bad.join(', ')}. It now depends on a question that comes later.`);
     changed(true);
@@ -1331,7 +1380,6 @@ app.addEventListener('click', async (e) => {
       for (const f of s.fields) if (f.showIf?.field === 'type' && f.showIf.in) f.showIf.in = f.showIf.in.filter((v) => v !== pv);
     }
     B.draft.steps = B.draft.steps.filter((s) => s.fields.length);
-    B.open = new Set();
     tidyDraft();
     if (loc.field.options.length === 1) loc.field.default = loc.field.options[0].value;
     changed(true);
@@ -1363,14 +1411,19 @@ app.addEventListener('click', async (e) => {
     if (!name?.trim()) return;
     const f = getP(el.dataset.path);
     f.options = f.options || [];
-    f.options.push({ value: uniq(slug(name), new Set(f.options.map((o) => o.value))), label: name.trim().slice(0, 60) });
+    const value = uniq(slug(name), new Set(f.options.map((o) => o.value)));
+    f.options.push({ value, label: name.trim().slice(0, 60) });
+    // Komad za koji je opcija dodata je odmah nudi i kad nudi samo dio opcija.
+    if (Array.isArray(f.perPiece?.[B.piece])) f.perPiece[B.piece].push(value);
     changed(true);
   }
   if (act === 'add-field') {
     const name = await askText('New question', { placeholder: 'e.g. Finish' });
     if (!name?.trim()) return;
-    B.draft.steps[i].fields.push({ id: uniq(key(name), allFieldIds()), type: 'chips', label: name.trim().slice(0, 120), required: false, options: [{ value: 'option-1', label: 'Option 1' }] });
+    const field = { id: uniq(key(name), allFieldIds()), type: 'chips', label: name.trim().slice(0, 120), required: false, options: [{ value: 'option-1', label: 'Option 1' }] };
+    B.draft.steps[i].fields.push(field);
     changed(true);
+    openEditor(i, field.id);
   }
   if (act === 'add-step') {
     const name = await askText('New step', { placeholder: 'e.g. Finish & size' });
@@ -1378,8 +1431,8 @@ app.addEventListener('click', async (e) => {
     const ids = new Set(B.draft.steps.map((s) => s.id));
     const title = name.trim().slice(0, 120);
     B.draft.steps.push({ id: uniq(slug(name), ids), label: title.slice(0, 30), title, subtitle: '', fields: [{ id: uniq(key(name), allFieldIds()), type: 'chips', label: title, required: true, options: [{ value: 'option-1', label: 'Option 1' }] }] });
-    B.open.add(B.draft.steps.length - 1);
     changed(true);
+    openEditor(B.draft.steps.length - 1, null, true);
   }
   if (act === 'copy-text') {
     const label = el.textContent;
@@ -1461,7 +1514,7 @@ async function save(opts = {}) {
     if ((B.client?.id || null) !== (B.draft.clientId || null)) setClient(B.draft.clientId);
     renderTop();
     setStatus(dirty() ? 'Saved (newer edits not saved yet)' : 'Saved', dirty() ? 'dirty' : 'ok');
-    if (!document.activeElement?.closest?.('#pane')) renderPane();
+    if (!document.activeElement?.closest?.('#pane, #field-editor')) renderPane();
   } catch (err) {
     btn.disabled = false;
     if (err.data?.conflict) {
@@ -1519,6 +1572,8 @@ function askText(title, { label = '', placeholder = '', value = '', ok = 'Add' }
     document.body.appendChild(d);
     let out = null;
     d.querySelector('form').addEventListener('submit', (e) => { if (e.submitter?.value === 'ok') out = d.querySelector('[name=v]').value.trim() || null; });
+    // Enter potvrđuje (prvo dugme u formi je Cancel).
+    d.querySelector('[name=v]').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); d.querySelector('form').requestSubmit(d.querySelector('[value=ok]')); } });
     d.addEventListener('close', () => { d.remove(); resolve(out); });
     d.showModal();
   });
@@ -1611,12 +1666,14 @@ function setStatus(text, kind = '') {
 let pt;
 function schedulePreview() { clearTimeout(pt); pt = setTimeout(() => pushPreview(), 250); }
 // Skok na korak šalje i izabrani komad, da korak sa stilovima pokaže stilove tog komada.
-// soft: skok iz Questions (sinhronizacija) ne mijenja kupčeve odgovore u pregledu, samo dopuni komad ako ga nema.
+// soft: skok iz editora (sinhronizacija) ne mijenja kupčeve odgovore u pregledu, samo dopuni komad ako ga nema.
+// Izbori bez svoje slike idu sa slikom iz biblioteke izbora, isto kao javna forma.
+const previewForm = () => ({ ...B.draft, steps: B.draft.steps.map((s) => ({ ...s, fields: s.fields.map((f) => (f.options ? { ...f, options: f.options.map((o) => { const image = optionImage(f, o); return image ? { ...o, image } : o; }) } : f)) })) });
 function pushPreview(step, { soft = false, focus = null } = {}) {
   const frame = document.getElementById('frame');
   const type = B.piece || typeLoc()?.field.options[0]?.value;
   const jump = step === 'products' ? { products: true, answers: { type } } : typeof step === 'number' ? { step, answers: { type }, soft, focus } : {};
-  frame?.contentWindow?.postMessage({ type: 'aik:preview', form: B.draft, admin: true, ...jump }, location.origin);
+  frame?.contentWindow?.postMessage({ type: 'aik:preview', form: previewForm(), admin: true, ...jump }, location.origin);
 }
 
 // Korak koji pregled trenutno pokazuje: isto dugme u "Jump to" je označeno (null = rezultat ili nepoznato).
@@ -1629,8 +1686,8 @@ function setPv(i) {
   });
 }
 
-// ---------- Questions <-> pregled ----------
-// Lijevo otvoren korak ili kliknuto pitanje pokaže se desno; korak ili izbor u pregledu otvori i pokaže to pitanje lijevo.
+// ---------- Editor <-> pregled ----------
+// Pitanje na kojem se radi pokaže se desno; korak ili izbor u pregledu pokaže to pitanje lijevo.
 let lastFocus = '';
 function previewTo(i, focus = null) {
   if (B.draft.steps[i]?.enabled === false) return; // isključen korak se u pregledu ne vidi
@@ -1641,11 +1698,9 @@ function previewTo(i, focus = null) {
   pushPreview(i, { soft: true, focus });
 }
 function revealLeft(i, fid = null) {
-  if (B.tab !== 'questions' || i < 0) return;
-  const d = document.querySelector(`#pane details.step[data-step="${i}"]`);
+  if (B.tab !== 'pieces' || i < 0) return;
+  const d = document.querySelector(`#pane .fstep[data-step="${i}"]`);
   if (!d) return;
-  B.open.add(i);
-  if (!d.open) { d.dataset.silent = '1'; d.open = true; }
   const el = (fid && d.querySelector(`[data-fid="${CSS.escape(fid)}"]`)) || d;
   lastFocus = `${i}:${fid || ''}`;
   el.scrollIntoView({ block: fid ? 'center' : 'start', behavior: 'smooth' });
@@ -1654,14 +1709,12 @@ function revealLeft(i, fid = null) {
   el.classList.add('flash');
   el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
 }
-app.addEventListener('focusin', (e) => {
-  const f = B.tab === 'questions' && e.target.closest?.('#pane .field[data-fid]');
+const syncPreview = (e) => {
+  const f = e.target.closest?.('#pane .fstep-row[data-fid]');
   if (f) previewTo(+f.dataset.si, f.dataset.fid);
-});
-app.addEventListener('pointerdown', (e) => {
-  const f = B.tab === 'questions' && e.target.closest?.('#pane .field[data-fid]');
-  if (f) previewTo(+f.dataset.si, f.dataset.fid);
-});
+};
+app.addEventListener('focusin', syncPreview);
+app.addEventListener('pointerdown', syncPreview);
 window.addEventListener('message', (e) => {
   const frame = document.getElementById('frame');
   if (e.origin !== location.origin || !frame || e.source !== frame.contentWindow) return;
@@ -1671,6 +1724,7 @@ window.addEventListener('message', (e) => {
     setPv(i >= 0 ? i : null);
   }
   if (e.data?.type === 'aik:step') {
+    document.querySelector('.pstage')?.scrollTo({ top: 0 });
     const i = e.data.step === '_contact' ? B.draft.steps.length : B.draft.steps.findIndex((s) => s.id === e.data.step);
     setPv(i >= 0 ? i : null);
     if (i < B.draft.steps.length) revealLeft(i);

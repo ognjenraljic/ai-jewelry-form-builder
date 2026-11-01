@@ -164,3 +164,12 @@ Renders without spending credit: start the fake OpenAI with `node scripts/mock-o
 - Code comments are in Serbian.
 - Customer photos are stored in R2 and are readable only by the admin or the owning client's portal session. Uploaded builder images must be JPG, PNG or WebP (no SVG).
 - Not done yet: email notification to the jeweler for new leads (they see leads in the portal).
+
+## Izbori, koraci i onboarding (1.11.2026)
+
+- **Pieces & styles je jedino mjesto za sadržaj forme.** Kartica Questions ne postoji: svaki komad pokazuje svoje korake, pitanja i opcije. Edit otvara stakleni popup sa tabovima za sva pitanja tog komada (Metal, Karat, Stones...), postavkama koraka i slikama opcija.
+- **Slike izbora:** `public/library/options/<kategorija>/<slug>` (`.webp` AI fotografije iz `scripts/option_art_spec.py`, `.svg` tačni crteži iz `scripts/build_option_diagrams.py`). Poslije izmjene pokrenuti `scripts/build_option_index.py`. `public/option-art.js` bira sliku po pitanju i natpisu opcije, pa izbor bez svoje slike dobija sliku i u formama koje već rade (`publicForm`). Vlastita slika opcije uvijek ima prednost.
+- **Required step:** `step.required` = bar jedan odgovor, `field.required` = to pitanje, `step.optionalFor` = komadi za koje ni jedno ne važi (`public/step-rules.js`, koriste ga forma i server).
+- **Grillz:** izbor zuba je uvijek vidljiv. Gotov stil označi svoje zube, kupac ih može mijenjati, a server čuva kupčev izbor (`public/grillz-selection.js`). Stil sa fotografijom zlatara bez poznatog rasporeda ne traži zube.
+- **Onboarding provjera:** `public/onboarding-check.js` dijele portal i server. Portal piše šta ne valja, vodi na tačno polje i ne šalje dok se ne ispravi; server odbija isto (422) i uz to pravi probnu formu, da "Create form from it" ne može pasti.
+- **Dodavanje:** u onboardingu se dodaju i karati i opcije specifikacija, ne samo metali i kamenje. "Quick add" nudi `ONBOARDING_EXTRAS` i izbore iz ranijih onboardinga (samo natpisi, nikad tuđe fotografije ni opisi).

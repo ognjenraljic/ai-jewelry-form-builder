@@ -1,4 +1,6 @@
 import { createLeadStore } from './leads.js';
+import { artFor } from '/option-art.js';
+import { onboardingProblems } from '/onboarding-check.js';
 
 // Portal klijenta: njegovi upiti, aktivne forme i odvojeni onboarding.
 // Prijava: link klijenta (/portal#k=...) ili admin pregled (/portal#v=...) se jednom zamijeni za HttpOnly kolačić
@@ -267,7 +269,7 @@ const obIdx = () => Math.max(0, obSteps().findIndex(([k]) => k === OB.step));
 const obPiece = () => { const m = /^p:([^:]+):/.exec(OB.step); const i = m ? OB.d.pieces.findIndex((pc) => pc.uid === m[1]) : -1; return i < 0 ? null : { i, pc: OB.d.pieces[i], sub: OB.step.split(':')[2] }; };
 const obGo = (key) => { OB.step = obSteps().some(([k]) => k === key) ? key : 'pieces'; };
 const ACCENTS = ['#35d0c4', '#d8b46a', '#e7a9a0', '#9b8cff', '#5aa9ff', '#ef6f6f', '#f2f2f2'];
-const OB = { d: null, step: 'store', timer: null, saving: false, savedAt: 0, err: '', dirty: false, rev: 0, inflight: null, retry: null, uploads: new Map(), submitting: false, previewBg: null, previewTimer: null, previewSeq: 0, previewStep: -1 };
+const OB = { fixing: false, d: null, step: 'store', timer: null, saving: false, savedAt: 0, err: '', dirty: false, rev: 0, inflight: null, retry: null, uploads: new Map(), submitting: false, previewBg: null, previewTimer: null, previewSeq: 0, previewStep: -1 };
 // Stabilan id za komade i stilove: slika se upiše u pravi stil i kad se u međuvremenu doda ili ukloni neki drugi.
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -279,12 +281,13 @@ function obInit() {
   d.metals = Array.isArray(d.metals) ? d.metals : defs.metals.map((m) => m.value);
   d.stones = Array.isArray(d.stones) ? d.stones : defs.stones.map((s) => s.value);
   d.budgets = Array.isArray(d.budgets) ? d.budgets : [...defs.budgets];
-  d.customMetals = Array.isArray(d.customMetals) ? d.customMetals.map((m) => ({ ...m, swatch: /^#[0-9a-f]{6}$/i.test(m.swatch || '') ? m.swatch : '#c0c4c8' })) : [];
-  d.customStones = Array.isArray(d.customStones) ? d.customStones : [];
+  d.customMetals = Array.isArray(d.customMetals) ? d.customMetals.map((m) => ({ ...m, uid: m.uid || uid(), swatch: /^#[0-9a-f]{6}$/i.test(m.swatch || '') ? m.swatch : '#c0c4c8' })) : [];
+  d.customStones = Array.isArray(d.customStones) ? d.customStones.map((m) => ({ ...m, uid: m.uid || uid() })) : [];
+  d.customKarats = Array.isArray(d.customKarats) ? d.customKarats : [];
   // Ranije upisani "Other metals" postaju prave opcije, bez gubitka podataka.
   for (const label of String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)) {
     const value = `custom-${uid()}`;
-    d.customMetals.push({ value, label: label.slice(0, 40), swatch: '#c0c4c8' }); d.metals.push(value);
+    d.customMetals.push({ uid: uid(), value, label: label.slice(0, 40), swatch: '#c0c4c8' }); d.metals.push(value);
   }
   d.metalsOther = '';
   for (const pc of d.pieces) { pc.uid ||= uid(); for (const st of pc.styles || []) st.uid ||= uid(); obPieceDefaults(pc, d); }
@@ -312,6 +315,10 @@ function obPieceDefaults(pc, d = OB.d) {
   pc.specs = pc.specs && typeof pc.specs === 'object' && !Array.isArray(pc.specs) ? pc.specs : {};
   pc.questions = Array.isArray(pc.questions) ? pc.questions : [];
   for (const q of pc.questions) q.uid ||= uid();
+  pc.customSpecs = pc.customSpecs && typeof pc.customSpecs === 'object' && !Array.isArray(pc.customSpecs) ? pc.customSpecs : {};
+  for (const list of Object.values(pc.customSpecs)) for (const c of list) c.uid ||= uid();
+  // Required step: stilovi i materijali su podrazumijevano obavezni za kupca, detalji nisu.
+  pc.required = { styles: true, materials: true, details: false, ...(pc.required || {}) };
 }
 
 const obGet = (path) => path.split('.').reduce((x, k) => x?.[k], OB.d);
@@ -391,7 +398,8 @@ function renderOnboarding() {
   const groups = [['store', 'Your store'], ['pieces', 'What you make'], ...OB.d.pieces.map((pc) => [`p:${pc.uid}:`, pc.label || 'Piece']), ['products', 'Shop products'], ['extras', 'Notes'], ['send', 'Review & send']];
   const g = groups.findIndex(([k]) => OB.step === k || (k.endsWith(':') && OB.step.startsWith(k)));
   const open = obCan('store') && obCan('pieces');
-  const steps = groups.map(([k, l], i) => `<button class="ob-dot ${k.endsWith(':') ? 'piece' : ''} ${i === g ? 'now' : i < g ? 'done' : ''}" data-ob-go="${esc(k.endsWith(':') ? `${k}styles` : k)}" ${i > g && !open ? 'disabled' : ''}><span>${i + 1}</span>${esc(l)}</button>`).join('');
+  const bad = OB.fixing || OB.step === 'send' ? new Set(obProblems().map((x) => x.step.replace(/^(p:[^:]+:).*/, '$1'))) : new Set();
+  const steps = groups.map(([k, l], i) => `<button class="ob-dot ${bad.has(k) ? 'bad' : ''} ${k.endsWith(':') ? 'piece' : ''} ${i === g ? 'now' : i < g ? 'done' : ''}" data-ob-go="${esc(k.endsWith(':') ? `${k}styles` : k)}" ${i > g && !open ? 'disabled' : ''}><span>${i + 1}</span>${esc(l)}</button>`).join('');
   editor.innerHTML = `
     ${banner}
     <header class="head"><div class="wrap">
@@ -401,6 +409,7 @@ function renderOnboarding() {
     <main class="wrap ob">
       ${portalTabs()}
       <nav class="ob-steps">${steps}</nav>
+      <div id="ob-fix"></div>
       <section class="ob-card">${obStepView()}</section>
       <div class="ob-nav">
         ${obIdx() > 0 ? '<button class="btn" data-ob-act="back">Back</button>' : '<span></span>'}
@@ -419,6 +428,40 @@ function renderOnboarding() {
   syncPreviewBackground();
   queueOnboardingPreview();
   obStatus();
+  obMarkProblems();
+}
+
+// Šta još ne valja: zlatar vidi poruku, ide tačno na to polje i ne može poslati dok nije ispravljeno (isto pravilo provjerava i server).
+const obProblems = () => (OB.d ? onboardingProblems(OB.d) : []);
+function obFix(problem) {
+  OB.fixing = true;
+  obGo(problem.step);
+  obSave(true);
+  renderOnboarding();
+  const el = problem.field ? document.querySelector(`[data-ob="${problem.field}"]`) : null;
+  (el || document.getElementById('ob-fix'))?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el?.focus({ preventScroll: true });
+}
+function obMarkProblems() {
+  const box = document.getElementById('ob-fix');
+  if (!box) return;
+  document.querySelectorAll('.ob-invalid').forEach((x) => x.classList.remove('ob-invalid'));
+  document.querySelectorAll('.ob-field-err').forEach((x) => x.remove());
+  if (!OB.fixing) { box.innerHTML = ''; return; }
+  const all = obProblems();
+  const here = all.filter((x) => x.step === OB.step);
+  for (const x of here) {
+    const el = x.field && document.querySelector(`[data-ob="${x.field}"]`);
+    if (!el) continue;
+    el.classList.add('ob-invalid');
+    const note = document.createElement('p');
+    note.className = 'ob-field-err';
+    note.textContent = x.message;
+    (el.closest('.ob-custom') || el).after(note);
+  }
+  const next = all[0];
+  box.innerHTML = `<div class="ob-fix ${here.length ? '' : 'ok'}" role="status"><div><b>${here.length ? esc(here[0].message) : all.length ? 'Fixed here.' : 'Everything is fixed.'}</b>${here.length ? '<small>Fix this to continue sending.</small>' : ''}</div>
+    ${here.length ? (all.length > 1 ? `<span class="ob-fix-count">${all.length} left</span>` : '') : `<button class="btn primary" data-ob-act="${next ? 'fix-next' : 'fix-done'}">${next ? `Next fix (${all.length} left)` : 'Back to Review & send'}</button>`}</div>`;
 }
 
 // Dugme dalje kaže kuda vodi kad se prelazi na sljedeći komad.
@@ -490,6 +533,46 @@ const obPick = (path, { label = 'Upload photo', cls = '' } = {}) => {
   return `<label class="ob-photo ${cls} ${v ? 'has' : ''} ${busy ? 'jl-uploading' : ''}" title="${v ? 'Change photo or drop a new one' : 'Upload or drop a photo'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span><b>${esc(label)}</b><small>or drag & drop here</small></span>`}<input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-ob-file="${path}" data-uid="${esc(owner)}" ${readOnly() || busy ? 'disabled' : ''} />${busy ? '<span class="jl-upload-progress" role="status"><span class="jl-spinner"></span>Uploading photo…</span>' : ''}</label>`;
 };
 
+// Brzo dodavanje: opcije koje imamo u biblioteci i one koje su dodale ranije radnje (samo natpisi, nikad tuđe fotografije).
+function obSuggest(kind, items, taken, attrs = '') {
+  const have = new Set(taken.map((x) => String(x ?? '').trim().toLowerCase()));
+  const left = (items || []).filter((x) => !have.has(String(x.label ?? x).toLowerCase())).slice(0, 12);
+  if (!left.length) return '';
+  return `<div class="ob-suggest"><small>Quick add</small>${left.map((x) => `<button class="ob-chip small add" data-ob-suggest="${kind}" data-label="${esc(x.label ?? x)}" data-swatch="${esc(x.swatch || '')}" ${attrs}>+ ${esc(x.label ?? x)}</button>`).join('')}</div>`;
+}
+// Vlastite opcije zlatara: fotografija (nije obavezna, a kupac je vidi na izboru) i uklanjanje.
+const obOwn = (items, base, del) => (items.length ? `<div class="ob-own">${items.map((c, k) => `<div class="ob-own-item">${base ? obPick(`${base}.${k}.image`, { label: 'Photo', cls: 'mini' }) : ''}<span>${esc(c.label ?? c)}</span><button class="link" data-ob-del-own="${esc(del)}" data-k="${k}">Remove</button></div>`).join('')}</div>` : '');
+
+function obAddCustom(kind, i, label, swatch) {
+  const d = OB.d;
+  const clean = label.trim().slice(0, 40);
+  if (!clean) return;
+  const pc = d.pieces[i];
+  if (kind === 'karats') {
+    const existing = [...P.me.onboardingDefaults.karats, ...d.customKarats].find((x) => x.toLowerCase() === clean.toLowerCase());
+    if (!existing) d.customKarats.push(clean);
+    if (pc && !pc.karats.includes(existing || clean)) pc.karats.push(existing || clean);
+    return;
+  }
+  const listKey = kind === 'metals' ? 'customMetals' : 'customStones';
+  const existing = [...P.me.onboardingDefaults[kind], ...d[listKey]].find((x) => x.label.toLowerCase() === clean.toLowerCase());
+  const value = existing ? existing.value : `custom-${uid()}`;
+  // Nova opcija ide u katalog radnje (vide je i ostali komadi) i odmah je izabrana za ovaj komad.
+  if (!existing) { d[listKey].push({ uid: uid(), value, label: clean, image: '', ...(kind === 'metals' ? { swatch: swatch || '#c0c4c8' } : {}) }); d[kind].push(value); }
+  if (pc && !pc[kind].includes(value)) pc[kind].push(value);
+}
+function obAddSpec(i, id, label) {
+  const pc = OB.d.pieces[i];
+  const sp = P.me.onboardingDefaults.specs[pc.value]?.find((x) => x.id === id);
+  const clean = label.trim().slice(0, 40);
+  if (!sp || !clean) return;
+  const list = (pc.customSpecs[id] ||= []);
+  const known = [...sp.options, ...list].find((o) => o.label.toLowerCase() === clean.toLowerCase());
+  const value = known ? known.value : `custom-${uid()}`;
+  if (!known) { if (list.length >= 12) return JLUI.alert('You can add up to 12 of your own options here.'); list.push({ uid: uid(), value, label: clean, image: '' }); }
+  pc.specs[id] = [...new Set([...obSpecPicked(pc, sp), value])];
+}
+
 function obStepView() {
   const d = OB.d;
   const defs = P.me.onboardingDefaults;
@@ -511,13 +594,14 @@ function obStepView() {
   if (key === 'pieces') {
     const on = new Set(d.pieces.map((p) => p.value).filter(Boolean));
     const lib = defs.pieces.map((p) => `<button class="ob-piece ${on.has(p.value) ? 'on' : ''}" data-ob-piece="${p.value}" aria-pressed="${on.has(p.value)}"><img src="${esc(p.image || defs.styles[p.value]?.[0]?.image || '')}" alt="" /><b>${esc(p.label)}</b>${on.has(p.value) ? '<i class="ob-selected" aria-hidden="true">✓</i>' : ''}</button>`).join('');
-    const custom = d.pieces.map((p, i) => (p.value ? '' : `<div class="ob-custom"><input class="in" data-ob="pieces.${i}.label" value="${esc(p.label)}" /><button class="btn small" data-ob-del-piece="${i}">Remove</button></div>`)).join('');
+    const custom = d.pieces.map((p, i) => (p.value ? '' : `<div class="ob-custom">${obPick(`pieces.${i}.image`, { label: 'Photo', cls: 'mini' })}<input class="in" data-ob="pieces.${i}.label" value="${esc(p.label)}" /><button class="btn small" data-ob-del-piece="${i}">Remove</button></div>`)).join('');
     return `
       <h2>What do you make?</h2>
       <p class="ob-lead">Pick everything customers can order from you. Then we go through them one by one: styles, materials and budget, and details for each piece.</p>
       <div class="ob-pieces">${lib}</div>
       ${custom ? `<h3>Your own pieces</h3>${custom}` : ''}
-      <button class="btn" data-ob-act="add-piece">+ Add another piece (e.g. Belt buckle)</button>`;
+      <button class="btn" data-ob-act="add-piece">+ Add another piece (e.g. Belt buckle)</button>
+      ${obSuggest('piece', P.me.onboardingSuggestions?.pieces, d.pieces.map((p) => p.label))}`;
   }
   if (key === 'products') return obProductsView();
   const here = obPiece();
@@ -541,9 +625,11 @@ function obStepView() {
       <b>Metals:</b> ${esc(pc.metals.map((v) => name(metals, v)).join(', ') || 'not asked')}${pc.metals.some((v) => v !== 'platinum') ? ` · ${esc(pc.karats.join(', ') || 'no karat question')}` : ''}<br />
       <b>Stones:</b> ${esc(pc.stones.map((v) => name(stones, v)).join(', ') || 'not asked')}<br />
       <b>Budgets:</b> ${esc(pc.budgets.filter(Boolean).join(' · ') || 'not asked')}
-      ${specs.length || qs.length ? `<br /><b>Details:</b> ${[...specs, ...qs].join(', ')}` : ''}</dd>`;
+      ${specs.length || qs.length ? `<br /><b>Details:</b> ${[...specs, ...qs].join(', ')}` : ''}
+      <br /><b>Required steps:</b> ${esc(OB_PIECE_STEPS.filter(([k]) => pc.required[k]).map(([, l]) => l).join(', ') || 'none')}</dd>`;
   };
   const prods = d.products.filter((x) => x.name.trim());
+  const problems = obProblems();
   return `
     <h2>Review & send</h2>
     <p class="ob-lead">Check everything once. After you send it, we build your form and it appears in this portal.</p>
@@ -553,12 +639,15 @@ function obStepView() {
       <dt>Shop products</dt><dd>${prods.length ? prods.map((x) => `${esc(x.name)}${x.price ? ` (${esc(x.price)})` : ''}`).join(', ') : '<span class="faint">none, nothing is recommended under the preview</span>'}</dd>
       ${d.notes ? `<dt>Notes</dt><dd>${esc(d.notes)}</dd>` : ''}
     </dl>
+    ${problems.length ? `<div class="ob-problems" role="alert"><b>${problems.length === 1 ? '1 thing needs' : `${problems.length} things need`} fixing before you can send</b><ul>${problems.map((x, k) => `<li><span>${esc(x.message)}</span><button class="btn small" data-ob-fix="${k}">Fix this</button></li>`).join('')}</ul></div>` : ''}
     ${OB.err ? `<p class="ob-err">${esc(OB.err)}</p>` : ''}
-    <button class="btn primary big" data-ob-act="send" ${readOnly() || OB.uploads.size || OB.submitting ? 'disabled' : ''}>${OB.submitting ? '<span class="jl-spinner"></span> Sending…' : OB.uploads.size ? 'Waiting for photo upload…' : 'Send to our team'}</button>`;
+    <button class="btn primary big" data-ob-act="send" ${readOnly() || OB.uploads.size || OB.submitting ? 'disabled' : ''}>${OB.submitting ? '<span class="jl-spinner"></span> Sending…' : OB.uploads.size ? 'Waiting for photo upload…' : problems.length ? 'Fix the problems first' : 'Send to our team'}</button>`;
 }
 
 // Specifikacija komada: izabrane opcije (prazno = ne pita se). Bez odluke zlatara važi podrazumijevano iz kataloga.
 const obSpecPicked = (pc, sp) => (Array.isArray(pc.specs[sp.id]) ? pc.specs[sp.id] : sp.on ? sp.options.map((o) => o.value) : []);
+// Oznaka koraka: bez njega kupac ne može dalje (za ovaj komad).
+const obRequired = (i, pc, key) => `<label class="ob-required"><input type="checkbox" data-ob-req="${i}.${key}" ${pc.required[key] ? 'checked' : ''} /><span><b>Required step</b><small>${pc.required[key] ? 'Customers must complete this before they can continue.' : 'Customers can skip this.'}</small></span></label>`;
 
 // Jedan komad: zaglavlje "Piece 2 of 3", pod-koraci i sadržaj izabranog pod-koraka.
 function obPieceView({ i, pc, sub }) {
@@ -584,27 +673,37 @@ function obPieceView({ i, pc, sub }) {
     }).join('');
     return `${head}
       <p class="ob-lead">The shapes customers pick from for a ${esc(pc.label.toLowerCase())}. Keep the ones you make, rename them, swap in photos of your own work, or add your signature styles. Your photos also guide the AI, so the previews look like your pieces.</p>
-      <div class="ob-styles">${cards}<button class="ob-style add" data-ob-add-style="${i}"><span>+</span>Add a style</button></div>`;
+      ${obRequired(i, pc, 'styles')}
+      <div class="ob-styles">${cards}<button class="ob-style add" data-ob-add-style="${i}"><span>+</span>Add a style</button></div>
+      ${obSuggest('style', P.me.onboardingSuggestions?.styles?.[pc.value], pc.styles.map((s) => s.label), `data-i="${i}"`)}`;
   }
   if (sub === 'materials') {
-    const chip = (k, v, label, sw = '') => { const on = pc[k].includes(v); return `<button class="ob-chip ${on ? 'on' : 'off'}" data-ob-ptoggle="${i}.${k}" data-v="${esc(v)}" aria-pressed="${on}">${sw ? `<i style="background:${esc(sw)}"></i>` : ''}${esc(label)}${on ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; };
+    const chip = (k, v, label, src = '', sw = '') => { const on = pc[k].includes(v); return `<button class="ob-chip ${src ? 'pic' : ''} ${on ? 'on' : 'off'}" data-ob-ptoggle="${i}.${k}" data-v="${esc(v)}" aria-pressed="${on}">${src ? `<img src="${esc(src)}" alt="" loading="lazy" />` : sw ? `<i style="background:${esc(sw)}"></i>` : ''}${esc(label)}${on ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; };
+    const sugg = P.me.onboardingSuggestions || {};
     const others = d.pieces.filter((x) => x !== pc && x.budgets.some(Boolean));
     return `${head}
       <p class="ob-lead">Only what you offer for a ${esc(pc.label.toLowerCase())} shows to customers who design one. Untick everything in a row and that question is skipped for this piece.</p>
-      <div class="ob-f"><span>Metals</span><div class="ob-chips">${[...defs.metals, ...d.customMetals].map((m) => chip('metals', m.value, m.label, m.swatch)).join('')}<button class="ob-chip add" data-ob-add-option="metals" data-i="${i}">+ Add new</button></div></div>
-      <div class="ob-f"><span>Karat</span><div class="ob-chips">${defs.karats.map((k) => chip('karats', k, k)).join('')}</div><p class="hint">Not asked when the customer picks platinum.</p></div>
-      <div class="ob-f"><span>Stones</span><div class="ob-chips">${[...defs.stones, ...d.customStones].map((st) => chip('stones', st.value, st.label)).join('')}<button class="ob-chip add" data-ob-add-option="stones" data-i="${i}">+ Add new</button></div></div>
+      ${obRequired(i, pc, 'materials')}
+      <div class="ob-f"><span>Metals</span><div class="ob-chips pics">${[...defs.metals, ...d.customMetals].map((m) => chip('metals', m.value, m.label, m.image || artFor('metal', m.label), m.swatch)).join('')}<button class="ob-chip add" data-ob-add-option="metals" data-i="${i}">+ Add new</button></div>
+        ${obSuggest('metals', sugg.metals, [...defs.metals, ...d.customMetals].map((m) => m.label), `data-i="${i}"`)}${obOwn(d.customMetals, 'customMetals', 'metals')}</div>
+      <div class="ob-f"><span>Karat</span><div class="ob-chips pics">${[...defs.karats, ...d.customKarats].map((k) => chip('karats', k, k, artFor('karat', k))).join('')}<button class="ob-chip add" data-ob-add-option="karats" data-i="${i}">+ Add new</button></div><p class="hint">Not asked when the customer picks platinum.</p>
+        ${obSuggest('karats', sugg.karats, [...defs.karats, ...d.customKarats], `data-i="${i}"`)}${obOwn(d.customKarats, '', 'karats')}</div>
+      <div class="ob-f"><span>Stones</span><div class="ob-chips pics">${[...defs.stones, ...d.customStones].map((st) => chip('stones', st.value, st.label, st.image || artFor('stones', st.label))).join('')}<button class="ob-chip add" data-ob-add-option="stones" data-i="${i}">+ Add new</button></div>
+        ${obSuggest('stones', sugg.stones, [...defs.stones, ...d.customStones].map((m) => m.label), `data-i="${i}"`)}${obOwn(d.customStones, 'customStones', 'stones')}</div>
       <div class="ob-f"><span>Budget ranges for a ${esc(pc.label.toLowerCase())}</span>
-        ${pc.budgets.map((b, k) => `<div class="ob-custom"><input class="in" data-ob="${P_}.budgets.${k}" value="${esc(b)}" /><button class="btn small" data-ob-del-budget="${i}.${k}">Remove</button></div>`).join('') || '<p class="hint">No budget question for this piece.</p>'}
-        <div class="ob-row"><button class="btn small" data-ob-add-budget="${i}">+ Add range</button>${others.map((x) => `<button class="btn small" data-ob-copy-budget="${i}.${d.pieces.indexOf(x)}">Same as ${esc(x.label)}</button>`).join('')}</div></div>`;
+        ${pc.budgets.map((b, k) => { const src = artFor('budget', b); return `<div class="ob-custom">${src ? `<img class="ob-thumb" src="${esc(src)}" alt="" loading="lazy" />` : ''}<input class="in" data-ob="${P_}.budgets.${k}" value="${esc(b)}" /><button class="btn small" data-ob-del-budget="${i}.${k}">Remove</button></div>`; }).join('') || '<p class="hint">No budget question for this piece.</p>'}
+        <div class="ob-row"><button class="btn small" data-ob-add-budget="${i}">+ Add range</button>${others.map((x) => `<button class="btn small" data-ob-copy-budget="${i}.${d.pieces.indexOf(x)}">Same as ${esc(x.label)}</button>`).join('')}</div>
+        ${obSuggest('budget', sugg.budgets, pc.budgets, `data-i="${i}"`)}</div>`;
   }
   const specs = (defs.specs[pc.value] || []).map((sp) => {
     const picked = obSpecPicked(pc, sp);
     const on = picked.length > 0;
+    const own = pc.customSpecs[sp.id] || [];
     return `
       <div class="ob-spec ${on ? '' : 'off'}">
         <label class="ob-spec-head"><input type="checkbox" data-ob-spec-on="${i}.${sp.id}" ${on ? 'checked' : ''} /><b>${esc(sp.label)}</b><small>${on ? 'Asked' : 'Not asked'}</small></label>
-        ${on ? `<div class="ob-chips">${sp.options.map((o) => { const sel = picked.includes(o.value); return `<button class="ob-chip ${sel ? 'on' : 'off'}" data-ob-spec="${i}.${sp.id}" data-v="${esc(o.value)}" aria-pressed="${sel}">${esc(o.label)}${sel ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; }).join('')}</div>` : ''}
+        ${on ? `<div class="ob-chips pics">${[...sp.options, ...own].map((o) => { const sel = picked.includes(o.value); const src = o.image || artFor(sp.id, o.label); return `<button class="ob-chip ${src ? 'pic' : ''} ${sel ? 'on' : 'off'}" data-ob-spec="${i}.${sp.id}" data-v="${esc(o.value)}" aria-pressed="${sel}">${src ? `<img src="${esc(src)}" alt="" loading="lazy" />` : ''}${esc(o.label)}${sel ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; }).join('')}<button class="ob-chip add" data-ob-add-spec="${i}.${sp.id}">+ Add new</button></div>
+          ${obSuggest('spec', P.me.onboardingSuggestions?.specs?.[`${pc.value}.${sp.id}`], [...sp.options, ...own].map((o) => o.label), `data-i="${i}" data-spec="${sp.id}"`)}${obOwn(own, `${P_}.customSpecs.${sp.id}`, `spec:${i}:${sp.id}`)}` : ''}
       </div>`;
   }).join('');
   const qs = pc.questions.map((q, k) => `
@@ -614,6 +713,7 @@ function obPieceView({ i, pc, sub }) {
       <button class="btn small" data-ob-del-question="${i}.${k}">Remove</button>
     </div>`).join('');
   return `${head}
+    ${obRequired(i, pc, 'details')}
     <p class="ob-lead">${specs ? `The specifics you ask about a ${esc(pc.label.toLowerCase())}. Customers only see these when they design one. Turn off what you don't ask and untick sizes you don't make.` : `Anything you need to know about a ${esc(pc.label.toLowerCase())}? Add your own questions; customers only see them when they design one.`}</p>
     ${specs}
     <div class="ob-f"><span>Your own questions${specs ? ' (optional)' : ''}</span>${qs}
@@ -685,7 +785,7 @@ async function obUpload(input) {
     const id = input.dataset.uid;
     if (!id) obSet('store.logo', data.url);
     else {
-      const st = [...(OB.d?.pieces.flatMap((pc) => pc.styles || []) || []), ...(OB.d?.products || [])].find((x) => x.uid === id);
+      const st = [...(OB.d?.pieces.flatMap((pc) => [pc, ...(pc.styles || []), ...Object.values(pc.customSpecs || {}).flat()]) || []), ...(OB.d?.products || []), ...(OB.d?.customMetals || []), ...(OB.d?.customStones || [])].find((x) => x.uid === id);
       if (st) st.image = data.url;
     }
     obSave(true);
@@ -705,15 +805,21 @@ app.addEventListener('input', (e) => {
   if (el.dataset.ob === 'store.name' || el.dataset.ob === 'store.accent') { const n = document.querySelector('[data-ob-act="next"]'); if (n) n.disabled = !obCan(OB.step); }
   obSave();
   queueOnboardingPreview();
+  obMarkProblems();
 });
 app.addEventListener('change', (e) => {
   const el = e.target;
   if (!OB.d) return;
   if (el.dataset.obFile) obUpload(el);
+  if (el.dataset.obReq && !readOnly() && !OB.submitting) {
+    const [i, key] = el.dataset.obReq.split('.');
+    OB.d.pieces[+i].required[key] = el.checked;
+    obSave(); const y = scrollY; renderOnboarding(); scrollTo(0, y);
+  }
   if (el.dataset.obSpecOn && !readOnly() && !OB.submitting) {
     const [i, id] = el.dataset.obSpecOn.split('.');
     const sp = P.me.onboardingDefaults.specs[OB.d.pieces[+i].value]?.find((x) => x.id === id);
-    if (sp) { OB.d.pieces[+i].specs[id] = el.checked ? sp.options.map((o) => o.value) : []; obSave(); const y = scrollY; renderOnboarding(); scrollTo(0, y); }
+    if (sp) { OB.d.pieces[+i].specs[id] = el.checked ? [...sp.options, ...(OB.d.pieces[+i].customSpecs[id] || [])].map((o) => o.value) : []; obSave(); const y = scrollY; renderOnboarding(); scrollTo(0, y); }
   }
   if (el.dataset.obKeep && !readOnly() && !OB.submitting) { obSet(`${el.dataset.obKeep}.keep`, el.checked); el.closest('.ob-style')?.classList.toggle('off', !el.checked); obSave(); queueOnboardingPreview(); }
 });
@@ -722,31 +828,64 @@ app.addEventListener('click', async (e) => {
   const t = e.target.closest('button');
   if (!t) return;
   if (OB.submitting) return;
-  if (readOnly() && t.dataset.obAct !== 'next' && t.dataset.obAct !== 'back' && t.dataset.obGo === undefined) return;
+  if (readOnly() && !['next', 'back', 'fix-next', 'fix-done'].includes(t.dataset.obAct) && t.dataset.obGo === undefined && t.dataset.obFix === undefined) return;
   const d = OB.d;
   const defs = P.me.onboardingDefaults;
   const redraw = () => { obSave(); const y = scrollY; renderOnboarding(); scrollTo(0, y); };
   if (t.dataset.obGo !== undefined) { obGo(t.dataset.obGo); obSave(true); renderOnboarding(); scrollTo(0, 0); return; }
   const act = t.dataset.obAct;
+  if (t.dataset.obFix !== undefined) { const x = obProblems()[+t.dataset.obFix]; if (x) obFix(x); return; }
+  if (act === 'fix-next') { const x = obProblems()[0]; if (x) obFix(x); return; }
+  if (act === 'fix-done') { OB.fixing = false; OB.step = 'send'; obSave(true); renderOnboarding(); scrollTo(0, 0); return; }
   if (act === 'next' && obCan(OB.step)) { OB.step = obSteps()[obIdx() + 1][0]; obSave(true); renderOnboarding(); scrollTo(0, 0); }
   if (act === 'back') { OB.step = obSteps()[Math.max(0, obIdx() - 1)][0]; obSave(true); renderOnboarding(); scrollTo(0, 0); }
   if (t.dataset.obAccent) { d.store.accent = t.dataset.obAccent; redraw(); }
   if (t.dataset.obTheme) { d.store.theme = t.dataset.obTheme; redraw(); }
   if (t.dataset.obAddOption) {
     const kind = t.dataset.obAddOption;
-    const listKey = kind === 'metals' ? 'customMetals' : 'customStones';
-    if (d[listKey].length >= 6) return JLUI.alert('You can add up to 6 custom options.');
     const answer = kind === 'metals'
       ? await JLUI.material('Name the metal and choose its circle color.', { title: 'Add a metal' })
-      : await JLUI.prompt('Name of the stone (e.g. Ruby)', { title: 'Add a stone' });
+      : await JLUI.prompt(kind === 'karats' ? 'Karat or purity (e.g. 22K)' : 'Name of the stone (e.g. Ruby)', { title: kind === 'karats' ? 'Add a karat' : 'Add a stone' });
     const label = typeof answer === 'string' ? answer : answer?.label;
     if (!label) return;
-    // Nova opcija ide u katalog radnje (vide je i ostali komadi) i odmah je izabrana za ovaj komad.
-    const pc = d.pieces[+t.dataset.i];
-    const existing = [...defs[kind], ...d[listKey]].find((x) => x.label.toLowerCase() === label.toLowerCase());
-    const value = existing ? existing.value : `custom-${uid()}`;
-    if (!existing) { d[listKey].push({ value, label: label.slice(0, 40), ...(kind === 'metals' ? { swatch: answer.swatch } : {}) }); d[kind].push(value); }
-    if (pc && !pc[kind].includes(value)) pc[kind].push(value);
+    const count = kind === 'karats' ? d.customKarats.length : d[kind === 'metals' ? 'customMetals' : 'customStones'].length;
+    if (count >= 12) return JLUI.alert('You can add up to 12 of your own options here.');
+    obAddCustom(kind, +t.dataset.i, label, answer?.swatch);
+    redraw();
+  }
+  if (t.dataset.obAddSpec) {
+    const [i, id] = t.dataset.obAddSpec.split('.');
+    const label = await JLUI.prompt('Name of the option', { title: 'Add an option' });
+    if (!label) return;
+    obAddSpec(+i, id, label);
+    redraw();
+  }
+  if (t.dataset.obSuggest) {
+    const kind = t.dataset.obSuggest;
+    const label = t.dataset.label;
+    const i = +t.dataset.i;
+    if (kind === 'piece') { const pc = { uid: uid(), value: '', label, styles: [] }; obPieceDefaults(pc); d.pieces.push(pc); }
+    if (kind === 'style') d.pieces[i].styles.push({ uid: uid(), value: '', label, image: '', note: '', custom: true, keep: true });
+    if (kind === 'budget') d.pieces[i].budgets.push(label);
+    if (kind === 'spec') obAddSpec(i, t.dataset.spec, label);
+    if (['metals', 'stones', 'karats'].includes(kind)) obAddCustom(kind, i, label, t.dataset.swatch);
+    redraw();
+  }
+  if (t.dataset.obDelOwn) {
+    const k = +t.dataset.k;
+    const [kind, i, id] = t.dataset.obDelOwn.split(':');
+    if (kind === 'spec') {
+      const pc = d.pieces[+i];
+      const [gone] = pc.customSpecs[id].splice(k, 1);
+      if (Array.isArray(pc.specs[id])) pc.specs[id] = pc.specs[id].filter((v) => v !== gone.value);
+    } else if (kind === 'karats') {
+      const [gone] = d.customKarats.splice(k, 1);
+      for (const pc of d.pieces) pc.karats = pc.karats.filter((v) => v !== gone);
+    } else {
+      const [gone] = d[kind === 'metals' ? 'customMetals' : 'customStones'].splice(k, 1);
+      d[kind] = d[kind].filter((v) => v !== gone.value);
+      for (const pc of d.pieces) pc[kind] = pc[kind].filter((v) => v !== gone.value);
+    }
     redraw();
   }
   if (t.dataset.obPiece) {
@@ -818,6 +957,8 @@ app.addEventListener('click', async (e) => {
   }
   if (t.dataset.obProdPiece !== undefined) { flip(d.products[+t.dataset.obProdPiece].pieces, t.dataset.v); redraw(); }
   if (act === 'send') {
+    const problems = obProblems();
+    if (problems.length) return obFix(problems[0]);
     if (OB.uploads.size) return JLUI.alert('Wait for your photos to finish uploading before sending.');
     if (!(await JLUI.confirm('Send your answers to our team? You won\'t be able to edit them here after that, but you can always message us changes.'))) return;
     OB.submitting = true;
