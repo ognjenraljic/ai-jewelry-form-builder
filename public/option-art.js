@@ -1,6 +1,6 @@
 // Picture of a form choice: a photo or an exact diagram from public/library/options/<category>/<slug>.
 // A choice without its own image falls back to this, so forms already in use show pictures too.
-import { ART } from './option-art-index.js';
+import { ART, DETAILS } from './option-art-index.js';
 
 const slug = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 // Most specific first: ring-size before size. Onboarding field IDs carry the piece in front (chain_length).
@@ -39,6 +39,19 @@ export function pieceArt(fieldId, label) {
     if (src) out[folder.slice(cat.length + 1)] = src;
   }
   return out;
+}
+// Macro shot of one choice for the render wait: the piece's own first, then shared; a metal-colored shot follows the chosen metal.
+export const metalFamily = (label) => (/rose/i.test(label) ? 'rose' : /white|platinum|silver|steel|black/i.test(label) ? 'white' : 'yellow');
+export function detailArt(cat, label, piece, family) {
+  const s = slug(label);
+  const names = [`${s}-${family}`, s, ...(ALIASES[cat]?.[s] ? [ALIASES[cat][s]] : []), `${s}s`];
+  // A hallmark photographed inside a band belongs to a ring; every other piece shows it on a clasp tag.
+  const common = cat === 'karat' && piece !== 'ring' ? 'tag/karat' : `shared/${cat}`;
+  for (const folder of [`${piece}/${cat}`, common]) {
+    const name = names.find((n) => DETAILS[folder]?.includes(n));
+    if (name) return `/library/details/${folder}/${name}.webp`;
+  }
+  return '';
 }
 // Picture of a built-in piece on the first step of the form.
 const PIECES = { pendant: '/library/pendant/script.webp', chain: '/site/gallery/chain-category-v2.webp', ring: '/library/ring/solitaire.webp', grillz: '/library/grillz/top8.webp', bracelet: '/library/bracelet/cuban.webp', earrings: '/library/earrings/hoops.webp', watch: '/library/watch/iced.webp' };

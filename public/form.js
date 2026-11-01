@@ -2,6 +2,7 @@ import { SMILE_TEETH, SMILE_DEFS } from './teeth-art.js';
 import { applyPresetTeeth } from './grillz-selection.js';
 import { stepNeedsAnswer, fieldRequired } from './step-rules.js';
 import { phoneHtml, phoneValid, mountPhone } from './phone.js';
+import { artCategory, detailArt, metalFamily } from './option-art.js';
 
 // Widget forme: crta korake iz konfiguracije, šalje lead, traži render i doradu.
 const formId = location.pathname.split('/')[2] || 'demo';
@@ -29,6 +30,7 @@ const S = {
   contact: { name: '', email: '', phone: '', consent: false },
   files: {}, // polje (ili polje__more) -> { blob, url, name }
   uploading: new Set(),
+  forge: null, // scena čekanja rendera (forgeScene)
   onboardingPreview: new URLSearchParams(location.search).has('onboarding'),
   test: false, // probni render iz pregleda u builderu (admin, bez upita)
   tryons: [], // grillz na fotografiji kupca: [{ url, base }], base = product preview number
@@ -526,7 +528,7 @@ function resultView() {
   const left = S.test ? Infinity : S.cfg.maxRenders - S.renders.length;
   const marking = S.mask.on && shown && !S.busy;
   const stage = S.busy
-    ? `<div class="forge"><div class="forge-inner">${icon('gem').replace('<svg', '<svg class="gem"')}<div class="forge-msg" data-msg>${esc(r.loading[0])}</div><div class="forge-time" data-time aria-hidden="true">0s</div></div></div>`
+    ? forgeView()
     : shown
       ? `<img class="${S.fresh ? 'fresh' : ''}" src="${esc(shown.url)}" alt="AI preview of your custom piece" />${marking ? '<canvas class="maskc" data-mask aria-label="Paint over the area to change"></canvas>' : ''}`
       : '';
@@ -575,22 +577,105 @@ function resultView() {
     </section>`;
 }
 
-// Šta je kupac izabrao, ispod rendera: slika izbora ili ikonica, pitanje, odgovor.
-function picksView() {
-  const tile = (mark, name, value) => `<li class="pick"><span class="pick-ic">${mark}</span><span class="pick-txt"><small>${esc(name)}</small><b>${esc(value)}</b></span></li>`;
-  const list = S.cfg.steps.filter((st) => st.enabled !== false).flatMap((st) => st.fields.filter(visible).map((f) => {
+// Sve što je kupac izabrao, redom kojim je birao: slika izbora, boja ili ikonica uz pitanje i odgovor.
+function picked() {
+  return S.cfg.steps.filter((st) => st.enabled !== false).flatMap((st) => st.fields.filter(visible).map((f) => {
     const v = S.a[f.id];
-    if (!v) return '';
+    if (!v) return null;
     const name = f.label || st.label || st.title;
-    if (f.type === 'teeth') { const n = teethSet(v).size; return tile(icon('grillz'), name, `${n} ${n === 1 ? 'tooth' : 'teeth'}`); }
-    if (f.type === 'text' || f.type === 'textarea') return tile(icon('note'), name, v);
-    if (f.type === 'upload') return '';
+    if (f.type === 'teeth') { const n = teethSet(v).size; return { f, name, value: `${n} ${n === 1 ? 'tooth' : 'teeth'}`, icon: 'grillz' }; }
+    if (f.type === 'text' || f.type === 'textarea') return { f, name, value: v, icon: 'note' };
+    if (f.type === 'upload') return null;
     const o = optionsOf(f).find((x) => x.value === v);
-    if (!o) return v === 'other' ? tile(icon('note'), name, S.a[`${f.id}__more`] || 'Something else') : '';
-    const mark = pic(o) ? `<img src="${esc(pic(o))}" alt="" loading="lazy" />` : o.swatch ? `<i class="dot" style="background:${esc(o.swatch)}"></i>` : icon(o.icon || 'gem');
-    return tile(mark, name, o.label);
+    if (!o) return v === 'other' ? { f, name, value: S.a[`${f.id}__more`] || 'Something else', icon: 'note' } : null;
+    return { f, name, value: o.label, o, img: pic(o), swatch: o.swatch, icon: o.icon || 'gem' };
   })).filter(Boolean);
+}
+const pickMark = (p) => (p.img ? `<img src="${esc(p.img)}" alt="" loading="lazy" />` : p.swatch ? `<i class="dot" style="background:${esc(p.swatch)}"></i>` : icon(p.icon));
+
+// Ispod rendera: šta je kupac izabrao.
+function picksView() {
+  const list = picked().map((p) => `<li class="pick"><span class="pick-ic">${pickMark(p)}</span><span class="pick-txt"><small>${esc(p.name)}</small><b>${esc(p.value)}</b></span></li>`);
   return list.length ? `<div class="picks"><p class="label">Your choices</p><ul>${list.join('')}</ul></div>` : '';
+}
+
+// ---------- Čekanje rendera: pregled izabranih detalja ----------
+// Svaki izbor dobija svoj makro kadar preko kojeg kamera polako klizi, pa se pretopi u sljedeći.
+// Sve se računa iz proteklog vremena (forgeTick), pa se stanje ne gubi ako se stranica iscrta ponovo.
+const SHOT_SECONDS = 4;
+
+function forgeShots() {
+  const metal = picked().find((p) => /metal/i.test(`${p.f.id} ${p.f.label || ''}`));
+  const family = metalFamily(metal?.value || '');
+  return picked()
+    .filter((p) => p.f.ai !== false && p.f.id !== 'budget' && p.f.id !== 'type' && p.o && !/^(no\b|none)/i.test(p.value))
+    .map((p) => {
+      const detail = p.f.id === 'style' ? detailArt('style', p.o.value, S.a.type, family) : detailArt(artCategory(p.f.id), p.value, S.a.type, family);
+      return { name: p.name, value: p.value, img: detail || p.img };
+    })
+    .filter((x) => x.img)
+    .slice(0, 7);
+}
+
+function forgeScene(tweak) {
+  const refining = tweak && S.renders[S.shown]?.url;
+  const fields = S.cfg.steps.flatMap((st) => st.fields);
+  const chosen = (id) => { const f = fields.find((x) => x.id === id); return f ? optionsOf(f).find((o) => o.value === S.a[id]) : null; };
+  const piece = pic(chosen('style') || {}) || pic(chosen('type') || {}) || S.files.reference?.url || '';
+  const shots = refining ? [{ name: 'Your change', value: tweak, img: refining }] : forgeShots();
+  if (!shots.length && piece) shots.push({ name: 'Your design', value: chosen('type')?.label || '', img: piece });
+  // Dorada ne bira metal ni kamen ispočetka, pa ostaju samo završne poruke.
+  return { shots, msgs: refining ? S.cfg.result.loading.slice(-2) : S.cfg.result.loading, t0: Date.now() };
+}
+
+function forgeView() {
+  const { shots, msgs } = S.forge;
+  const list = shots.map((x, k) => `<figure class="at-shot glide-${k % 4}" data-shot="${k}"><img src="${esc(x.img)}" alt="" /></figure>`).join('');
+  return `<div class="atelier ${shots.length ? '' : 'noart'} ${shots.length === 1 ? 'solo' : ''}">
+      ${shots.length ? list : icon('gem')}
+      <div class="at-foot">
+        <p class="at-name" data-name></p>
+        <p class="at-value" data-value></p>
+        <span class="at-bar" aria-hidden="true"><i></i></span>
+        <p class="at-msg" data-msg>${esc(msgs[0])}</p>
+      </div>
+    </div>`;
+}
+
+// Jedan otkucaj: koliko je pregled odmakao i koji se kadar gleda.
+function forgeTick(root) {
+  const { shots, t0 } = S.forge;
+  const sec = (Date.now() - t0) / 1000;
+  root.style.setProperty('--p', (0.96 * (1 - Math.exp(-sec / 11))).toFixed(4));
+  if (!shots.length) return;
+  const k = Math.floor(sec / SHOT_SECONDS) % shots.length;
+  if (root.dataset.shot === String(k)) return;
+  root.querySelector(`[data-shot="${root.dataset.shot}"]`)?.classList.replace('on', 'off');
+  const next = root.querySelector(`[data-shot="${k}"]`);
+  next.classList.remove('off');
+  void next.offsetWidth; // kadar koji se vraća kreće svoje klizanje ispočetka
+  next.classList.add('on');
+  root.dataset.shot = k;
+  const foot = root.querySelector('.at-foot');
+  foot.classList.add('swap');
+  setTimeout(() => {
+    foot.querySelector('[data-name]').textContent = shots[k].name;
+    foot.querySelector('[data-value]').textContent = shots[k].value;
+    foot.classList.remove('swap');
+  }, root.dataset.ready ? 500 : 0);
+  root.dataset.ready = '1';
+}
+
+// Slika je stigla: linija se dopuni, pa se pravi render pretopi preko kadra.
+async function forgeFinish(url) {
+  const ready = new Image();
+  ready.src = url;
+  await Promise.race([ready.decode().catch(() => {}), new Promise((ok) => setTimeout(ok, 2500))]);
+  const root = app.querySelector('.atelier');
+  if (!root || reduceMotion()) return;
+  clearInterval(ticker);
+  root.style.setProperty('--p', 1);
+  await new Promise((ok) => setTimeout(ok, 500));
 }
 
 // Preporuke iz radnje zlatara ispod rendera: prvo proizvodi za komad kupca, pa oni za sve komade (do 6).
@@ -828,28 +913,30 @@ async function restoreLead() {
 
 let ticker;
 function startTicker() {
-  const msgs = S.cfg.result.loading;
+  const { msgs } = S.forge;
   const t0 = Date.now();
   let k = 0;
   clearInterval(ticker);
-  ticker = setInterval(() => {
+  const tick = () => {
     const m = app.querySelector('[data-msg]');
-    const t = app.querySelector('[data-time]');
     if (!m) return clearInterval(ticker);
+    forgeTick(app.querySelector('.atelier'));
     const sec = Math.floor((Date.now() - t0) / 1000);
-    t.textContent = `${sec}s`;
     if (sec && sec % 4 === 0 && sec / 4 !== k) {
       k = sec / 4;
       m.style.opacity = 0;
-      setTimeout(() => { m.textContent = msgs[k % msgs.length]; m.style.opacity = 1; }, 250);
+      setTimeout(() => { m.textContent = msgs[Math.min(k, msgs.length - 1)]; m.style.opacity = 1; }, 600);
     }
-  }, 250);
+  };
+  ticker = setInterval(tick, 250);
+  tick();
 }
 
 async function makeRender(tweak = '', mask = null) {
   if (S.busy || (!S.lead && !S.test)) return;
   const base = S.shown + 1; // dorada polazi od slike koju kupac gleda
   const baseKey = S.renders[S.shown]?.key || '';
+  S.forge = forgeScene(tweak);
   S.busy = true;
   S.error = '';
   render();
@@ -876,6 +963,7 @@ async function makeRender(tweak = '', mask = null) {
     const data = await res.json();
     S.dev = data.dev || null;
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+    await forgeFinish(data.url);
     S.renders.push({ url: data.url, key: data.key });
     S.fresh = true;
     S.shown = S.renders.length - 1;
