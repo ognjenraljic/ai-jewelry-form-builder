@@ -30,7 +30,7 @@ SURFACE = {'ring': 'the smooth polished curved surface of a {m} ring band, long 
            'bracelet': 'polished {m} curb bracelet links meeting at the clasp, no stones',
            'earrings': 'the smooth polished curve of a {m} hoop earring, no stones',
            'watch': 'the polished case edge and first bracelet link of a {m} luxury watch, no brand and no dial text',
-           'grillz': 'the smooth mirror polished surface of a {m} dental grill tooth, displayed on its own, no mouth'}
+           'grillz': 'three neighboring mirror polished {m} teeth of a dental grill side by side, displayed on their own, no mouth, no stones'}
 # Šta je "pokrivenost" kadar za svaki komad.
 ICE = {'ring': 'a wide {m} ring band', 'chain': 'a Miami Cuban link chain in {m}', 'bracelet': 'a Cuban link bracelet in {m}', 'earrings': 'a {m} hoop earring',
        'watch': 'a {m} luxury watch case, no brand and no dial text', 'grillz': 'a {m} dental grill, displayed on its own, no mouth'}
@@ -41,8 +41,8 @@ STYLES = {'ring/solitaire': 'a six-prong solitaire ring head in {m} holding one 
           'ring/three-stone': 'a {m} three-stone ring, three round diamonds side by side in prongs, seen slightly from above',
           'ring/eternity': 'a {m} eternity band, a continuous row of round diamonds running around the ring',
           'ring/signet': 'the flat oval polished face of a {m} signet ring, blank, no engraving',
-          'pendant/script': 'a flowing cursive script letter pendant in {m} with fine diamonds along the strokes, no readable word',
-          'pendant/block': 'a chunky block letter pendant in {m} with diamonds set on its face, one letter only',
+          'pendant/script': 'one flowing cursive curve of a {m} script name pendant with fine diamonds along the stroke, framed so close that no letter or word can be recognized',
+          'pendant/block': 'one thick straight stroke and corner of a chunky {m} block letter pendant with diamonds set on its face, framed so close that no letter can be recognized',
           'pendant/medallion': 'a round {m} medallion pendant with a fine diamond edge and a smooth center',
           'pendant/cross': 'a {m} cross pendant set with diamonds, the center where the arms meet',
           'chain/cuban': 'thick interlocking Miami Cuban links in {m}, polished, side view',

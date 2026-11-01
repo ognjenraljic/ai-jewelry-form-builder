@@ -45,8 +45,8 @@ export const metalFamily = (label) => (/rose/i.test(label) ? 'rose' : /white|pla
 export function detailArt(cat, label, piece, family) {
   const s = slug(label);
   const names = [`${s}-${family}`, s, ...(ALIASES[cat]?.[s] ? [ALIASES[cat][s]] : []), `${s}s`];
-  // A hallmark photographed inside a band belongs to a ring; every other piece shows it on a clasp tag.
-  const common = cat === 'karat' && piece !== 'ring' ? 'tag/karat' : `shared/${cat}`;
+  // A hallmark photographed inside a band belongs to a ring, other pieces show it on a clasp tag, and grillz have neither.
+  const common = cat !== 'karat' || piece === 'ring' ? `shared/${cat}` : piece === 'grillz' ? '' : 'tag/karat';
   for (const folder of [`${piece}/${cat}`, common]) {
     const name = names.find((n) => DETAILS[folder]?.includes(n));
     if (name) return `/library/details/${folder}/${name}.webp`;
