@@ -1,6 +1,6 @@
 // JewelryLead Builder: klijenti (zlatari) -> forme iz šablona -> uređivanje bez koda, sa živim pregledom.
 // Čuvanje forme: PUT /api/admin/forms/:id (server provjerava validateFormDef). Klijent: PUT /api/admin/clients/:id.
-import { optionArt } from '/option-art.js';
+import { optionArt, withArt } from '/option-art.js';
 
 const ICONS = {
   pendant: '<path d="M8 6c4 9 9 14 16 14s12-5 16-14"/><path d="M24 20v4"/><path d="M24 24l-7 8 7 11 7-11z"/><path d="M17 32h14M24 24v19"/>',
@@ -862,7 +862,7 @@ const appliesTo = (f, pv) => f.showIf?.field !== 'type' || (f.showIf.in ? f.show
 const stepFields = (s, pv) => s.fields.filter((f) => appliesTo(f, pv));
 const stepRequiredFor = (s, pv) => !(s.optionalFor || []).includes(pv) && (s.required === true || s.fields.some((f) => f.required));
 const fieldName = (f, s) => f.label || s.label || s.title || f.id;
-const optionImage = (f, o) => optionArt(f.id, o);
+const optionImage = (f, o) => optionArt(f.id, o, B.piece);
 
 // Svaki komad za sebe, korak po korak: šta nudi (perPiece), šta je obavezno, i pitanja samo za njega. Edit otvara popup.
 function fieldRow(s, si, f, pv) {
@@ -1668,7 +1668,7 @@ function schedulePreview() { clearTimeout(pt); pt = setTimeout(() => pushPreview
 // Skok na korak šalje i izabrani komad, da korak sa stilovima pokaže stilove tog komada.
 // soft: skok iz editora (sinhronizacija) ne mijenja kupčeve odgovore u pregledu, samo dopuni komad ako ga nema.
 // Izbori bez svoje slike idu sa slikom iz biblioteke izbora, isto kao javna forma.
-const previewForm = () => ({ ...B.draft, steps: B.draft.steps.map((s) => ({ ...s, fields: s.fields.map((f) => (f.options ? { ...f, options: f.options.map((o) => { const image = optionImage(f, o); return image ? { ...o, image } : o; }) } : f)) })) });
+const previewForm = () => ({ ...B.draft, steps: B.draft.steps.map((s) => ({ ...s, fields: s.fields.map((f) => (f.options ? { ...f, options: f.options.map((o) => withArt(f, o)) } : f)) })) });
 function pushPreview(step, { soft = false, focus = null } = {}) {
   const frame = document.getElementById('frame');
   const type = B.piece || typeLoc()?.field.options[0]?.value;

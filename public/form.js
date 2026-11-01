@@ -170,6 +170,9 @@ function visible(f) {
   return true;
 }
 
+// Slika izbora prati komad: metal za prsten je na prstenu, ne na lancu.
+const pic = (o) => o.pieceArt?.[S.a.type] || o.image;
+
 // Stilovi zavise od izabranog tipa; "Something else" je zadnji (bez reference), osim ako ga zlatar isključi.
 const optionsOf = (f) => {
   if (f.optionsFrom?.styles) {
@@ -408,15 +411,15 @@ function uploadView(f, label) {
 function choiceView(f, label, v) {
   if (f.type === 'cards') {
     const opts = optionsOf(f);
-    const pics = opts.some((o) => o.image);
+    const pics = opts.some(pic);
     return `<div class="field">${label}<div class="cards ${pics ? 'pics' : ''}" role="radiogroup" aria-labelledby="${f.label ? `lbl-${esc(f.id)}` : 'step-title'}">${opts
-      .map((o) => `<button type="button" class="card ${o.image ? 'pic' : ''} ${v === o.value ? 'on' : ''}" role="radio" aria-checked="${v === o.value}" data-pick="${esc(f.id)}" data-val="${esc(o.value)}">${o.image ? `<img src="${esc(o.image)}" alt="" loading="lazy" />` : icon(o.icon)}<span>${esc(o.label)}</span></button>`)
+      .map((o) => `<button type="button" class="card ${pic(o) ? 'pic' : ''} ${v === o.value ? 'on' : ''}" role="radio" aria-checked="${v === o.value}" data-pick="${esc(f.id)}" data-val="${esc(o.value)}">${pic(o) ? `<img src="${esc(pic(o))}" alt="" loading="lazy" />` : icon(o.icon)}<span>${esc(o.label)}</span></button>`)
       .join('')}</div></div>`;
   }
   if (f.type === 'chips' || f.type === 'yesno') {
     const opts = optionsOf(f);
-    return `<div class="field">${label}<div class="chips ${f.big ? 'big' : ''} ${opts.some((o) => o.image) ? 'pics' : ''}" role="radiogroup" aria-labelledby="${f.label ? `lbl-${esc(f.id)}` : 'step-title'}">${opts
-      .map((o) => `<button type="button" class="chip ${o.image ? 'pic' : ''} ${v === o.value ? 'on' : ''}" role="radio" aria-checked="${v === o.value}" data-pick="${esc(f.id)}" data-val="${esc(o.value)}">${o.image ? `<img src="${esc(o.image)}" alt="" loading="lazy" />` : o.swatch ? `<i class="dot" style="background:${esc(o.swatch)}"></i>` : ''}${esc(o.label)}</button>`)
+    return `<div class="field">${label}<div class="chips ${f.big ? 'big' : ''} ${opts.some(pic) ? 'pics' : ''}" role="radiogroup" aria-labelledby="${f.label ? `lbl-${esc(f.id)}` : 'step-title'}">${opts
+      .map((o) => `<button type="button" class="chip ${pic(o) ? 'pic' : ''} ${v === o.value ? 'on' : ''}" role="radio" aria-checked="${v === o.value}" data-pick="${esc(f.id)}" data-val="${esc(o.value)}">${pic(o) ? `<img src="${esc(pic(o))}" alt="" loading="lazy" />` : o.swatch ? `<i class="dot" style="background:${esc(o.swatch)}"></i>` : ''}${esc(o.label)}</button>`)
       .join('')}</div></div>`;
   }
   if (f.type === 'dropdown') {

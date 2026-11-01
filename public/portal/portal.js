@@ -684,14 +684,14 @@ function obPieceView({ i, pc, sub }) {
     return `${head}
       <p class="ob-lead">Only what you offer for a ${esc(pc.label.toLowerCase())} shows to customers who design one. Untick everything in a row and that question is skipped for this piece.</p>
       ${obRequired(i, pc, 'materials')}
-      <div class="ob-f"><span>Metals</span><div class="ob-chips pics">${[...defs.metals, ...d.customMetals].map((m) => chip('metals', m.value, m.label, m.image || artFor('metal', m.label), m.swatch)).join('')}<button class="ob-chip add" data-ob-add-option="metals" data-i="${i}">+ Add new</button></div>
+      <div class="ob-f"><span>Metals</span><div class="ob-chips pics">${[...defs.metals, ...d.customMetals].map((m) => chip('metals', m.value, m.label, m.image || artFor('metal', m.label, pc.value), m.swatch)).join('')}<button class="ob-chip add" data-ob-add-option="metals" data-i="${i}">+ Add new</button></div>
         ${obSuggest('metals', sugg.metals, [...defs.metals, ...d.customMetals].map((m) => m.label), `data-i="${i}"`)}${obOwn(d.customMetals, 'customMetals', 'metals')}</div>
       <div class="ob-f"><span>Karat</span><div class="ob-chips pics">${[...defs.karats, ...d.customKarats].map((k) => chip('karats', k, k, artFor('karat', k))).join('')}<button class="ob-chip add" data-ob-add-option="karats" data-i="${i}">+ Add new</button></div><p class="hint">Not asked when the customer picks platinum.</p>
         ${obSuggest('karats', sugg.karats, [...defs.karats, ...d.customKarats], `data-i="${i}"`)}${obOwn(d.customKarats, '', 'karats')}</div>
-      <div class="ob-f"><span>Stones</span><div class="ob-chips pics">${[...defs.stones, ...d.customStones].map((st) => chip('stones', st.value, st.label, st.image || artFor('stones', st.label))).join('')}<button class="ob-chip add" data-ob-add-option="stones" data-i="${i}">+ Add new</button></div>
+      <div class="ob-f"><span>Stones</span><div class="ob-chips pics">${[...defs.stones, ...d.customStones].map((st) => chip('stones', st.value, st.label, st.image || artFor('stones', st.label, pc.value))).join('')}<button class="ob-chip add" data-ob-add-option="stones" data-i="${i}">+ Add new</button></div>
         ${obSuggest('stones', sugg.stones, [...defs.stones, ...d.customStones].map((m) => m.label), `data-i="${i}"`)}${obOwn(d.customStones, 'customStones', 'stones')}</div>
       <div class="ob-f"><span>Budget ranges for a ${esc(pc.label.toLowerCase())}</span>
-        ${pc.budgets.map((b, k) => { const src = artFor('budget', b); return `<div class="ob-custom">${src ? `<img class="ob-thumb" src="${esc(src)}" alt="" loading="lazy" />` : ''}<input class="in" data-ob="${P_}.budgets.${k}" value="${esc(b)}" /><button class="btn small" data-ob-del-budget="${i}.${k}">Remove</button></div>`; }).join('') || '<p class="hint">No budget question for this piece.</p>'}
+        ${pc.budgets.map((b, k) => { const src = artFor('budget', b, pc.value); return `<div class="ob-custom">${src ? `<img class="ob-thumb" src="${esc(src)}" alt="" loading="lazy" />` : ''}<input class="in" data-ob="${P_}.budgets.${k}" value="${esc(b)}" /><button class="btn small" data-ob-del-budget="${i}.${k}">Remove</button></div>`; }).join('') || '<p class="hint">No budget question for this piece.</p>'}
         <div class="ob-row"><button class="btn small" data-ob-add-budget="${i}">+ Add range</button>${others.map((x) => `<button class="btn small" data-ob-copy-budget="${i}.${d.pieces.indexOf(x)}">Same as ${esc(x.label)}</button>`).join('')}</div>
         ${obSuggest('budget', sugg.budgets, pc.budgets, `data-i="${i}"`)}</div>`;
   }
@@ -702,7 +702,7 @@ function obPieceView({ i, pc, sub }) {
     return `
       <div class="ob-spec ${on ? '' : 'off'}">
         <label class="ob-spec-head"><input type="checkbox" data-ob-spec-on="${i}.${sp.id}" ${on ? 'checked' : ''} /><b>${esc(sp.label)}</b><small>${on ? 'Asked' : 'Not asked'}</small></label>
-        ${on ? `<div class="ob-chips pics">${[...sp.options, ...own].map((o) => { const sel = picked.includes(o.value); const src = o.image || artFor(sp.id, o.label); return `<button class="ob-chip ${src ? 'pic' : ''} ${sel ? 'on' : 'off'}" data-ob-spec="${i}.${sp.id}" data-v="${esc(o.value)}" aria-pressed="${sel}">${src ? `<img src="${esc(src)}" alt="" loading="lazy" />` : ''}${esc(o.label)}${sel ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; }).join('')}<button class="ob-chip add" data-ob-add-spec="${i}.${sp.id}">+ Add new</button></div>
+        ${on ? `<div class="ob-chips pics">${[...sp.options, ...own].map((o) => { const sel = picked.includes(o.value); const src = o.image || artFor(sp.id, o.label, pc.value); return `<button class="ob-chip ${src ? 'pic' : ''} ${sel ? 'on' : 'off'}" data-ob-spec="${i}.${sp.id}" data-v="${esc(o.value)}" aria-pressed="${sel}">${src ? `<img src="${esc(src)}" alt="" loading="lazy" />` : ''}${esc(o.label)}${sel ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; }).join('')}<button class="ob-chip add" data-ob-add-spec="${i}.${sp.id}">+ Add new</button></div>
           ${obSuggest('spec', P.me.onboardingSuggestions?.specs?.[`${pc.value}.${sp.id}`], [...sp.options, ...own].map((o) => o.label), `data-i="${i}" data-spec="${sp.id}"`)}${obOwn(own, `${P_}.customSpecs.${sp.id}`, `spec:${i}:${sp.id}`)}` : ''}
       </div>`;
   }).join('');

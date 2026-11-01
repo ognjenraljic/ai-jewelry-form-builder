@@ -17,16 +17,37 @@ function budgetTier(label) {
 }
 const ALIASES = { metal: { silver: 'sterling-silver', gold: 'yellow-gold' }, stones: { none: 'no-stones', cz: 'cubic-zirconia', diamonds: 'natural-diamonds' } };
 
-export function artFor(fieldId, label) {
+const fileIn = (folder, cat, s) => {
+  const files = ART[folder];
+  const name = files && [s, `${s}s`, ALIASES[cat]?.[s]].find((x) => x && files[x]);
+  return name ? `/library/options/${folder}/${name}.${files[name]}` : '';
+};
+// A ring shows its metal on a ring, not on a chain: <category>/<piece>/ first, then the general photo.
+export function artFor(fieldId, label, piece = '') {
   const cat = artCategory(fieldId);
-  const files = ART[cat];
-  if (!files) return '';
+  if (!cat) return '';
   const s = cat === 'budget' ? budgetTier(label) : slug(label);
-  const name = [s, `${s}s`, ALIASES[cat]?.[s]].find((x) => x && files[x]);
-  return name ? `/library/options/${cat}/${name}.${files[name]}` : '';
+  return (piece && fileIn(`${cat}/${piece}`, cat, s)) || fileIn(cat, cat, s);
+}
+// Photos of one choice per piece, for a shared question whose picture follows the piece the customer picked.
+export function pieceArt(fieldId, label) {
+  const cat = artCategory(fieldId);
+  const out = {};
+  for (const folder of Object.keys(ART)) {
+    if (!cat || !folder.startsWith(`${cat}/`)) continue;
+    const src = fileIn(folder, cat, cat === 'budget' ? budgetTier(label) : slug(label));
+    if (src) out[folder.slice(cat.length + 1)] = src;
+  }
+  return out;
 }
 // Picture of a built-in piece on the first step of the form.
 const PIECES = { pendant: '/library/pendant/script.webp', chain: '/site/gallery/chain-category-v2.webp', ring: '/library/ring/solitaire.webp', grillz: '/library/grillz/top8.webp', bracelet: '/library/bracelet/cuban.webp', earrings: '/library/earrings/hoops.webp', watch: '/library/watch/iced.webp' };
-export const optionArt = (fieldId, option) => option.image || (fieldId === 'type' ? PIECES[option.value] || '' : artFor(fieldId, option.label));
+export const optionArt = (fieldId, option, piece = '') => option.image || (fieldId === 'type' ? PIECES[option.value] || '' : artFor(fieldId, option.label, piece));
+// Option as the form receives it: its picture, plus per-piece pictures unless the jeweler set their own image.
+export function withArt(field, o) {
+  const image = optionArt(field.id, o);
+  const byPiece = o.image || field.id === 'type' ? {} : pieceArt(field.id, o.label);
+  return { ...o, ...(image ? { image } : {}), ...(Object.keys(byPiece).length ? { pieceArt: byPiece } : {}) };
+}
 // The whole catalogue, for the image library in the builder.
-export const artList = () => Object.entries(ART).flatMap(([cat, files]) => Object.entries(files).map(([name, ext]) => ({ image: `/library/options/${cat}/${name}.${ext}`, label: `${cat.replace(/-/g, ' ')}: ${name.replace(/-/g, ' ')}` })));
+export const artList = () => Object.entries(ART).flatMap(([cat, files]) => Object.entries(files).map(([name, ext]) => ({ image: `/library/options/${cat}/${name}.${ext}`, label: `${cat.replace(/[-/]/g, ' ')}: ${name.replace(/-/g, ' ')}` })));

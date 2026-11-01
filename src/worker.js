@@ -1186,7 +1186,7 @@ async function demoHandled(request, env, id) {
 function cleanOnboarding(d, clientId) {
   d = d && typeof d === 'object' && !Array.isArray(d) ? d : {};
   const own = `/media/onboarding/${clientId}/`;
-  const img = (u) => (typeof u === 'string' && !u.includes('..') && (u.startsWith(own) || u.startsWith(`/media/clients/${clientId}/`) || /^\/library\/[a-z]+\/[\w-]+\.webp$/.test(u) || /^\/library\/options\/[a-z-]+\/[\w-]+\.(webp|svg)$/.test(u)) ? u : '');
+  const img = (u) => (typeof u === 'string' && !u.includes('..') && (u.startsWith(own) || u.startsWith(`/media/clients/${clientId}/`) || /^\/library\/[a-z]+\/[\w-]+\.webp$/.test(u) || /^\/library\/options\/[a-z/-]+\/[\w-]+\.(webp|svg)$/.test(u)) ? u : '');
   const str = (v, max) => String(v ?? '').slice(0, max);
   const list = (v, n) => (Array.isArray(v) ? v.slice(0, n) : []);
   const st = d.store || {};

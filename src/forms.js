@@ -5,7 +5,7 @@
 import LIBRARY from './library.json' with { type: 'json' };
 import { PRESET_TEETH, presetTeeth } from '../public/grillz-selection.js';
 import { parseTeeth } from './teeth.js';
-import { optionArt } from '../public/option-art.js';
+import { withArt } from '../public/option-art.js';
 
 // Početni stilovi po tipu iz src/library.json. Slika ide i u karticu i modelu kao referenca oblika.
 export const DEFAULT_STYLES = Object.fromEntries(
@@ -261,15 +261,12 @@ export function fromTemplate(template, { id, brand, name, clientId, logo, piece 
 // Ugrađena demo forma (demo sajt i JewelryLead početna). Važi dok se ne sačuva u bazi.
 export const FORMS = { demo: { ...fromTemplate('custom-enquiry', { id: 'demo', brand: 'Maison Demo', name: 'Demo (JewelryLead site)', clientId: null }) } };
 
-// Izbor bez svoje slike dobija sliku iz biblioteke izbora (po pitanju i natpisu), i u već postojećim formama.
-export const withArt = (field, o) => { const image = optionArt(field.id, o); return image ? { ...o, image } : o; };
-
 export function publicForm(form) {
   // Sve što ide u browser. Opis oblika (shape) i napomene za AI (note) nisu za kupca.
   const { id, brand, theme, maxRenders, contact, result, tryOn, products } = form;
   const steps = (form.steps || []).map((s) => ({
     ...s,
-    fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => withArt(f, o)) } : f)),
+    fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => withArt(f, o)) } : f)), // izbor bez svoje slike dobija sliku iz biblioteke, i u već postojećim formama
   }));
   const styles = Object.fromEntries(Object.entries(form.styles || {}).map(([t, list]) => [t, list.map(({ value, label, image }) => {
     const teeth = t === 'grillz' ? styleOf(form, { type: t, style: value })?.teeth : null;
