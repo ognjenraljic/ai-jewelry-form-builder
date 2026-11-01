@@ -1,10 +1,11 @@
-import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, ONBOARDING_EXTRAS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
+import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
 import { buildPrompt, buildTweakPrompt } from './prompt.js';
 import { parseTeeth, teethSummary } from './teeth.js';
 import { buildTryOnPrompt } from './tryon.js';
 import { applyPresetTeeth } from '../public/grillz-selection.js';
 import { stepNeedsAnswer, fieldRequired } from '../public/step-rules.js';
 import { onboardingProblems } from '../public/onboarding-check.js';
+import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList } from '../public/option-art.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
@@ -929,27 +930,47 @@ async function startOnboarding(request, env, clientId) {
   if (client.archived_at) return json({ error: 'This client is archived. Restore it first.' }, 409);
   const link = await makeClientLink(request, env, client.id);
   if (!link.url) return json({ error: LEGACY_LINK_MESSAGE, legacy: true }, 409);
-  let ob = await env.DB.prepare("SELECT id, status FROM onboardings WHERE client_id = ? AND status != 'done' ORDER BY created_at DESC LIMIT 1").bind(client.id).first();
+  const body = await request.json().catch(() => ({}));
+  // Po jedan onboarding za svaku formu: id = isti link ponovo, fresh = novi nacrt, bez toga zadnji neupotrijebljen.
+  let ob = null;
+  if (body?.id) {
+    ob = await env.DB.prepare('SELECT id, status FROM onboardings WHERE id = ? AND client_id = ?').bind(String(body.id), client.id).first();
+    if (!ob) return json({ error: 'Onboarding not found' }, 404);
+  } else if (!body?.fresh) {
+    ob = await env.DB.prepare("SELECT id, status FROM onboardings WHERE client_id = ? AND status != 'done' ORDER BY created_at DESC LIMIT 1").bind(client.id).first();
+  }
   if (!ob) {
     const cd = JSON.parse(client.data || '{}');
     const now = Date.now();
     ob = { id: rid(12), status: 'draft' };
     await env.DB.prepare('INSERT INTO onboardings (id, client_id, data, status, created_at, updated_at) VALUES (?,?,?,?,?,?)')
-      .bind(ob.id, client.id, JSON.stringify({ store: { name: client.name, website: cd.website || '', logo: cd.logo || '' } }), 'draft', now, now).run();
+      .bind(ob.id, client.id, JSON.stringify({ formName: clean(body?.name, 80), store: { name: client.name, website: cd.website || '', logo: cd.logo || '' } }), 'draft', now, now).run();
   }
   return json({ ...link, onboarding: ob });
+}
+
+// Link nosi id onboardinga; bez njega prvi neposlat, pa najnoviji.
+function pickOnboarding(request, env, clientId) {
+  const id = new URL(request.url).searchParams.get('onboarding');
+  const want = /^[a-z0-9]{6,}$/.test(id || '') ? id : null;
+  return env.DB.prepare("SELECT * FROM onboardings WHERE client_id = ? AND (? IS NULL OR id = ?) ORDER BY status = 'draft' DESC, created_at DESC LIMIT 1").bind(clientId, want, want).first();
 }
 
 async function adminOnboardings(request, env, p) {
   if (!(await isAdmin(request, env))) return json({ error: 'Not allowed.' }, 403);
   let m;
   if (p === '/api/admin/onboardings' && request.method === 'GET') {
-    const rows = (await env.DB.prepare('SELECT o.id, o.client_id, c.name, o.status, o.created_at, o.updated_at, o.submitted_at, o.form_id FROM onboardings o LEFT JOIN clients c ON c.id = o.client_id ORDER BY o.updated_at DESC LIMIT 200').all()).results;
+    const rows = (await env.DB.prepare("SELECT o.id, o.client_id, c.name, json_extract(o.data, '$.formName') AS form_name, o.status, o.created_at, o.updated_at, o.submitted_at, o.form_id FROM onboardings o LEFT JOIN clients c ON c.id = o.client_id ORDER BY o.updated_at DESC LIMIT 200").all()).results;
     return json({ onboardings: rows });
   }
   if ((m = p.match(/^\/api\/admin\/onboardings\/([a-z0-9]+)$/)) && request.method === 'GET') {
     const r = await env.DB.prepare('SELECT o.*, c.name FROM onboardings o LEFT JOIN clients c ON c.id = o.client_id WHERE o.id = ?').bind(m[1]).first();
     return r ? json({ onboarding: { ...r, data: JSON.parse(r.data || '{}') } }) : json({ error: 'Not found' }, 404);
+  }
+  // Nacrt koji klijent još nije poslao može da se povuče; poslat ostaje kao zapis.
+  if ((m = p.match(/^\/api\/admin\/onboardings\/([a-z0-9]+)$/)) && request.method === 'DELETE') {
+    const r = await env.DB.prepare("DELETE FROM onboardings WHERE id = ? AND status = 'draft'").bind(m[1]).run();
+    return r.meta.changes ? json({ ok: true }) : json({ error: 'Only an onboarding that was not sent can be removed.' }, 409);
   }
   // Forma iz poslatog onboardinga: slike se kopiraju u folder forme (i logo kod klijenta), pa admin pregleda formu u builderu.
   if ((m = p.match(/^\/api\/admin\/onboardings\/([a-z0-9]+)\/build$/)) && request.method === 'POST') {
@@ -1107,7 +1128,7 @@ async function portalApi(request, env, p, secure) {
     // Po formi: upiti, renderi i zadnji upit. Trošak po formi klijent ne vidi; vidi samo mjesečnu potrošnju naspram budžeta.
     const per = Object.fromEntries((await env.DB.prepare(`SELECT l.form_id, COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, MAX(l.created_at) AS last_lead
       FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? GROUP BY l.form_id`).bind(client.id).all()).results.map((r) => [r.form_id, r]));
-    const ob = await env.DB.prepare('SELECT id, status, data, updated_at, submitted_at, rev FROM onboardings WHERE client_id = ? ORDER BY created_at DESC LIMIT 1').bind(client.id).first();
+    const ob = await pickOnboarding(request, env, client.id);
     return json({
       session: { kind: sess.kind, expiresAt: sess.expires_at || null },
       client: { id: client.id, name: client.name, logo: d.logo || null, website: d.website || '' },
@@ -1196,6 +1217,7 @@ function cleanOnboarding(d, clientId) {
   const stepKey = typeof d.step === 'string' && /^[a-z0-9:_-]{1,60}$/i.test(d.step) ? d.step : Math.max(0, Math.min(5, Number(d.step) || 0));
   return {
     step: stepKey,
+    formName: str(d.formName, 80),
     store: { name: str(st.name, 60), website: str(st.website, 200), logo: img(st.logo), accent: /^#[0-9a-f]{6}$/i.test(st.accent || '') ? st.accent : '#35d0c4', theme: st.theme === 'light' ? 'light' : 'dark' },
     pieces: list(d.pieces, 12).filter((x) => x && typeof x === 'object').map((x) => ({
       uid: str(x.uid, 24), value: str(x.value, 40), label: str(x.label, 60), image: img(x.image),
@@ -1227,10 +1249,10 @@ function cleanOnboarding(d, clientId) {
   };
 }
 
-// Izbori koje su dodale ranije radnje, ponuđeni pri novom onboardingu uz ONBOARDING_EXTRAS. Tuđe fotografije i opisi se ne dijele, samo natpisi.
+// Izbori koje su dodale ranije radnje, ponuđeni pri novom onboardingu uz SUGGESTED. Tuđe fotografije i opisi se ne dijele, samo natpisi.
 async function onboardingSuggestions(env, clientId) {
   const rows = (await env.DB.prepare("SELECT data FROM onboardings WHERE status != 'draft' AND client_id != ? ORDER BY updated_at DESC LIMIT 200").bind(clientId).all()).results;
-  const out = { pieces: [], metals: [...ONBOARDING_EXTRAS.metals], stones: [...ONBOARDING_EXTRAS.stones], karats: [...ONBOARDING_EXTRAS.karats], styles: {}, specs: {}, budgets: [] };
+  const out = { ...structuredClone(SUGGESTED), specs: {} };
   const put = (list, key, item) => { if (key && !list.some((x) => String(x.label ?? x).toLowerCase() === key.toLowerCase())) list.push(item); };
   const known = new Set(ONBOARDING_DEFAULTS.budgets);
   for (const r of rows) {
@@ -1250,7 +1272,7 @@ async function onboardingSuggestions(env, clientId) {
 const safeJson = (s) => { try { return JSON.parse(s || '{}'); } catch { return {}; } };
 
 async function portalOnboarding(request, env, p, client, sess) {
-  const ob = await env.DB.prepare('SELECT * FROM onboardings WHERE client_id = ? ORDER BY created_at DESC LIMIT 1').bind(client.id).first();
+  const ob = await pickOnboarding(request, env, client.id);
   if (!ob) return json({ error: 'No onboarding for this store.' }, 404);
   // Isti renderer i ista konverzija kao stvarna forma, bez čuvanja, upita ili AI troška.
   if (p === '/api/portal/onboarding/preview' && ['GET', 'POST'].includes(request.method)) {

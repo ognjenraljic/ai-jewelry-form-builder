@@ -472,12 +472,6 @@ export const ONBOARDING_DEFAULTS = {
 };
 
 // Ponuda pri dodavanju, i kad nijedna ranija radnja nije dodala tu opciju: ima sliku u biblioteci izbora.
-export const ONBOARDING_EXTRAS = {
-  metals: [['Stainless Steel', '#b9bec2'], ['Dental Gold', '#cf9f3f'], ['Sterling Silver', '#d8dade'], ['Black Gold', '#2b2b2e']].map(([label, swatch]) => ({ label, swatch })),
-  stones: ['Cubic Zirconia', 'Ruby', 'Sapphire', 'Emerald', 'Black Diamonds'].map((label) => ({ label })),
-  karats: ['22K', '24K'],
-};
-
 const LIGHT_THEME = { accent: '#0f8f86', 'accent-ink': '#ffffff', bg: '#faf7f2', surface: '#ffffff', 'surface-2': '#f3eee6', line: '#e6dfd3', 'line-strong': '#cfc4b3', ink: '#1d1a16', 'ink-soft': '#5f574c', 'ink-faint': '#6f675b' };
 function slugOf(s) { return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36) || 'item'; }
 const uniqOf = (base, taken) => { let v = base; for (let i = 2; taken.has(v); i++) v = `${base}-${i}`; taken.add(v); return v; };
@@ -496,7 +490,7 @@ export const onboardingPieces = (d) => (Array.isArray(d?.pieces) ? d.pieces : []
 // i budžet za sve komade zajedno) radi i dalje: komad bez svojih lista uzima zajedničke.
 // img(url) pretvara sliku iz onboardinga u sliku forme (worker je prije toga kopira u R2), ili vrati '' ako slika ne važi.
 export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => u }) {
-  const form = fromTemplate('custom-enquiry', { id, brand, clientId, logo, name: `${brand} · Custom form` });
+  const form = fromTemplate('custom-enquiry', { id, brand, clientId, logo, name: String(d.formName || '').trim().slice(0, 80) || `${brand} · Custom form` });
   const typeStep = form.steps.find((s) => s.id === 'type');
   const typeField = typeStep.fields.find((f) => f.id === 'type');
   const known = Object.fromEntries(typeField.options.map((o) => [o.value, o]));

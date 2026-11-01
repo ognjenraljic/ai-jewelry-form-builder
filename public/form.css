@@ -216,7 +216,6 @@ button.seg:hover { filter: brightness(1.35); }
 .maskhint { font-size: 12px; color: var(--ink-faint); }
 .maskbar + .tweak { margin-top: 12px; }
 /* Probni render iz buildera (samo admin u pregledu) */
-.testbtn { width: 100%; margin-top: 10px; font-size: 11px; padding-top: 11px; padding-bottom: 11px; border-style: dashed; }
 .testnote { color: var(--accent); }
 .maskline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; flex-basis: 100%; }
 
@@ -280,3 +279,37 @@ a.pcard:hover, a.pcard:focus-visible { border-color: var(--accent); transform: t
 .pinfo small { font-size: 12px; color: var(--ink-soft); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .pinfo .plink { font-size: 12px; font-weight: 600; color: var(--ink); margin-top: 2px; text-decoration: underline; text-underline-offset: 3px; }
 @media (max-width: 420px) { .pgrid { grid-template-columns: 1fr 1fr; gap: 10px; } }
+
+/* Telefon: pozivni broj i broj su jedno polje. */
+.phone { position: relative; display: flex; align-items: stretch; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm); transition: border-color 0.15s, box-shadow 0.15s; }
+.phone:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.phone-cc { display: flex; align-items: center; gap: 7px; flex: none; padding: 0 12px 0 14px; background: none; border: 0; border-right: 1px solid var(--line); border-radius: var(--radius-sm) 0 0 var(--radius-sm); color: var(--ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.phone-cc:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.phone-cc svg { width: 12px; height: 12px; color: var(--ink-faint); transition: transform 0.15s; }
+.phone-cc[aria-expanded="true"] svg { transform: rotate(180deg); }
+.phone-flag { font-size: 19px; line-height: 1; }
+.phone-in { flex: 1; min-width: 0; width: 100%; background: none; border: 0; outline: none; color: var(--ink); font: inherit; font-size: 16px; letter-spacing: 0.01em; padding: 14px 14px 14px 12px; }
+.phone-in::placeholder { color: var(--ink-faint); }
+.phone-menu { position: absolute; top: calc(100% + 6px); left: 0; right: 0; min-width: 260px; z-index: 30; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: 0 18px 50px #0007; overflow: hidden; }
+.phone-search { width: 100%; box-sizing: border-box; background: none; border: 0; border-bottom: 1px solid var(--line); outline: none; color: var(--ink); font: inherit; font-size: 15px; padding: 12px 14px; }
+.phone-search::placeholder { color: var(--ink-faint); }
+.phone-list { max-height: 232px; overflow: auto; padding: 5px; overscroll-behavior: contain; }
+.phone-opt { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 9px; background: none; border: 0; border-radius: 9px; color: var(--ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.phone-opt:hover, .phone-opt.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.phone-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phone-code { color: var(--ink-soft); font-size: 13px; }
+.phone-none { margin: 0; padding: 14px; color: var(--ink-faint); font-size: 14px; }
+
+/* Izbori kupca ispod rendera. */
+.picks { margin: 16px 0 6px; }
+.picks .label { margin-bottom: 9px; }
+.picks ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+.pick { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 11px 7px 7px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+.pick-ic { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; overflow: hidden; background: var(--surface-2); color: var(--accent); }
+.pick-ic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pick-ic svg { width: 24px; height: 24px; stroke-width: 2.4; }
+.pick-ic .dot { width: 22px; height: 22px; border-radius: 50%; display: block; }
+.pick-txt { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pick-txt small { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pick-txt b { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+@media (max-width: 420px) { .picks ul { grid-template-columns: 1fr 1fr; } }

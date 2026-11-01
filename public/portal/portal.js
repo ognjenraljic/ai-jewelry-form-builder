@@ -1,6 +1,7 @@
 import { createLeadStore } from './leads.js';
 import { artFor } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
+import { SUGGESTED, suggestOptions } from '/option-suggestions.js';
 
 // Portal klijenta: njegovi upiti, aktivne forme i odvojeni onboarding.
 // Prijava: link klijenta (/portal#k=...) ili admin pregled (/portal#v=...) se jednom zamijeni za HttpOnly kolačić
@@ -16,6 +17,7 @@ const readOnly = () => P.me?.session.kind === 'view-as';
 
 const leadStore = createLeadStore(api);
 let leadRequest = 0;
+JLUI.watchLimits();
 boot();
 async function boot() {
   app.innerHTML = '<div class="center"><p class="faint">Loading your portal…</p></div>';
@@ -23,7 +25,10 @@ async function boot() {
   const hash = location.hash;
   const legacyView = safe(() => JSON.parse(sessionStorage.getItem('aik_portal') || 'null'))?.token || safe(() => JSON.parse(localStorage.getItem('aik_view_as') || 'null'))?.token;
   const token = hash.match(/[#&]k=([a-z0-9]{20,})/)?.[1] || hash.match(/[#&]v=([a-z0-9]{20,})/)?.[1] || legacyView || safe(() => localStorage.getItem('aik_client'));
-  const onboardingRequested = new URLSearchParams(location.search).get('onboarding') === '1';
+  // Link nosi id onboardinga (svaka forma ima svoj); stari linkovi imaju samo onboarding=1.
+  const onboardingParam = new URLSearchParams(location.search).get('onboarding');
+  const onboardingRequested = !!onboardingParam;
+  if (onboardingParam && onboardingParam !== '1') P.obQuery = `?onboarding=${encodeURIComponent(onboardingParam)}`;
   if (hash) history.replaceState(null, '', location.pathname + location.search);
   safe(() => { sessionStorage.removeItem('aik_portal'); localStorage.removeItem('aik_view_as'); localStorage.removeItem('aik_client'); });
   if (token) {
@@ -31,7 +36,7 @@ async function boot() {
     catch (e) { return ended('This link no longer works', 'Ask your JewelryLead team for a new portal link.'); }
   }
   try {
-    P.me = await api('/api/portal/me');
+    P.me = await api(`/api/portal/me${P.obQuery || ''}`);
   } catch (e) {
     return ended('Your portal', 'Open the portal link your JewelryLead team sent you.');
   }
@@ -44,6 +49,7 @@ async function boot() {
   setInterval(tick, 30_000);
 }
 
+const obUrl = (path) => path + (P.obQuery || '');
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, credentials: 'same-origin', headers: { ...(opts.json ? { 'content-type': 'application/json' } : {}) } });
   const data = await res.json().catch(() => ({}));
@@ -342,7 +348,7 @@ function obSave(now = false) {
     obStatus();
     OB.inflight = (async () => {
       try {
-        const r = await api('/api/portal/onboarding', { method: 'PUT', body: JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev }), json: true });
+        const r = await api(obUrl('/api/portal/onboarding'), { method: 'PUT', body: JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev }), json: true });
         OB.rev = r.rev;
         OB.savedAt = Date.now();
         OB.err = '';
@@ -380,7 +386,7 @@ addEventListener('pagehide', () => {
   if (!OB.d || !OB.dirty || readOnly()) return;
   const body = JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev });
   if (body.length > 60_000) return; // keepalive prima najviše 64 KB; ostalo je već sačuvano usput
-  try { fetch('/api/portal/onboarding', { method: 'PUT', keepalive: true, credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body }); } catch {}
+  try { fetch(obUrl('/api/portal/onboarding'), { method: 'PUT', keepalive: true, credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body }); } catch {}
 });
 addEventListener('beforeunload', (e) => { if (OB.d && (OB.dirty || OB.saving) && !readOnly()) { e.preventDefault(); e.returnValue = ''; } });
 
@@ -418,11 +424,12 @@ function renderOnboarding() {
       <p class="note">Everything saves automatically. You can close this page and come back with the same link.</p>
     </main>`;
   restoreImages();
+  obLimits(editor);
   if (!document.getElementById('ob-preview-frame')) document.getElementById('ob-preview-host').innerHTML = `
       <section class="ob-preview" aria-label="Live form preview">
         <div class="ob-preview-bar"><div><h2>Your customer form</h2><p>Updates as you make choices. Notes to our team stay private.</p></div><label class="ob-bg"><span>Your website background</span><input type="color" data-preview-bg value="${esc(obPreviewBackground())}" /></label></div>
         <p class="ob-preview-hint">Try a background like your website. This setting only changes this preview.</p>
-        <div class="ob-preview-stage" id="ob-preview-stage" style="background:${esc(obPreviewBackground())}"><iframe id="ob-preview-frame" src="/f/onboarding-preview?preview=1&onboarding=1" title="Your live customer form"></iframe></div>
+        <div class="ob-preview-stage" id="ob-preview-stage" style="background:${esc(obPreviewBackground())}"><iframe id="ob-preview-frame" src="/f/onboarding-preview?preview=1&onboarding=${esc(new URLSearchParams(P.obQuery || '').get('onboarding') || '1')}" title="Your live customer form"></iframe></div>
         <p class="ob-err" id="ob-preview-error" role="status"></p>
       </section>`;
   syncPreviewBackground();
@@ -490,7 +497,7 @@ function queueOnboardingPreview() {
   OB.previewTimer = setTimeout(async () => {
     if (!OB.d) return;
     try {
-      const { form } = await api('/api/portal/onboarding/preview', { method: 'POST', body: JSON.stringify({ data: OB.d }), json: true });
+      const { form } = await api(obUrl('/api/portal/onboarding/preview'), { method: 'POST', body: JSON.stringify({ data: OB.d }), json: true });
       if (seq !== OB.previewSeq || !OB.d) return;
       const jump = {};
       if (OB.previewStep !== OB.step) {
@@ -533,10 +540,22 @@ const obPick = (path, { label = 'Upload photo', cls = '' } = {}) => {
   return `<label class="ob-photo ${cls} ${v ? 'has' : ''} ${busy ? 'jl-uploading' : ''}" title="${v ? 'Change photo or drop a new one' : 'Upload or drop a photo'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span><b>${esc(label)}</b><small>or drag & drop here</small></span>`}<input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-ob-file="${path}" data-uid="${esc(owner)}" ${readOnly() || busy ? 'disabled' : ''} />${busy ? '<span class="jl-upload-progress" role="status"><span class="jl-spinner"></span>Uploading photo…</span>' : ''}</label>`;
 };
 
+// Isti limiti kao cleanOnboarding na serveru: polje ne pusti više nego što se čuva, a brojač se vidi dok se kuca.
+const OB_LIMITS = [
+  [/^store\.name$/, 60], [/^store\.website$/, 200], [/^pieces\.\d+\.label$/, 60], [/\.styles\.\d+\.label$/, 40], [/\.styles\.\d+\.note$/, 300],
+  [/\.budgets\.\d+$/, 40], [/\.questions\.\d+\.label$/, 120], [/\.questions\.\d+\.options$/, 600],
+  [/^products\.\d+\.name$/, 80], [/^products\.\d+\.price$/, 30], [/^products\.\d+\.url$/, 500], [/^products\.\d+\.description$/, 300],
+  [/^notes$/, 2000], [/^questions$/, 2000],
+];
+const obLimits = (root) => root.querySelectorAll('input[data-ob], textarea[data-ob]').forEach((el) => {
+  const max = OB_LIMITS.find(([re]) => re.test(el.dataset.ob))?.[1];
+  if (max) el.maxLength = max;
+});
+
 // Brzo dodavanje: opcije koje imamo u biblioteci i one koje su dodale ranije radnje (samo natpisi, nikad tuđe fotografije).
 function obSuggest(kind, items, taken, attrs = '') {
   const have = new Set(taken.map((x) => String(x ?? '').trim().toLowerCase()));
-  const left = (items || []).filter((x) => !have.has(String(x.label ?? x).toLowerCase())).slice(0, 12);
+  const left = (items || []).filter((x) => !have.has(String(x.label ?? x).toLowerCase())).slice(0, 16);
   if (!left.length) return '';
   return `<div class="ob-suggest"><small>Quick add</small>${left.map((x) => `<button class="ob-chip small add" data-ob-suggest="${kind}" data-label="${esc(x.label ?? x)}" data-swatch="${esc(x.swatch || '')}" ${attrs}>+ ${esc(x.label ?? x)}</button>`).join('')}</div>`;
 }
@@ -703,7 +722,7 @@ function obPieceView({ i, pc, sub }) {
       <div class="ob-spec ${on ? '' : 'off'}">
         <label class="ob-spec-head"><input type="checkbox" data-ob-spec-on="${i}.${sp.id}" ${on ? 'checked' : ''} /><b>${esc(sp.label)}</b><small>${on ? 'Asked' : 'Not asked'}</small></label>
         ${on ? `<div class="ob-chips pics">${[...sp.options, ...own].map((o) => { const sel = picked.includes(o.value); const src = o.image || artFor(sp.id, o.label, pc.value); return `<button class="ob-chip ${src ? 'pic' : ''} ${sel ? 'on' : 'off'}" data-ob-spec="${i}.${sp.id}" data-v="${esc(o.value)}" aria-pressed="${sel}">${src ? `<img src="${esc(src)}" alt="" loading="lazy" />` : ''}${esc(o.label)}${sel ? '<span class="ob-selected" aria-hidden="true">✓</span>' : ''}</button>`; }).join('')}<button class="ob-chip add" data-ob-add-spec="${i}.${sp.id}">+ Add new</button></div>
-          ${obSuggest('spec', P.me.onboardingSuggestions?.specs?.[`${pc.value}.${sp.id}`], [...sp.options, ...own].map((o) => o.label), `data-i="${i}" data-spec="${sp.id}"`)}${obOwn(own, `${P_}.customSpecs.${sp.id}`, `spec:${i}:${sp.id}`)}` : ''}
+          ${obSuggest('spec', [...suggestOptions(sp.id, sp.label), ...(P.me.onboardingSuggestions?.specs?.[`${pc.value}.${sp.id}`] || [])], [...sp.options, ...own].map((o) => o.label), `data-i="${i}" data-spec="${sp.id}"`)}${obOwn(own, `${P_}.customSpecs.${sp.id}`, `spec:${i}:${sp.id}`)}` : ''}
       </div>`;
   }).join('');
   const qs = pc.questions.map((q, k) => `
@@ -717,7 +736,7 @@ function obPieceView({ i, pc, sub }) {
     <p class="ob-lead">${specs ? `The specifics you ask about a ${esc(pc.label.toLowerCase())}. Customers only see these when they design one. Turn off what you don't ask and untick sizes you don't make.` : `Anything you need to know about a ${esc(pc.label.toLowerCase())}? Add your own questions; customers only see them when they design one.`}</p>
     ${specs}
     <div class="ob-f"><span>Your own questions${specs ? ' (optional)' : ''}</span>${qs}
-      ${pc.questions.length < 6 ? `<button class="btn small" data-ob-add-question="${i}">+ Add a question</button>` : ''}</div>`;
+      ${pc.questions.length < 6 ? `<button class="btn small" data-ob-add-question="${i}">+ Add a question</button>${obSuggest('question', SUGGESTED.questions, pc.questions.map((q) => q.label), `data-i="${i}"`)}` : ''}</div>`;
 }
 
 // Proizvodi iz radnje: kupac ih vidi ispod svog AI pregleda, prvo oni za komad koji je dizajnirao.
@@ -775,7 +794,7 @@ async function obUpload(input) {
     } catch {}
     const fd = new FormData();
     fd.set('file', blob, isLogo ? 'logo.png' : 'photo.webp');
-    const res = await fetch('/api/portal/onboarding/upload', { method: 'POST', credentials: 'same-origin', body: fd });
+    const res = await fetch(obUrl('/api/portal/onboarding/upload'), { method: 'POST', credentials: 'same-origin', body: fd });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Upload failed.');
     // decode() u tabu u pozadini ne završava nikad; najviše 1,5 s čekanja da slika ne trepne, pa dalje.
@@ -845,7 +864,7 @@ app.addEventListener('click', async (e) => {
     const kind = t.dataset.obAddOption;
     const answer = kind === 'metals'
       ? await JLUI.material('Name the metal and choose its circle color.', { title: 'Add a metal' })
-      : await JLUI.prompt(kind === 'karats' ? 'Karat or purity (e.g. 22K)' : 'Name of the stone (e.g. Ruby)', { title: kind === 'karats' ? 'Add a karat' : 'Add a stone' });
+      : await JLUI.prompt(kind === 'karats' ? 'Karat or purity (e.g. 22K)' : 'Name of the stone (e.g. Ruby)', { title: kind === 'karats' ? 'Add a karat' : 'Add a stone', max: 40 });
     const label = typeof answer === 'string' ? answer : answer?.label;
     if (!label) return;
     const count = kind === 'karats' ? d.customKarats.length : d[kind === 'metals' ? 'customMetals' : 'customStones'].length;
@@ -855,7 +874,7 @@ app.addEventListener('click', async (e) => {
   }
   if (t.dataset.obAddSpec) {
     const [i, id] = t.dataset.obAddSpec.split('.');
-    const label = await JLUI.prompt('Name of the option', { title: 'Add an option' });
+    const label = await JLUI.prompt('Name of the option', { title: 'Add an option', max: 40 });
     if (!label) return;
     obAddSpec(+i, id, label);
     redraw();
@@ -867,6 +886,7 @@ app.addEventListener('click', async (e) => {
     if (kind === 'piece') { const pc = { uid: uid(), value: '', label, styles: [] }; obPieceDefaults(pc); d.pieces.push(pc); }
     if (kind === 'style') d.pieces[i].styles.push({ uid: uid(), value: '', label, image: '', note: '', custom: true, keep: true });
     if (kind === 'budget') d.pieces[i].budgets.push(label);
+    if (kind === 'question') d.pieces[i].questions.push({ uid: uid(), label, options: SUGGESTED.questions.find((q) => q.label === label)?.options || '' });
     if (kind === 'spec') obAddSpec(i, t.dataset.spec, label);
     if (['metals', 'stones', 'karats'].includes(kind)) obAddCustom(kind, i, label, t.dataset.swatch);
     redraw();
@@ -970,7 +990,7 @@ app.addEventListener('click', async (e) => {
       clearTimeout(OB.timer);
       clearTimeout(OB.retry);
       if (OB.inflight) await OB.inflight;
-      const r = await api('/api/portal/onboarding/submit', { method: 'POST', body: JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev }), json: true });
+      const r = await api(obUrl('/api/portal/onboarding/submit'), { method: 'POST', body: JSON.stringify({ data: { ...OB.d, step: OB.step }, rev: OB.rev }), json: true });
       OB.rev = r.rev ?? OB.rev;
       OB.dirty = false;
       clearTimeout(OB.timer); clearTimeout(OB.retry); clearTimeout(OB.previewTimer);

@@ -1,12 +1,12 @@
 // Zajednički glass dijalozi i prevlačenje fotografija, bez browserovih prompt prozora.
 (() => {
   const escape = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  function dialog(message, { input = false, color = false, alert = false, title = input ? 'Add an option' : alert ? 'Please check' : 'Confirm', value = '', ok = input ? 'Add' : alert ? 'Got it' : 'Continue' } = {}) {
+  function dialog(message, { input = false, color = false, alert = false, title = input ? 'Add an option' : alert ? 'Please check' : 'Confirm', value = '', max = 60, ok = input ? 'Add' : alert ? 'Got it' : 'Continue' } = {}) {
     return new Promise((resolve) => {
       const previous = document.activeElement;
       const el = document.createElement('dialog');
       el.className = 'jl-dialog';
-      el.innerHTML = `<form method="dialog"><h2>${escape(title)}</h2><p>${escape(message)}</p>${input ? `<input class="jl-input" name="answer" aria-label="${color ? 'Metal name' : 'Option name'}" value="${escape(value)}" maxlength="${color ? 40 : 80}" required autocomplete="off" />` : ''}${color ? '<label class="jl-color"><span>Circle color</span><input type="color" name="swatch" value="#c0c4c8" /></label>' : ''}<div class="jl-actions">${alert ? '' : '<button class="jl-button" value="cancel" formnovalidate>Cancel</button>'}<button class="jl-button primary" value="ok">${escape(ok)}</button></div></form>`;
+      el.innerHTML = `<form method="dialog"><h2>${escape(title)}</h2><p>${escape(message)}</p>${input ? `<input class="jl-input" name="answer" aria-label="${color ? 'Metal name' : 'Option name'}" value="${escape(value)}" maxlength="${color ? 40 : max}" required autocomplete="off" />` : ''}${color ? '<label class="jl-color"><span>Circle color</span><input type="color" name="swatch" value="#c0c4c8" /></label>' : ''}<div class="jl-actions">${alert ? '' : '<button class="jl-button" value="cancel" formnovalidate>Cancel</button>'}<button class="jl-button primary" value="ok">${escape(ok)}</button></div></form>`;
       let result = input ? null : false;
       el.querySelector('form').addEventListener('submit', (e) => {
         if (e.submitter?.value !== 'ok') return;
@@ -74,5 +74,38 @@
     target.file.files = dt.files;
     target.file.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  window.JLUI = { confirm: (m, o) => dialog(m, o), prompt: (m, o) => dialog(m, { ...o, input: true }), material: (m, o) => dialog(m, { ...o, input: true, color: true }), alert: (m) => dialog(m, { alert: true }), uploadBusy, images };
+  // Dok se kuca u polju sa limitom: mali brojač ispod polja. Popover jer otvoren dijalog prekriva sve ostalo.
+  function watchLimits() {
+    const tip = document.createElement('div');
+    tip.className = 'jl-count';
+    tip.setAttribute('aria-hidden', 'true');
+    if (tip.showPopover) tip.popover = 'manual';
+    document.body.appendChild(tip);
+    let field = null;
+    let timer = 0;
+    const hide = () => { field = null; clearInterval(timer); tip.style.display = 'none'; try { tip.hidePopover?.(); } catch {} };
+    const place = () => {
+      if (!field?.isConnected) return hide();
+      const r = field.getBoundingClientRect();
+      tip.textContent = `${field.value.length} / ${field.maxLength}`;
+      tip.classList.toggle('full', field.value.length >= field.maxLength);
+      tip.style.top = `${r.bottom + 4}px`;
+      tip.style.left = `${Math.max(4, r.right - tip.offsetWidth)}px`;
+    };
+    document.addEventListener('focusin', (e) => {
+      const el = e.target;
+      if (!el.matches?.('input[maxlength], textarea[maxlength]') || el.readOnly || !(el.maxLength > 0)) return hide();
+      hide();
+      field = el;
+      tip.style.display = 'block';
+      try { tip.showPopover?.(); } catch {}
+      place();
+      timer = setInterval(() => { if (!field?.isConnected) hide(); }, 400);
+    });
+    document.addEventListener('focusout', hide);
+    document.addEventListener('input', (e) => { if (e.target === field) place(); });
+    addEventListener('resize', place);
+    document.addEventListener('scroll', () => { if (field) place(); }, true);
+  }
+  window.JLUI = { watchLimits, confirm: (m, o) => dialog(m, o), prompt: (m, o) => dialog(m, { ...o, input: true }), material: (m, o) => dialog(m, { ...o, input: true, color: true }), alert: (m) => dialog(m, { alert: true }), uploadBusy, images };
 })();

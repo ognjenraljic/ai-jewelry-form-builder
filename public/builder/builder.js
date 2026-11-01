@@ -1,6 +1,7 @@
 // JewelryLead Builder: klijenti (zlatari) -> forme iz šablona -> uređivanje bez koda, sa živim pregledom.
 // Čuvanje forme: PUT /api/admin/forms/:id (server provjerava validateFormDef). Klijent: PUT /api/admin/clients/:id.
 import { optionArt, withArt } from '/option-art.js';
+import { SUGGESTED, answersFor, suggestOptions, notTaken } from '/option-suggestions.js';
 
 const ICONS = {
   pendant: '<path d="M8 6c4 9 9 14 16 14s12-5 16-14"/><path d="M24 20v4"/><path d="M24 24l-7 8 7 11 7-11z"/><path d="M17 32h14M24 24v19"/>',
@@ -23,6 +24,7 @@ const NAV = {
   list: '<path d="M8 6h13M8 12h13M8 18h13"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
   open: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
 };
@@ -109,6 +111,7 @@ const activeClients = () => B.clients.filter((c) => !c.archivedAt);
 const tplLabel = (k) => B.templates.find((t) => t.key === k)?.label || 'Custom';
 
 // ---------- Start ----------
+JLUI.watchLimits();
 boot();
 async function boot() {
   try { localStorage.removeItem('aik_admin'); } catch {} // stari način prijave: token više ne stoji u browseru
@@ -197,9 +200,6 @@ function renderHub() {
         ${homeLogo()}
         <input class="in hub-q" data-hub-q type="search" placeholder="Search clients and forms" value="${esc(B.q)}" aria-label="Search" />
         <div class="spacer"></div>
-        <button class="nav-btn" data-act="new-client">${nav('plus')}New project</button>
-        <button class="nav-btn" data-act="new-form">${nav('plus')}New form</button>
-        <a class="nav-btn hi" href="/admin" target="_blank" rel="noopener">${nav('list')}<span>Leads</span></a>
         ${bell()}
         ${B.id ? `<button class="btn primary save" data-act="back-editor">Back to editor${dirty() || clientDirty() ? ' (unsaved)' : ''}</button>` : ''}
       </header>
@@ -213,6 +213,7 @@ function renderHub() {
           <div><span>AI renders</span><b>${sum('renders')}</b></div>
           <div><span>AI cost</span><b>${usd(sum('cost'))}</b></div>
         </div>
+        <div class="hub-actions"><button class="btn primary" data-act="new-client">${nav('plus')}New project</button></div>
         <div id="hub-list"></div>
         ${archivedCount ? `<button class="btn small ghost" data-act="toggle-archived">${B.showArchived ? 'Hide archived' : `Show archived (${archivedCount})`}</button>` : ''}
       </main>
@@ -229,7 +230,6 @@ function renderHubList() {
     .map((g) => ({ ...g, forms: !q || hit(g.c?.name) || hit(g.c?.website) ? g.forms : g.forms.filter((f) => hit(f.name) || hit(f.id)) }))
     .filter((g) => !q || g.forms.length || hit(g.c?.name));
   document.getElementById('hub-list').innerHTML = shown.map(({ c, forms }) => {
-    const link = c && B.overview.links[c.id];
     // Zbir tabele projekta i mjesečna potrošnja naspram budžeta (obavještenje stiže kad se pređe).
     const tot = forms.map((f) => statOf(f.id)).reduce((t, x) => ({ leads: t.leads + (x.leads || 0), renders: t.renders + (x.renders || 0), cost: t.cost + (x.cost || 0), lastLead: Math.max(t.lastLead, x.lastLead || 0) }), { leads: 0, renders: 0, cost: 0, lastLead: 0 });
     const limit = B.overview.month?.limit || 50;
@@ -242,18 +242,15 @@ function renderHubList() {
         <td class="num">${s.leads}</td><td class="num">${s.renders}</td><td class="when">${esc(day(s.lastLead)) || '<span class="faint">none</span>'}</td><td class="num">${usd(s.cost)}</td>
         <td class="acts"><button class="btn small" data-act="open-form" data-id="${esc(f.id)}">Edit</button><a class="btn small ghost" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open ↗</a><button class="btn small ghost" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button>${f.archivedAt ? `<button class="btn small" data-act="restore-form" data-id="${esc(f.id)}">Restore</button>` : f.builtin ? '' : `<button class="btn small ghost danger" data-act="archive-form" data-id="${esc(f.id)}" title="Hide it and stop new leads. Nothing is deleted.">Archive</button>`}</td>
       </tr>`;
-    }).join('');
+    }).join('') + (c && !c.archivedAt ? obRows(c.id) : '');
     return `<section class="hub-client ${c?.archivedAt ? 'archived' : ''}">
       <div class="hub-head">
         ${c?.logo ? `<img src="${esc(c.logo)}" alt="" />` : `<span class="hub-mono">${esc((c?.name || '?').slice(0, 1))}</span>`}
         <div class="grow"><b>${esc(c ? c.name : 'Unassigned')}</b><small>${c ? [c.website, `${forms.length} form${forms.length === 1 ? '' : 's'}`].filter(Boolean).map(esc).join(' · ') : 'Forms without a client'}</small></div>
         ${c?.archivedAt ? `<span class="pill">Archived ${esc(day(c.archivedAt))}</span><button class="btn small" data-act="restore-client" data-cid="${esc(c.id)}">Restore client</button>` : ''}
         ${monthPill}
-        ${c && !c.archivedAt ? obPill(c.id) : ''}
-        ${c && !c.archivedAt ? `<span class="pill ${link ? 'pill-def' : ''}" title="${link ? `Active since ${esc(day(link.createdAt))}` : 'The client has no portal link yet'}">${link ? 'Portal link on' : 'No portal link'}</span>
-          <button class="btn small ghost" data-act="portal-link" data-cid="${esc(c.id)}">Portal link</button>
-          <button class="btn small ghost" data-act="view-as" data-cid="${esc(c.id)}">View as client ↗</button>
-          <button class="btn small" data-act="new-form" data-cid="${esc(c.id)}">+ Form</button>
+        ${c && !c.archivedAt ? `${clientPortal(c.id, 'btn small ghost')}
+          <button class="btn small" data-act="new-form" data-cid="${esc(c.id)}">${nav('plus')}New form</button>
           <button class="btn small ghost danger" data-act="archive-client" data-cid="${esc(c.id)}" title="Hide the client and their forms, turn off the portal link. Nothing is deleted.">Archive</button>` : ''}
       </div>
       ${rows ? `<div class="table-wrap"><table class="hub-table"><colgroup><col /><col style="width:70px" /><col style="width:84px" /><col style="width:120px" /><col style="width:90px" /><col style="width:320px" /></colgroup><thead><tr><th>Form</th><th class="num">Leads</th><th class="num">Renders</th><th>Last lead</th><th class="num">AI cost</th><th></th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td>Total${forms.length > 1 ? ` · ${forms.length} forms` : ''}</td><td class="num">${tot.leads}</td><td class="num">${tot.renders}</td><td class="when">${esc(day(tot.lastLead)) || '<span class="faint">none</span>'}</td><td class="num">${usd(tot.cost)}</td><td></td></tr></tfoot></table></div>` : '<p class="hint" style="margin:0">No forms yet.</p>'}
@@ -285,13 +282,69 @@ async function archiveClient(cid, on) {
 // Kod opcije u čitljiv natpis (yellow-gold -> Yellow gold, lab -> Lab-grown diamonds).
 const NICE = { lab: 'Lab-grown diamonds', natural: 'Natural diamonds', moissanite: 'Moissanite', none: 'No stones' };
 const nice = (v) => NICE[v] || String(v).replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
-const latestOb = (cid) => (B.onboardings || []).filter((o) => o.client_id === cid).sort((a, b) => b.created_at - a.created_at)[0];
-function obPill(cid) {
-  const o = latestOb(cid);
-  if (!o) return '';
-  if (o.status === 'draft') return `<span class="pill" title="Last saved ${esc(day(o.updated_at))}">Onboarding: waiting for client</span><button class="btn small ghost" data-act="ob-link" data-cid="${esc(cid)}" title="Copy the same portal link for onboarding">Resend link</button>`;
-  if (o.status === 'submitted' || o.status === 'building') return `<button class="btn small primary" data-act="ob-review" data-obid="${esc(o.id)}">Review onboarding</button>`;
-  return '';
+// Client portal: otvara portal kako ga klijent vidi; ikonica pored kopira njegov stalni link.
+const clientPortal = (cid, cls) => `<span class="btn-join"><button class="${cls}" data-act="view-as" data-cid="${esc(cid)}" title="Open their portal as they see it (read-only, logged, 1 hour)">Client portal ↗</button><button class="${cls} only-ic" data-act="copy-portal" data-cid="${esc(cid)}" title="Copy the client portal link" aria-label="Copy the client portal link">${nav('copy')}</button></span>`;
+// Svaki poslat onboarding je red u tabeli projekta dok od njega ne nastane forma: dok klijent popunjava Review onboarding, kad pošalje Edit.
+function obRows(cid) {
+  return (B.onboardings || []).filter((o) => o.client_id === cid && o.status !== 'done').sort((a, b) => b.created_at - a.created_at).map((o) => {
+    const sent = o.status !== 'draft';
+    return `<tr class="ob-row">
+      <td><b class="ob-name">${esc(o.form_name || 'Custom form')}</b><small>${sent ? `Onboarding sent ${esc(day(o.submitted_at))}` : `Onboarding · waiting for client · last saved ${esc(day(o.updated_at))}`}</small></td>
+      <td colspan="4"><span class="pill ${sent ? 'pill-def' : ''}">${sent ? 'Ready to edit' : 'Waiting for client'}</span></td>
+      <td class="acts">${sent
+        ? `<button class="btn small primary" data-act="ob-edit" data-obid="${esc(o.id)}">Edit</button>`
+        : `<button class="btn small primary" data-act="ob-review" data-obid="${esc(o.id)}">Review onboarding</button><button class="btn small ghost only-ic" data-act="ob-copy" data-cid="${esc(cid)}" data-obid="${esc(o.id)}" title="Copy the onboarding link" aria-label="Copy the onboarding link">${nav('copy')}</button><button class="btn small ghost danger" data-act="ob-remove" data-obid="${esc(o.id)}" title="Take back this onboarding. The link stops asking for it.">Remove</button>`}</td>
+    </tr>`;
+  }).join('');
+}
+
+// Link u clipboard: Safari traži da upis počne u samom kliku, pa adresa stiže kao obećanje.
+async function copyLater(load) {
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'text/plain': load().then((t) => new Blob([t], { type: 'text/plain' })) })]);
+  } catch {
+    await navigator.clipboard.writeText(await load());
+  }
+}
+const onboardingUrl = (url, id) => { const u = new URL(url); u.searchParams.set('onboarding', id); return u.href; };
+async function copyObLink(cid, id) {
+  try {
+    await copyLater(async () => onboardingUrl((await api(`/api/admin/clients/${cid}/onboarding`, { method: 'POST', body: JSON.stringify({ id }) })).url, id));
+    toast('Onboarding link copied', 'ok');
+  } catch (err) { toast(err.message); }
+}
+async function copyPortal(cid) {
+  const url = async () => {
+    const info = await api(`/api/admin/clients/${cid}/portal-link`);
+    const link = info.url ? info : info.active ? info : await api(`/api/admin/clients/${cid}/portal-link`, { method: 'POST', body: JSON.stringify({ replace: false }) });
+    if (!link.url) throw Object.assign(new Error('legacy'), { legacy: true });
+    B.overview.links[cid] = { createdAt: link.createdAt };
+    return link.url;
+  };
+  try {
+    await copyLater(url);
+    toast('Client portal link copied', 'ok');
+  } catch (err) { portalLink(cid); }
+}
+// Poslat onboarding: forma nastaje pri prvom Edit, poslije se samo otvara.
+async function editOnboarding(obid) {
+  const o = (B.onboardings || []).find((x) => x.id === obid);
+  if (o?.status === 'done' && o.form_id) return openForm(o.form_id);
+  if ((dirty() || clientDirty()) && !(await confirmBox('Unsaved changes', 'This opens the form in the editor. Discard your unsaved changes in the current form?', 'Discard and open'))) return false;
+  const { form } = await api(`/api/admin/onboardings/${obid}/build`, { method: 'POST' });
+  B.saved = JSON.stringify(B.draft);
+  B.clientSaved = JSON.stringify(B.client);
+  await loadAll(form.id);
+  setStatus('Form created from onboarding. Check it in the preview.', 'ok');
+  return true;
+}
+async function removeOnboarding(obid) {
+  if (!(await JLUI.confirm('Remove this onboarding? What the client filled in so far is deleted and their link stops asking for it.'))) return;
+  try {
+    await api(`/api/admin/onboardings/${obid}`, { method: 'DELETE' });
+    await refreshLists();
+    renderHub();
+  } catch (err) { toast(err.message); }
 }
 
 // Nova forma: odmah iz šablona, ili onboarding koji klijent sam popuni.
@@ -303,9 +356,10 @@ function newFormChoice(clientId) {
     <h2>New form</h2>
     <p class="lead">${esc(B.clients.find((c) => c.id === clientId)?.name || 'Pick a project')}</p>
     ${clientId ? '' : `<label class="f"><span>Project</span><select class="sel" data-choice-client>${activeClients().map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></label>`}
+    <label class="f"><span>Form name (optional)</span><input class="in" data-choice-name maxlength="80" placeholder="e.g. Grillz page" /></label>
     <div class="choices">
       <button class="choice-card" data-ch="custom"><b>Create custom form</b><small>Start from a template and set it up yourself in the builder.</small></button>
-      <button class="choice-card" data-ch="onboarding"><b>Send onboarding form</b><small>The client fills in their pieces, styles with photos, metals and budget. You get notified, then turn it into a form with one click.</small></button>
+      <button class="choice-card" data-ch="onboarding"><b>Send onboarding form</b><small>The client fills in this form's pieces, styles with photos, metals and budget. When they send it, you open it with Edit.</small></button>
     </div>
     <div style="display:flex;justify-content:flex-end;margin-top:16px"><button class="btn" data-ch="close">Cancel</button></div>`;
   document.body.appendChild(d);
@@ -313,16 +367,17 @@ function newFormChoice(clientId) {
     const b = e.target.closest('[data-ch]');
     if (!b || d.dataset.busy === 'true') return;
     const cid = clientId || d.querySelector('[data-choice-client]')?.value;
-    if (b.dataset.ch === 'onboarding') return sendOnboarding(cid, d);
+    const name = d.querySelector('[data-choice-name]').value.trim();
+    if (b.dataset.ch === 'onboarding') return sendOnboarding(cid, d, name);
     d.close();
-    if (b.dataset.ch === 'custom') newForm(cid);
+    if (b.dataset.ch === 'custom') newForm(cid, name);
   });
   d.addEventListener('close', () => d.remove());
   d.showModal();
 }
 
-// Onboarding and the owner's portal share the same permanent link.
-async function sendOnboarding(cid, existingDialog = null) {
+// Onboarding and the owner's portal share the same permanent link; the address says which onboarding it opens.
+async function sendOnboarding(cid, existingDialog = null, name = '') {
   const c = B.clients.find((x) => x.id === cid);
   if (!c) return;
   const d = existingDialog || document.createElement('dialog');
@@ -331,10 +386,8 @@ async function sendOnboarding(cid, existingDialog = null) {
   d.innerHTML = `<h2>Preparing onboarding</h2><div class="jl-loading" role="status"><span class="jl-spinner"></span><span>Creating a secure link for ${esc(c.name)}…</span></div>`;
   d.addEventListener('cancel', (e) => { if (d.dataset.busy === 'true') e.preventDefault(); });
   try {
-    const r = await api(`/api/admin/clients/${cid}/onboarding`, { method: 'POST' });
-    const onboardingUrl = new URL(r.url);
-    onboardingUrl.searchParams.set('onboarding', '1');
-    r.url = onboardingUrl.href;
+    const r = await api(`/api/admin/clients/${cid}/onboarding`, { method: 'POST', body: JSON.stringify({ fresh: true, name }) });
+    r.url = onboardingUrl(r.url, r.onboarding.id);
     B.overview.links[cid] = { createdAt: r.createdAt };
     await refreshLists();
     if (B.view === 'hub') renderHubList();
@@ -343,7 +396,7 @@ async function sendOnboarding(cid, existingDialog = null) {
       <h2>Onboarding link</h2>
       <p class="lead">Send this link to ${esc(c.name)}. They set up their store, pieces, styles with photos, metals and budget. Everything saves as they go, and you get a notification when they press Send. The same link later opens their portal with leads.</p>
       <div class="pick-row"><input class="in" id="ob-url" readonly value="${esc(r.url)}" /><button class="btn small primary" data-ob="copy">Copy</button></div>
-      <p class="hint">This onboarding link does not expire. Portal link opens their regular portal with leads and active forms.</p>
+      <p class="hint">This onboarding link does not expire. It shows up under the project as its own form until the client sends it.</p>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><a class="btn" href="${esc(r.url)}" target="_blank" rel="noopener">Open as client ↗</a><button class="btn primary" data-ob="close">Done</button></div>`;
     d.addEventListener('click', async (e) => {
       const b = e.target.closest('[data-ob]');
@@ -355,7 +408,7 @@ async function sendOnboarding(cid, existingDialog = null) {
   } catch (err) {
     d.dataset.busy = 'false';
     d.innerHTML = `<h2>Could not prepare the link</h2><p class="err-text">${esc(err.message)}</p><button class="btn" data-retry-onboarding>Try again</button> <button class="btn" data-dismiss-onboarding>Close</button>`;
-    d.querySelector('[data-retry-onboarding]').onclick = () => sendOnboarding(cid, d);
+    d.querySelector('[data-retry-onboarding]').onclick = () => sendOnboarding(cid, d, name);
     d.querySelector('[data-dismiss-onboarding]').onclick = () => d.close();
   }
 }
@@ -400,7 +453,7 @@ async function reviewOnboarding(obid) {
     <p class="err-text"></p>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px">
       <button class="btn" data-obr="close">Close</button>
-      ${ob.status === 'done' && ob.form_id ? `<button class="btn primary" data-obr="open" data-id="${esc(ob.form_id)}">Open the form</button>` : ob.status === 'submitted' || ob.status === 'building' ? '<button class="btn primary" data-obr="build">Create form from it</button>' : ''}
+      ${ob.status === 'done' && ob.form_id ? `<button class="btn primary" data-obr="open" data-id="${esc(ob.form_id)}">Edit</button>` : ob.status === 'submitted' || ob.status === 'building' ? '<button class="btn primary" data-obr="build">Edit</button>' : ''}
     </div>`;
   document.body.appendChild(dlg);
   dlg.addEventListener('click', async (e) => {
@@ -409,17 +462,12 @@ async function reviewOnboarding(obid) {
     if (b.dataset.obr === 'close') return dlg.close();
     if (b.dataset.obr === 'open') { dlg.close(); return openForm(b.dataset.id); }
     if (b.dataset.obr === 'build') {
-      if ((dirty() || clientDirty()) && !(await confirmBox('Unsaved changes', 'Creating the form opens it in the editor. Discard your unsaved changes in the current form?', 'Discard and create'))) return;
       b.disabled = true;
-      b.textContent = 'Creating…';
+      b.textContent = 'Opening…';
       try {
-        const { form } = await api(`/api/admin/onboardings/${obid}/build`, { method: 'POST' });
-        dlg.close();
-        B.saved = JSON.stringify(B.draft);
-        B.clientSaved = JSON.stringify(B.client);
-        await loadAll(form.id);
-        setStatus('Form created from onboarding. Check it in the preview.', 'ok');
-      } catch (err) { dlg.querySelector('.err-text').textContent = err.message; b.disabled = false; b.textContent = 'Create form from it'; }
+        if (await editOnboarding(obid)) dlg.close();
+        else { b.disabled = false; b.textContent = 'Edit'; }
+      } catch (err) { dlg.querySelector('.err-text').textContent = err.message; b.disabled = false; b.textContent = 'Edit'; }
     }
   });
   dlg.addEventListener('close', () => dlg.remove());
@@ -483,7 +531,7 @@ function portalLink(cid) {
   let busy = true;
   let error = '';
   const body = () => {
-    return `<h2>Portal link</h2>
+    return `<h2>Client portal link</h2>
       <p class="lead">${esc(c.name)} opens their own portal with this link: leads, renders, photos and their forms with embed code. No AI costs. No password, so anyone with the link sees their leads: send it only to the client.</p>
       <p class="hint" id="pl-state">${busy ? 'Loading portal link…' : info?.url ? 'Permanent link. It does not expire. You can come back and copy this same link whenever the client needs it.' : info?.legacy ? 'This existing link is still active. Open it once in the owner portal, then return here to copy it again. You can also explicitly replace it below.' : info ? 'No active link yet.' : 'The portal link could not be loaded.'}</p>
       <div id="pl-out">${info?.url ? `<div class="pick-row" style="margin-top:10px"><input class="in" id="pl-url" readonly aria-label="Client portal link" value="${esc(info.url)}" /><button class="btn small primary" data-pl="copy" ${busy ? 'disabled' : ''}>Copy</button></div>` : ''}</div>
@@ -570,13 +618,10 @@ function renderTop() {
     ${homeLogo()}
     <button class="nav-btn" data-act="hub" title="All projects and their forms">${nav('grid')}All projects</button>
     ${pick('Project', 'client-select', cOpts)}
-    <button class="nav-add" data-act="new-client" title="New project (client)" aria-label="New project">${nav('plus')}</button>
     ${pick('Form', 'form-select', fOpts)}
-    <button class="nav-add" data-act="new-form" title="New form for this project" aria-label="New form">${nav('plus')}</button>
     <div class="spacer"></div>
     <span class="status ${B.kind}" id="status">${esc(B.status)}</span>
-    ${B.client ? `<button class="nav-btn hi" data-act="view-as" title="Open ${esc(B.client.name)}'s portal as they see it (logged, 1 hour)">${nav('eye')}<span>View as client</span></button>` : ''}
-    <a class="nav-btn hi" href="/admin" target="_blank" rel="noopener" title="All leads and renders">${nav('list')}<span>Leads</span></a>
+    ${B.client ? clientPortal(B.client.id, 'nav-btn hi') : ''}
     <a class="nav-btn hi" href="/f/${esc(B.id)}" target="_blank" rel="noopener" title="Open this form as customers see it">${nav('open')}<span>Open form</span></a>
     ${bell()}
     <button class="btn primary save" data-act="save" id="save-btn" ${dirty() ? '' : 'disabled'}>Save</button>`;
@@ -602,7 +647,6 @@ function renderPbar() {
         <button class="btn small ${B.device === 'desktop' ? 'on' : ''}" data-act="device" data-d="desktop" aria-pressed="${B.device === 'desktop'}">${nav('desktop')}Desktop</button>
         <button class="btn small ${B.device === 'mobile' ? 'on' : ''}" data-act="device" data-d="mobile" aria-pressed="${B.device === 'mobile'}">${nav('mobile')}Mobile</button>
       </div>
-      <button class="btn small primary preview-test" data-act="test-render" title="Renders this draft with the answers you clicked in the preview. Costs one render, no lead is created.">${nav('play')}Test render</button>
     </div>
     <div class="preview-navigation"><span class="label">Form steps</span><nav class="preview-steps" aria-label="Preview form steps">${steps}${stepButton(B.draft.steps.length, 'Contact')}</nav></div>`;
 }
@@ -613,11 +657,31 @@ function renderPane() {
   const views = { client: clientView, brand: brandView, pieces: piecesView, products: productsView, texts: textsView, embed: embedView, history: historyView, json: jsonView };
   pane.innerHTML = (views[B.tab] || brandView)();
   pane.scrollTop = top;
+  applyLimits(pane);
   renderPbar();
   if (B.editor) renderEditor();
 }
 
 // ---------- Pomoćni prikazi ----------
+// Isti limiti kao validateFormDef i klijent na serveru: polje ne pusti više nego što snimanje prima, a brojač se vidi dok se kuca.
+const LIMITS = [
+  [/^name$/, 80], [/^brand\.name$/, 60], [/^background$/, 80],
+  [/^client\.name$/, 60], [/^client\.website$/, 200], [/^client\.notes$/, 2000],
+  [/^steps\.\d+\.title$/, 120], [/^steps\.\d+\.subtitle$/, 240], [/^steps\.\d+\.label$/, 30],
+  [/\.options\.\d+\.label$/, 60], [/\.options\.\d+\.(note|subject)$/, 300],
+  [/\.fields\.\d+\.label$/, 120], [/\.fields\.\d+\.subtitle$/, 200], [/\.fields\.\d+\.placeholder$/, 160], [/\.fields\.\d+\.hint$/, 200],
+  [/^styles\..+\.label$/, 40], [/^styles\..+\.shape$/, 300],
+  [/^products\.\d+\.name$/, 80], [/^products\.\d+\.price$/, 30], [/^products\.\d+\.description$/, 300], [/^products\.\d+\.url$/, 500],
+  [/^contact\.title$/, 120], [/^contact\.subtitle$/, 240], [/^contact\.consent$/, 400], [/^contact\.button$/, 40],
+  [/^result\.done$/, 200], [/^result\.disclaimer$/, 240], [/^result\.productsTitle$/, 80],
+];
+const limitOf = (path) => LIMITS.find(([re]) => re.test(path))?.[1];
+function applyLimits(root) {
+  root?.querySelectorAll('input[data-bind], textarea[data-bind]').forEach((el) => {
+    const max = el.type === 'checkbox' || el.type === 'color' ? 0 : limitOf(el.dataset.bind);
+    if (max) el.maxLength = max;
+  });
+}
 const inp = (path, label, { kind = 'text', hint = '', ph = '', type = 'text' } = {}) => {
   const v = getP(path);
   return `<label class="f"><span>${esc(label)}</span><input class="in" type="${type}" data-bind="${path}" data-kind="${kind}" value="${esc(v ?? '')}" placeholder="${esc(ph)}" />${hint ? `<p class="hint">${esc(hint)}</p>` : ''}</label>`;
@@ -740,11 +804,11 @@ function clientView() {
     <div class="row">${inp('client.name', 'Client name')}${inp('client.website', 'Website', { ph: 'northstarjewelers.com' })}</div>
     <div class="f"><span>Logo</span><div class="pick-row">${imgPick('client.logo', { scope: 'clients', size: 'logo', empty: 'Upload logo' })}</div><p class="hint">PNG, JPG or WebP. Shown in the form header instead of the store name.</p></div>
     ${area('client.notes', 'Notes (internal)')}
-    <div class="pick-row"><button class="btn small ${clientDirty() ? 'primary' : ''}" data-act="save-client" ${clientDirty() ? '' : 'disabled'}>Save client</button><button class="btn small" data-act="view-as">View as client ↗</button></div>
-    <p class="hint">"View as client" opens their portal (leads and forms) exactly as they see it, for one hour. Every view is logged.</p>
+    <div class="pick-row"><button class="btn small ${clientDirty() ? 'primary' : ''}" data-act="save-client" ${clientDirty() ? '' : 'disabled'}>Save client</button></div>
     <h3>Client portal</h3>
     <p class="hint" style="margin-bottom:10px">${B.overview.links[B.client.id] ? `Portal link active since ${esc(day(B.overview.links[B.client.id].createdAt))}.` : 'No portal link yet.'} With the link the client sees their leads, renders and forms on their own, without AI costs.</p>
-    <button class="btn small" data-act="portal-link" data-cid="${esc(B.client.id)}">Portal link…</button>
+    <p class="hint">Client portal opens it exactly as they see it, for one hour, and every view is logged. The icon copies their permanent link.</p>
+    <div class="pick-row">${clientPortal(B.client.id, 'btn small')}<button class="btn small ghost" data-act="portal-link" data-cid="${esc(B.client.id)}">Replace or turn off link</button></div>
     <h3>Forms (${clientForms(B.client.id).length})</h3>
     ${forms || '<p class="hint">No forms yet.</p>'}
     <button class="btn small" data-act="new-form">+ New form for ${esc(B.client.name)}</button>`;
@@ -959,6 +1023,7 @@ function renderEditor() {
     </div>
     <div class="fe-foot">${fixed ? '<span></span>' : `<button class="btn small" data-act="add-field" data-i="${si}">+ Add question to this step</button>`}<span class="hint">Changes go live when you press Save.</span><button class="btn primary small" data-act="editor-close">Done</button></div>`;
   d.querySelector('.fe-body').scrollTop = top;
+  applyLimits(d);
 }
 
 // Proizvodi iz radnje zlatara: kupac ih vidi ispod AI pregleda, prvo one za svoj komad (do 6).
@@ -1144,7 +1209,7 @@ function readBind(el) {
   if (kind === 'notfalse') return el.checked ? undefined : false;
   if (kind === 'number') return parseInt(el.value, 10) || 0;
   if (kind === 'optnum') return el.value === '' ? undefined : parseInt(el.value, 10);
-  if (kind === 'lines') return el.value.split('\n').map((x) => x.trim()).filter(Boolean);
+  if (kind === 'lines') return el.value.split('\n').map((x) => x.trim().slice(0, 60)).filter(Boolean).slice(0, 10);
   if (kind === 'optcolor') return el.value.trim() || undefined;
   return el.value;
 }
@@ -1285,9 +1350,9 @@ app.addEventListener('click', async (e) => {
   if (act === 'add-piece-question') {
     const pv = el.dataset.v;
     const o = typeLoc().field.options.find((x) => x.value === pv);
-    const name = await askText(`New question for ${o.label}`, { placeholder: 'e.g. Chain length' });
+    const name = await askText(`New question for ${o.label}`, { placeholder: 'e.g. Chain length', suggest: questionLabels() });
     if (!name?.trim()) return;
-    const field = { id: uniq(key(`${pv} ${name}`), allFieldIds()), type: 'chips', label: name.trim().slice(0, 120), required: false, options: [{ value: 'option-1', label: 'Option 1' }], showIf: { field: 'type', in: [pv] } };
+    const field = { id: uniq(key(`${pv} ${name}`), allFieldIds()), type: 'chips', label: name.trim().slice(0, 120), required: false, options: startingOptions(name), showIf: { field: 'type', in: [pv] } };
     // Korak "<komad> details": postojeći (samo pitanja ovog komada) ili nov, poslije koraka sa materijalima.
     let si = B.draft.steps.findIndex((s) => s.id.startsWith('d-') && s.fields.length < 10 && s.fields.every((f) => f.showIf?.field === 'type' && f.showIf.in?.length === 1 && f.showIf.in[0] === pv));
     if (si < 0) {
@@ -1319,7 +1384,10 @@ app.addEventListener('click', async (e) => {
   if (act === 'new-form') newFormChoice(el.dataset.cid || B.client?.id);
   if (act === 'notifs') toggleNotifs(el);
   if (act === 'ob-review') reviewOnboarding(el.dataset.obid);
-  if (act === 'ob-link') sendOnboarding(el.dataset.cid);
+  if (act === 'ob-edit') { el.disabled = true; try { await editOnboarding(el.dataset.obid); } catch (err) { toast(err.message); } el.disabled = false; }
+  if (act === 'ob-copy') copyObLink(el.dataset.cid, el.dataset.obid);
+  if (act === 'ob-remove') removeOnboarding(el.dataset.obid);
+  if (act === 'copy-portal') copyPortal(el.dataset.cid);
   if (act === 'new-client') newClient();
   if (act === 'open-form') openForm(el.dataset.id);
   if (act === 'view-as') viewAs(el.dataset.cid || B.client?.id);
@@ -1341,7 +1409,6 @@ app.addEventListener('click', async (e) => {
   }
   if (act === 'device') { B.device = el.dataset.d; document.getElementById('frame').classList.toggle('mobile', B.device === 'mobile'); renderPbar(); }
   if (act === 'jump') { pushPreview(i); setPv(i); revealLeft(i); }
-  if (act === 'test-render') { pushPreview(); setTimeout(() => document.getElementById('frame')?.contentWindow?.postMessage({ type: 'aik:test' }, location.origin), 80); }
   if (act === 'preset') { B.draft.theme = { ...PRESETS[el.dataset.p] }; changed(true); }
   if (act === 'use-client-logo') { B.draft.brand.logo = B.client.logo; changed(true); }
   if (act === 'unset') { setP(el.dataset.path, undefined); changed(true); }
@@ -1385,7 +1452,7 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'add-piece') {
-    const name = await askText('New piece', { placeholder: 'e.g. Belt buckle' });
+    const name = await askText('New piece', { placeholder: 'e.g. Belt buckle', max: 60, suggest: notTaken(SUGGESTED.pieces, typeLoc().field.options.map((o) => o.label)) });
     if (!name?.trim()) return;
     const loc = typeLoc();
     const value = uniq(slug(name), new Set(loc.field.options.map((o) => o.value)));
@@ -1398,7 +1465,7 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'add-style') {
-    const name = await askText('New style', { placeholder: 'e.g. Miami Cuban' });
+    const name = await askText('New style', { placeholder: 'e.g. Miami Cuban', max: 40, suggest: notTaken(SUGGESTED.styles[B.piece], (B.draft.styles?.[B.piece] || []).map((x) => x.label)) });
     if (!name?.trim()) return;
     B.draft.styles = B.draft.styles || {};
     const list = (B.draft.styles[B.piece] = B.draft.styles[B.piece] || []);
@@ -1407,9 +1474,9 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'add-option') {
-    const name = await askText('New option', { placeholder: 'e.g. Brushed finish' });
-    if (!name?.trim()) return;
     const f = getP(el.dataset.path);
+    const name = await askText('New option', { placeholder: 'e.g. Brushed finish', max: 60, suggest: notTaken(suggestOptions(f.id, f.label), (f.options || []).map((o) => o.label)) });
+    if (!name?.trim()) return;
     f.options = f.options || [];
     const value = uniq(slug(name), new Set(f.options.map((o) => o.value)));
     f.options.push({ value, label: name.trim().slice(0, 60) });
@@ -1418,19 +1485,19 @@ app.addEventListener('click', async (e) => {
     changed(true);
   }
   if (act === 'add-field') {
-    const name = await askText('New question', { placeholder: 'e.g. Finish' });
+    const name = await askText('New question', { placeholder: 'e.g. Finish', suggest: questionLabels() });
     if (!name?.trim()) return;
-    const field = { id: uniq(key(name), allFieldIds()), type: 'chips', label: name.trim().slice(0, 120), required: false, options: [{ value: 'option-1', label: 'Option 1' }] };
+    const field = { id: uniq(key(name), allFieldIds()), type: 'chips', label: name.trim().slice(0, 120), required: false, options: startingOptions(name) };
     B.draft.steps[i].fields.push(field);
     changed(true);
     openEditor(i, field.id);
   }
   if (act === 'add-step') {
-    const name = await askText('New step', { placeholder: 'e.g. Finish & size' });
+    const name = await askText('New step', { placeholder: 'e.g. Finish & size', suggest: questionLabels() });
     if (!name?.trim()) return;
     const ids = new Set(B.draft.steps.map((s) => s.id));
     const title = name.trim().slice(0, 120);
-    B.draft.steps.push({ id: uniq(slug(name), ids), label: title.slice(0, 30), title, subtitle: '', fields: [{ id: uniq(key(name), allFieldIds()), type: 'chips', label: title, required: true, options: [{ value: 'option-1', label: 'Option 1' }] }] });
+    B.draft.steps.push({ id: uniq(slug(name), ids), label: title.slice(0, 30), title, subtitle: '', fields: [{ id: uniq(key(name), allFieldIds()), type: 'chips', label: title, required: true, options: startingOptions(name) }] });
     changed(true);
     openEditor(B.draft.steps.length - 1, null, true);
   }
@@ -1564,16 +1631,21 @@ function dialog(html, onSubmit) {
   return d;
 }
 
+// Novo pitanje: poznato ("Finish") dolazi sa odgovorima, nepoznato sa jednim praznim mjestom.
+const questionLabels = () => notTaken(SUGGESTED.questions.map((q) => q.label), B.draft.steps.flatMap((st) => st.fields.map((f) => f.label)));
+const startingOptions = (name) => { const list = answersFor(name); return list.length ? list.map((label) => ({ value: slug(label), label })) : [{ value: 'option-1', label: 'Option 1' }]; };
+
 // Dijalozi u izgledu buildera umjesto prompt() i JLUI.alert().
-function askText(title, { label = '', placeholder = '', value = '', ok = 'Add' } = {}) {
+function askText(title, { label = '', placeholder = '', value = '', ok = 'Add', max = 120, suggest = [] } = {}) {
   return new Promise((resolve) => {
     const d = document.createElement('dialog');
-    d.innerHTML = `<form method="dialog"><h2>${esc(title)}</h2>${label ? `<p class="lead">${esc(label)}</p>` : ''}<input class="in" name="v" value="${esc(value)}" placeholder="${esc(placeholder)}" required maxlength="120" autocomplete="off" /><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">${esc(ok)}</button></div></form>`;
+    d.innerHTML = `<form method="dialog"><h2>${esc(title)}</h2>${label ? `<p class="lead">${esc(label)}</p>` : ''}<input class="in" name="v" value="${esc(value)}" placeholder="${esc(placeholder)}" required maxlength="${max}" autocomplete="off" />${suggest.length ? `<div class="ask-suggest"><small>Or pick one</small>${suggest.slice(0, 14).map((x) => `<button type="button" class="ask-chip" data-pick="${esc(x)}">${esc(x)}</button>`).join('')}</div>` : ''}<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">${esc(ok)}</button></div></form>`;
     document.body.appendChild(d);
     let out = null;
     d.querySelector('form').addEventListener('submit', (e) => { if (e.submitter?.value === 'ok') out = d.querySelector('[name=v]').value.trim() || null; });
     // Enter potvrđuje (prvo dugme u formi je Cancel).
     d.querySelector('[name=v]').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); d.querySelector('form').requestSubmit(d.querySelector('[value=ok]')); } });
+    d.querySelector('.ask-suggest')?.addEventListener('click', (e) => { const b = e.target.closest('[data-pick]'); if (b) { out = b.dataset.pick; d.close(); } });
     d.addEventListener('close', () => { d.remove(); resolve(out); });
     d.showModal();
   });
@@ -1600,8 +1672,8 @@ function toast(text, kind = 'err') {
 
 function newClient() {
   dialog(`<h2>New client</h2>
-    <label class="f"><span>Store name</span><input class="in" name="name" required placeholder="Northstar Jewelers" /></label>
-    <label class="f"><span>Website (optional)</span><input class="in" name="website" placeholder="northstarjewelers.com" /></label>
+    <label class="f"><span>Store name</span><input class="in" name="name" required maxlength="60" placeholder="Northstar Jewelers" /></label>
+    <label class="f"><span>Website (optional)</span><input class="in" name="website" maxlength="200" placeholder="northstarjewelers.com" /></label>
     <p class="hint">Next, create a form yourself or send the client an onboarding link.</p>`, async (d) => {
     const { client } = await api('/api/admin/clients', { method: 'POST', body: JSON.stringify({ name: d.querySelector('[name=name]').value, website: d.querySelector('[name=website]').value }) });
     await refreshLists();
@@ -1609,7 +1681,7 @@ function newClient() {
   });
 }
 
-function newForm(clientId = B.client?.id) {
+function newForm(clientId = B.client?.id, name = '') {
   if (!B.clients.length) return newClient();
   const cOpts = activeClients().map((c) => `<option value="${esc(c.id)}" ${c.id === clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   const tpls = B.templates.map((t, k) => `<label class="tpl"><input type="radio" name="tpl" value="${esc(t.key)}" ${k === 0 ? 'checked' : ''} /><span><b>${esc(t.label)}</b><small>${esc(t.description)}</small></span></label>`).join('');
@@ -1620,7 +1692,7 @@ function newForm(clientId = B.client?.id) {
     <div class="f"><span>Start from a template</span><div class="tpls">${tpls}
       ${pieceOpts ? `<label class="tpl"><input type="radio" name="tpl" value="__piece" /><span><b>One piece only</b><small>Customers skip the piece question and go straight to styles. Grillz and Ring use their dedicated builders.<select class="sel" name="piece">${pieceOpts}</select></small></span></label>` : ''}
       ${copy ? `<label class="tpl"><input type="radio" name="tpl" value="__copy" /><span><b>Copy an existing form</b><small><select class="sel" name="copy">${copy}</select></small></span></label>` : ''}</div></div>
-    <label class="f"><span>Form name (optional)</span><input class="in" name="name" placeholder="e.g. Grillz page" /></label>`, async (d) => {
+    <label class="f"><span>Form name (optional)</span><input class="in" name="name" maxlength="80" value="${esc(name)}" placeholder="e.g. Grillz page" /></label>`, async (d) => {
     const tpl = d.querySelector('[name=tpl]:checked').value;
     const body = { clientId: d.querySelector('[name=client]').value, name: d.querySelector('[name=name]').value };
     if (tpl === '__copy') body.copyFrom = d.querySelector('[name=copy]').value;

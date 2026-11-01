@@ -10,7 +10,7 @@ Runs entirely on Cloudflare: one Worker, D1 (database), R2 (images).
 
 - **Builder** (`/builder`, or `builder.<your-domain>/`): opens on **All forms** (every client and their forms with leads, renders, last lead and AI cost, search, archive and restore). Forms are created from templates (Custom Enquiry, Grillz, Ring, Blank, or one piece only), with default and custom questions, an image and an AI note per option, theme colors, logo, texts, live preview, embed code and a **History** tab (every Save keeps the previous version, last 50). **Test render** in the preview renders the current draft without creating a lead (cost is tracked).
 - **Customer form** (`/f/<form-id>`): the widget the builder embeds on a jeweler's site with one `<script>` tag. Back button and clickable finished steps. Includes a tooth picker for grillz (tap teeth, counters, popular sets) that sends the exact teeth to the image model. After the render the customer can refine the whole image or **paint over one area** and change only that (sent to the model as a mask). The budget guides the render: the piece is designed at the top of the chosen range.
-- **Client portal** (`/portal`): each client gets a **portal link** (one year, shown once, new link revokes the old one) to see their leads, renders and forms on their own, without AI costs. "View as client" opens the same portal for an admin (one hour, logged).
+- **Client portal** (`/portal`): each client gets a **portal link** (one year, shown once, new link revokes the old one) to see their leads, renders and forms on their own, without AI costs. **Client portal** in the builder opens the same portal for an admin (one hour, logged).
 - **Leads admin** (`/admin`): leads with every render and its cost, test renders, and demo requests you can mark as handled.
 - **Archive**: archived forms and clients disappear from the lists and stop taking new leads; nothing is deleted.
 - **Onboarding**: New form → **Send onboarding form** gives the client a link to a guided setup in their portal: store, logo and color, the pieces they make, then **each piece in turn** (its styles with their own photos, its metals, karats, stones and budget ranges, and its details such as chain length, ring center stone or grillz cut, plus their own questions), then **shop products** and notes. It saves as they type; when they press Send you get a notification (bell in the builder) and **Create form from it** builds the form, photos included. The same link then opens their normal portal.
@@ -150,6 +150,7 @@ node scripts/templates-check.mjs     # every template passes validation
 node scripts/prompt-check.mjs        # prompt building (notes, hidden questions, tooth picker)
 node scripts/platform-check.mjs      # clients, forms, uploads (server must run)
 node scripts/viewas-check.mjs        # client portal sessions (server must run)
+node scripts/multi-onboarding-check.mjs # one onboarding per form, phone field, offered answers (server must run)
 RENDER=1 node scripts/teeth-check.mjs  # tooth picker through the server + one render
 node scripts/versions-archive-check.mjs  # form history, archive, demo requests handled (server must run)
 node scripts/hardening-check.mjs     # sign-in cookies, limits, moderation, uploads, portal, conflicts, cron (server + mock must run)
@@ -173,4 +174,13 @@ Renders without spending credit: start the fake OpenAI with `node scripts/mock-o
 - **Required step:** `step.required` = bar jedan odgovor, `field.required` = to pitanje, `step.optionalFor` = komadi za koje ni jedno ne važi (`public/step-rules.js`, koriste ga forma i server).
 - **Grillz:** izbor zuba je uvijek vidljiv. Gotov stil označi svoje zube, kupac ih može mijenjati, a server čuva kupčev izbor (`public/grillz-selection.js`). Stil sa fotografijom zlatara bez poznatog rasporeda ne traži zube.
 - **Onboarding provjera:** `public/onboarding-check.js` dijele portal i server. Portal piše šta ne valja, vodi na tačno polje i ne šalje dok se ne ispravi; server odbija isto (422) i uz to pravi probnu formu, da "Create form from it" ne može pasti.
-- **Dodavanje:** u onboardingu se dodaju i karati i opcije specifikacija, ne samo metali i kamenje. "Quick add" nudi `ONBOARDING_EXTRAS` i izbore iz ranijih onboardinga (samo natpisi, nikad tuđe fotografije ni opisi).
+- **Dodavanje:** u onboardingu se dodaju i karati i opcije specifikacija, ne samo metali i kamenje. "Quick add" nudi `SUGGESTED` (`public/option-suggestions.js`, isti spisak u builderu kod svakog dodavanja) i izbore iz ranijih onboardinga (samo natpisi, nikad tuđe fotografije ni opisi).
+
+## Projekti, onboarding po formi i kraj forme (1.11.2026)
+
+- **Hub:** New project stoji iznad projekata, New form u svakom projektu. Leads i Test render su izbačeni iz buildera (`/admin` i dalje radi, otvara ga obavještenje o zahtjevu za demo; `/api/admin/test-render` nema dugme).
+- **Onboarding po formi:** New form → Send onboarding pravi novi nacrt (`fresh: true`) sa imenom forme. Portal link je isti za projekat, a `?onboarding=<id>` bira onboarding (`pickOnboarding`). Dok od onboardinga nema forme, on je red u tabeli projekta: Review onboarding dok klijent popunjava, Edit kad pošalje. Edit pri prvom kliku pravi formu pa je otvara.
+- **Client portal:** dugme otvara portal kao klijent (view-as, samo čitanje, log), ikonica kopira stalni link. Zamjena i gašenje linka su u kartici Client.
+- **Limit znakova:** `LIMITS` u builderu i `OB_LIMITS` u portalu su isti kao `validateFormDef` i `cleanOnboarding`. `JLUI.watchLimits()` pokazuje brojač dok se kuca (popover, jer otvoren dijalog prekriva sve ostalo).
+- **Telefon:** `public/phone.js`, sve zemlje bez biblioteke, +1 podrazumijevano, zapis `+1 (555) 123-4567`. Zalijepljen `+387 ...` sam bira zemlju.
+- **Izbori ispod rendera:** `picksView()` u formi, slika izbora ili ikonica, naziv pitanja i odgovor.

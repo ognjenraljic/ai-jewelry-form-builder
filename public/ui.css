@@ -27,6 +27,8 @@ dialog :focus-visible { outline: 2px solid var(--ink, #fff); outline-offset: 4px
 .jl-spinner { display: inline-block; width: 23px; height: 23px; flex: none; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: jl-spin .75s linear infinite; }
 .jl-loading { display: flex; align-items: center; gap: 13px; padding: 18px 0; color: var(--ink-soft, #a3b6b4); }
 .jl-popover-shade { position: fixed; inset: 0; z-index: 2147481999; background: #0009; -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.jl-count { display: none; position: fixed; inset: auto; margin: 0; z-index: 2147482500; padding: 2px 8px; border: 1px solid var(--line-strong, #36494f); border-radius: 8px; background: var(--surface, #121b1e); color: var(--ink-soft, #a3b6b4); font: 600 11px/1.5 var(--sans, system-ui); font-variant-numeric: tabular-nums; pointer-events: none; }
+.jl-count.full { color: var(--accent, #35d0c4); border-color: var(--accent, #35d0c4); }
 .lightbox { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
 .tryon-btn { border-style: dashed; min-height: 100px; width: min(100%, 420px); }
 .tryon-btn small { display: block; font-size: 11px; font-weight: 400; margin-top: 5px; }

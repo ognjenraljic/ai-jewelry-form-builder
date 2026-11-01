@@ -461,3 +461,20 @@ dialog.field-editor[open] { display: flex; flex-direction: column; }
 .fe-body .field { border: 0; padding: 0; background: transparent; margin: 0; }
 .fe-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 22px; border-top: 1px solid var(--line); flex: none; }
 .fe-foot .hint { margin: 0; }
+
+/* Hub: New project iznad projekata, Client portal sa ikonicom za kopiranje, redovi onboardinga. */
+.hub-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.hub-actions .btn, .hub-head .btn { display: inline-flex; align-items: center; gap: 6px; }
+.btn .nav-ic { width: 15px; height: 15px; }
+.btn-join { display: inline-flex; align-items: stretch; }
+.btn-join > :first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.btn-join > :last-child { margin-left: -1px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.btn-join > :hover { position: relative; z-index: 1; }
+.only-ic { display: inline-grid; place-items: center; padding-left: 8px; padding-right: 8px; }
+.only-ic .nav-ic { width: 14px; height: 14px; margin: 0; }
+.ob-row .ob-name { font-weight: 600; }
+.ob-row small { display: block; color: var(--ink-faint); font-size: 11.5px; margin-top: 2px; }
+.ask-suggest { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0 2px; }
+.ask-suggest small { flex-basis: 100%; color: var(--ink-faint); font-size: 12px; }
+.ask-chip { border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 5px 11px; font: inherit; font-size: 12.5px; cursor: pointer; }
+.ask-chip:hover { border-color: var(--accent); color: var(--accent); }

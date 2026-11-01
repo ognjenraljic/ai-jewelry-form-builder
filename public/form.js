@@ -1,6 +1,7 @@
 import { SMILE_TEETH, SMILE_DEFS } from './teeth-art.js';
 import { applyPresetTeeth } from './grillz-selection.js';
 import { stepNeedsAnswer, fieldRequired } from './step-rules.js';
+import { phoneHtml, phoneValid, mountPhone } from './phone.js';
 
 // Widget forme: crta korake iz konfiguracije, šalje lead, traži render i doradu.
 const formId = location.pathname.split('/')[2] || 'demo';
@@ -16,6 +17,7 @@ const ICONS = {
   watch: '<rect x="14" y="14" width="20" height="20" rx="6"/><path d="M18 14l2-9h8l2 9M18 34l2 9h8l2-9"/><path d="M24 19v5l4 3"/>',
   upload: '<path d="M24 31V11M16 18l8-8 8 8"/><path d="M10 29v6a4 4 0 0 0 4 4h20a4 4 0 0 0 4-4v-6"/>',
   gem: '<path d="M14 8h20l8 11-18 22L6 19z"/><path d="M6 19h36M18 8l-4 11 10 22 10-22-4-11"/>',
+  note: '<path d="M10 38l2-9 20-20a4 4 0 0 1 6 6L18 35z"/><path d="M28 13l6 6"/>',
 };
 const icon = (name) => `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -64,7 +66,8 @@ boot();
 
 async function boot() {
   try {
-    const res = await fetch(S.onboardingPreview ? '/api/portal/onboarding/preview' : `/api/forms/${encodeURIComponent(formId)}`);
+    const obId = location.search.match(/[?&]onboarding=([a-z0-9]{6,})/)?.[1];
+    const res = await fetch(S.onboardingPreview ? `/api/portal/onboarding/preview${obId ? `?onboarding=${obId}` : ''}` : `/api/forms/${encodeURIComponent(formId)}`);
     if (!res.ok) throw new Error();
     const data = await res.json();
     S.cfg = S.onboardingPreview ? data.form : data;
@@ -83,7 +86,6 @@ async function boot() {
   if (new URLSearchParams(location.search).has('preview')) {
     window.addEventListener('message', (e) => {
       if (e.origin !== location.origin || e.source !== window.parent) return;
-      if (e.data?.type === 'aik:test' && testAllowed() && !S.busy) { startTest(); return; }
       if (e.data?.type !== 'aik:preview' || !e.data.form) return;
       S.adminPreview = !!e.data.admin;
       S.cfg = { ...e.data.form, dev: S.cfg.dev, turnstile: S.cfg.turnstile };
@@ -188,7 +190,7 @@ function stepValid(step) {
   if (S.uploading.size) return false;
   if (step.id === '_contact') {
     const c = S.contact;
-    return c.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(c.email.trim()) && c.phone.replace(/\D/g, '').length >= 7 && c.consent && (!S.cfg.turnstile || !!S.ts);
+    return c.name.trim().length > 1 && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(c.email.trim()) && phoneValid(c.phone) && c.consent && (!S.cfg.turnstile || !!S.ts);
   }
   const shown = (step.fields || []).filter(visible);
   const filled = (f) => (f.type === 'upload' ? !!S.files[f.id] : String(S.a[f.id] ?? '').trim() !== '');
@@ -506,7 +508,7 @@ function contactView() {
       <label class="field"><span class="label">Full name</span><input class="input" data-c="name" autocomplete="name" value="${esc(c.name)}" /></label>
       <div class="row2">
         <label class="field"><span class="label">Email</span><input class="input" type="email" data-c="email" autocomplete="email" value="${esc(c.email)}" /></label>
-        <label class="field"><span class="label">Phone</span><input class="input" type="tel" data-c="phone" autocomplete="tel" value="${esc(c.phone)}" /></label>
+        <div class="field"><span class="label">Phone</span>${phoneHtml()}</div>
       </div>
       <label class="check"><input type="checkbox" data-c="consent" ${c.consent ? 'checked' : ''} /><span>${esc(k.consent)}</span></label>
       ${S.cfg.turnstile ? '<div class="ts" id="ts"></div>' : ''}
@@ -514,7 +516,6 @@ function contactView() {
       <div class="foot">
         <div class="foot-row">${S.busy ? '' : backBtn()}<button class="btn gold" data-act="submit" ${valid && !S.busy && !S.onboardingPreview ? '' : 'disabled'}>${S.onboardingPreview ? 'Preview only' : S.busy ? 'Sending' : esc(k.button)}</button></div>
         <p class="hint">We never share your details.</p>
-        ${testAllowed() ? '<button type="button" class="btn ghost testbtn" data-act="test" title="Uses this draft and the answers above. Costs one render, no lead is created.">Test render (admin, no lead)</button>' : ''}
       </div>
     </section>`;
 }
@@ -562,6 +563,7 @@ function resultView() {
       <p class="sub">${head[2]}</p>
       ${failed ? '' : `<div class="stage">${stage || (S.productsPreview ? `<div class="forge"><div class="forge-inner">${icon('gem').replace('<svg', '<svg class="gem"')}<div class="forge-msg">AI preview</div></div></div>` : '')}</div>`}
       ${strip}
+      ${!S.busy && (S.renders.length || S.productsPreview) ? picksView() : ''}
       ${S.error ? `<p class="error">${esc(S.error)}</p>${!S.renders.length && !S.busy ? '<div class="foot"><button class="btn gold" data-act="retry">Try again</button></div>' : ''}` : ''}
       ${tweak}
       ${!S.busy && S.renders.length ? `<p class="fine">${esc(r.disclaimer)}</p>` : ''}
@@ -571,6 +573,24 @@ function resultView() {
       ${!S.test && S.lead && !S.busy && S.renders.length ? '<p class="fine restart"><button type="button" class="link" data-act="restart">Start a new design</button></p>' : ''}
       ${dev}
     </section>`;
+}
+
+// Šta je kupac izabrao, ispod rendera: slika izbora ili ikonica, pitanje, odgovor.
+function picksView() {
+  const tile = (mark, name, value) => `<li class="pick"><span class="pick-ic">${mark}</span><span class="pick-txt"><small>${esc(name)}</small><b>${esc(value)}</b></span></li>`;
+  const list = S.cfg.steps.filter((st) => st.enabled !== false).flatMap((st) => st.fields.filter(visible).map((f) => {
+    const v = S.a[f.id];
+    if (!v) return '';
+    const name = f.label || st.label || st.title;
+    if (f.type === 'teeth') { const n = teethSet(v).size; return tile(icon('grillz'), name, `${n} ${n === 1 ? 'tooth' : 'teeth'}`); }
+    if (f.type === 'text' || f.type === 'textarea') return tile(icon('note'), name, v);
+    if (f.type === 'upload') return '';
+    const o = optionsOf(f).find((x) => x.value === v);
+    if (!o) return v === 'other' ? tile(icon('note'), name, S.a[`${f.id}__more`] || 'Something else') : '';
+    const mark = pic(o) ? `<img src="${esc(pic(o))}" alt="" loading="lazy" />` : o.swatch ? `<i class="dot" style="background:${esc(o.swatch)}"></i>` : icon(o.icon || 'gem');
+    return tile(mark, name, o.label);
+  })).filter(Boolean);
+  return list.length ? `<div class="picks"><p class="label">Your choices</p><ul>${list.join('')}</ul></div>` : '';
 }
 
 // Preporuke iz radnje zlatara ispod rendera: prvo proizvodi za komad kupca, pa oni za sve komade (do 6).
@@ -644,6 +664,12 @@ function bind() {
     el.addEventListener('input', sync);
     el.addEventListener('change', sync);
   });
+  const phoneBox = app.querySelector('[data-phone-box]');
+  if (phoneBox) mountPhone(phoneBox, S.contact.phone, (value) => {
+    S.contact.phone = value;
+    const btn = app.querySelector('[data-act="submit"]');
+    if (btn) btn.disabled = !stepValid(cur()) || S.busy;
+  });
   app.querySelectorAll('[data-file]').forEach((file) => {
     const key = file.dataset.file;
     file.addEventListener('change', () => file.files[0] && takeFile(file.files[0], key));
@@ -696,7 +722,6 @@ function bind() {
       if (act === 'submit') submit();
       if (act === 'retry' || act === 'again') makeRender();
       if (act === 'tweak') doTweak();
-      if (act === 'test') startTest();
       if (act === 'restart') { ss.del(LEAD_KEY); location.reload(); }
       if (act === 'mask-toggle' && !S.mask.on) { S.mask.on = true; S.mask.strokes = []; render(); }
       if (act === 'mask-off' && S.mask.on) { S.mask.on = false; S.mask.strokes = []; render(); }
@@ -876,20 +901,6 @@ function doTweak() {
 }
 
 // ---------- Probni render i maska ----------
-function startTest() {
-  S.test = true;
-  S.renders = [];
-  S.shown = 0;
-  S.testInfo = null;
-  S.mask.strokes = [];
-  S.i = steps().length - 1;
-  window.scrollTo({ top: 0 });
-  makeRender();
-}
-
-// Probni render: samo u pregledu buildera, kad builder javi da je admin prijavljen (kolačić šalje browser sam).
-const testAllowed = () => new URLSearchParams(location.search).has('preview') && S.adminPreview;
-
 // Četka u pikselima slike od 1024 px (skalira se na stvarnu veličinu).
 const BRUSH = { s: 26, m: 52, l: 96 };
 
