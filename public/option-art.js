@@ -15,7 +15,7 @@ function budgetTier(label) {
   if (/\+/.test(label) && top >= 20000) return 'tier-6';
   return `tier-${[1500, 2500, 5000, 10000, 20000].findIndex((x) => top <= x) + 1 || 6}`;
 }
-const ALIASES = { metal: { silver: 'sterling-silver', gold: 'yellow-gold' }, stones: { none: 'no-stones', cz: 'cubic-zirconia', diamonds: 'natural-diamonds' } };
+const ALIASES = { metal: { silver: 'sterling-silver', gold: 'yellow-gold' }, stones: { none: 'no-stones', cz: 'cubic-zirconia', diamonds: 'natural-diamonds' }, carat: Object.fromEntries([1, 2, 3, 4, 5, 6].map((n) => [`${n}ct`, `${n}-ct`])) };
 
 const fileIn = (folder, cat, s) => {
   const files = ART[folder];
@@ -71,7 +71,7 @@ const PIECES = { pendant: '/library/pendant/script.webp', chain: '/site/gallery/
 const addedPiece = (label) => (STYLE_ART.pieces?.includes(slug(label)) ? `/library/pieces/${slug(label)}.webp` : '');
 export const optionArt = (fieldId, option, piece = '') => option.image || (fieldId === 'type' ? PIECES[option.value] || addedPiece(option.label) : artFor(fieldId, option.label, piece));
 // A question added by hand has a generated ID, so its wording says what it asks about.
-export const artField = (field) => (artCategory(field.id) ? field.id : slug(field.label));
+export const artField = (field) => (artCategory(field.id) ? field.id : /stone-size/.test(slug(field.label)) ? 'carat' : slug(field.label));
 // Option as the form receives it: its picture, plus per-piece pictures unless the jeweler set their own image.
 export function withArt(field, o) {
   const key = field.id === 'type' ? 'type' : artField(field);

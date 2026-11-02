@@ -10,12 +10,12 @@ export const SUGGESTED = {
   karats: ['22K', '24K', '9K', '950 Platinum'],
   budgets: BUDGETS,
   styles: {
-    ring: ['Solitaire', 'Halo', 'Three-stone', 'Signet', 'Eternity band', 'Cluster', 'Vintage', 'Stackable', 'Championship'],
-    chain: ['Miami Cuban', 'Franco', 'Rope', 'Figaro', 'Tennis', 'Box', 'Herringbone', 'Snake', 'Mariner', 'Curb', 'Wheat', 'Byzantine', 'Paperclip', 'Singapore', 'Bead'],
+    ring: ['Solitaire', 'Halo', 'Three-stone', 'Signet', 'Eternity band', 'Cluster', 'Vintage', 'Stackable', 'Championship', 'Pavé', 'Cathedral', 'Bezel set', 'Hidden halo', 'Tension set', 'Split shank', 'Twisted shank', 'Toi et Moi', 'Art Deco'],
+    chain: ['Miami Cuban', 'Franco', 'Rope', 'Figaro', 'Tennis', 'Box', 'Herringbone', 'Snake', 'Mariner', 'Curb', 'Wheat', 'Byzantine', 'Paperclip', 'Singapore', 'Bead', 'Flat Cuban', 'Milano', 'Anchor', 'Turkish'],
     pendant: ['Cross', 'Initial', 'Name plate', 'Portrait', 'Logo', 'Religious', 'Heart', 'Locket'],
-    bracelet: ['Tennis', 'Cuban link', 'Bangle', 'Cuff', 'Charm', 'Figaro', 'Beaded', 'ID bracelet', 'Curb', 'Rope', 'Franco', 'Mariner', 'Paperclip', 'Byzantine'],
+    bracelet: ['Tennis', 'Cuban link', 'Bangle', 'Cuff', 'Charm', 'Figaro', 'Beaded', 'ID bracelet', 'Curb', 'Rope', 'Franco', 'Mariner', 'Paperclip', 'Byzantine', 'Flat Cuban', 'Milano', 'Herringbone', 'Box', 'Cable'],
     earrings: ['Studs', 'Hoops', 'Huggies', 'Drops', 'Chandelier', 'Climbers', 'Clusters'],
-    watch: ['Dress', 'Diver', 'Chronograph', 'Skeleton', 'Fully iced', 'Bezel only'],
+    watch: ['Dress', 'Diver', 'Chronograph', 'Skeleton', 'Fully iced', 'Bezel only', 'Iced face', 'Iced face and bezel'],
     grillz: ['Top 6', 'Bottom 6', 'Top 8', 'Full set', 'Fangs', 'Single cap', 'Window'],
   },
   questions: [
