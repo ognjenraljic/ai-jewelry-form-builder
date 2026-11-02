@@ -1,5 +1,5 @@
 import { createLeadStore } from './leads.js';
-import { artFor } from '/option-art.js';
+import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
 import { SUGGESTED, suggestOptions } from '/option-suggestions.js';
 
@@ -883,8 +883,8 @@ app.addEventListener('click', async (e) => {
     const kind = t.dataset.obSuggest;
     const label = t.dataset.label;
     const i = +t.dataset.i;
-    if (kind === 'piece') { const pc = { uid: uid(), value: '', label, styles: [] }; obPieceDefaults(pc); d.pieces.push(pc); }
-    if (kind === 'style') d.pieces[i].styles.push({ uid: uid(), value: '', label, image: '', note: '', custom: true, keep: true });
+    if (kind === 'piece') { const pc = { uid: uid(), value: '', label, image: optionArt('type', { label }), styles: [] }; obPieceDefaults(pc); d.pieces.push(pc); }
+    if (kind === 'style') d.pieces[i].styles.push({ uid: uid(), value: '', label, image: styleArt(d.pieces[i].value, label), note: '', custom: true, keep: true });
     if (kind === 'budget') d.pieces[i].budgets.push(label);
     if (kind === 'question') d.pieces[i].questions.push({ uid: uid(), label, options: SUGGESTED.questions.find((q) => q.label === label)?.options || '' });
     if (kind === 'spec') obAddSpec(i, t.dataset.spec, label);

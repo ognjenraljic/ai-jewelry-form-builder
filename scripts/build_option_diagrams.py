@@ -57,7 +57,7 @@ def case(mm):
     return f'<rect x="222" y="0" width="68" height="420" fill="none" stroke="{SOFT}" stroke-width="4"/><circle cx="256" cy="210" r="{r}" fill="{BG}" stroke="{GOLD}" stroke-width="10"/>'
 
 
-for n in (16, 18, 20, 22, 24, 26, 30):
+for n in (14, 16, 18, 20, 22, 24, 26, 28, 30, 36):
     write('length', f'{n}"', necklace(n))
 for n in (6.5, 7, 7.5, 8, 8.5):
     write('length', f'{n:g}"', wrist(n))

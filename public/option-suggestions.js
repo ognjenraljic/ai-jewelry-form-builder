@@ -11,9 +11,9 @@ export const SUGGESTED = {
   budgets: BUDGETS,
   styles: {
     ring: ['Solitaire', 'Halo', 'Three-stone', 'Signet', 'Eternity band', 'Cluster', 'Vintage', 'Stackable', 'Championship'],
-    chain: ['Miami Cuban', 'Franco', 'Rope', 'Figaro', 'Tennis', 'Box', 'Herringbone', 'Snake', 'Mariner'],
+    chain: ['Miami Cuban', 'Franco', 'Rope', 'Figaro', 'Tennis', 'Box', 'Herringbone', 'Snake', 'Mariner', 'Curb', 'Wheat', 'Byzantine', 'Paperclip', 'Singapore', 'Bead'],
     pendant: ['Cross', 'Initial', 'Name plate', 'Portrait', 'Logo', 'Religious', 'Heart', 'Locket'],
-    bracelet: ['Tennis', 'Cuban link', 'Bangle', 'Cuff', 'Charm', 'Figaro', 'Beaded', 'ID bracelet'],
+    bracelet: ['Tennis', 'Cuban link', 'Bangle', 'Cuff', 'Charm', 'Figaro', 'Beaded', 'ID bracelet', 'Curb', 'Rope', 'Franco', 'Mariner', 'Paperclip', 'Byzantine'],
     earrings: ['Studs', 'Hoops', 'Huggies', 'Drops', 'Chandelier', 'Climbers', 'Clusters'],
     watch: ['Dress', 'Diver', 'Chronograph', 'Skeleton', 'Fully iced', 'Bezel only'],
     grillz: ['Top 6', 'Bottom 6', 'Top 8', 'Full set', 'Fangs', 'Single cap', 'Window'],

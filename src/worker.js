@@ -6,7 +6,7 @@ import { applyPresetTeeth } from '../public/grillz-selection.js';
 import { stepNeedsAnswer, fieldRequired } from '../public/step-rules.js';
 import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
-import { artList } from '../public/option-art.js';
+import { artList, styleList } from '../public/option-art.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
@@ -660,6 +660,7 @@ async function adminForms(request, env, p) {
       ...Object.entries(ONBOARDING_DEFAULTS.styles).flatMap(([category, styles]) => styles.map(({ image, label }) => ({ image, label, category }))),
       ...artList().map((x) => ({ ...x, category: 'options' })),
     ];
+    if (!cursor) library.push(...styleList().filter((x) => !library.some((y) => y.image === x.image)));
     return json({ images: [...library, ...images], next: list.truncated ? list.cursor : null });
   }
 

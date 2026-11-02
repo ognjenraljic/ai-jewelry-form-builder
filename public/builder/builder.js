@@ -1,6 +1,6 @@
 // JewelryLead Builder: klijenti (zlatari) -> forme iz šablona -> uređivanje bez koda, sa živim pregledom.
 // Čuvanje forme: PUT /api/admin/forms/:id (server provjerava validateFormDef). Klijent: PUT /api/admin/clients/:id.
-import { optionArt, withArt } from '/option-art.js';
+import { artField, optionArt, styleArt, withArt } from '/option-art.js';
 import { SUGGESTED, answersFor, suggestOptions, notTaken } from '/option-suggestions.js';
 
 const ICONS = {
@@ -886,7 +886,7 @@ function piecesView() {
     const cards = styles.map((s, j) => `
       <div class="style">
         <label class="img" title="Upload image">
-          ${s.image ? `<img src="${esc(s.image)}" alt="" />` : '<span class="empty">No image yet<br />Click to upload</span>'}
+          ${s.image || styleArt(o.value, s.label) ? `<img src="${esc(s.image || styleArt(o.value, s.label))}" alt="" />` : '<span class="empty">No image yet<br />Click to upload</span>'}
           <span class="up">Replace image or drag & drop</span>
           <input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="styles.${esc(o.value)}.${j}.image" data-scope="forms" />
         </label>
@@ -928,7 +928,7 @@ const appliesTo = (f, pv) => f.showIf?.field !== 'type' || (f.showIf.in ? f.show
 const stepFields = (s, pv) => s.fields.filter((f) => appliesTo(f, pv));
 const stepRequiredFor = (s, pv) => !(s.optionalFor || []).includes(pv) && (s.required === true || s.fields.some((f) => f.required));
 const fieldName = (f, s) => f.label || s.label || s.title || f.id;
-const optionImage = (f, o) => optionArt(f.id, o, B.piece);
+const optionImage = (f, o) => optionArt(f.id === 'type' ? 'type' : artField(f), o, B.piece);
 
 // Svaki komad za sebe, korak po korak: šta nudi (perPiece), šta je obavezno, i pitanja samo za njega. Edit otvara popup.
 function fieldRow(s, si, f, pv) {
@@ -1472,7 +1472,7 @@ app.addEventListener('click', async (e) => {
     B.draft.styles = B.draft.styles || {};
     const list = (B.draft.styles[B.piece] = B.draft.styles[B.piece] || []);
     const value = uniq(slug(name) === 'other' ? 'other-style' : slug(name), new Set(list.map((s) => s.value)));
-    list.push({ value, label: name.trim().slice(0, 40), shape: '', image: '' });
+    list.push({ value, label: name.trim().slice(0, 40), shape: '', image: styleArt(B.piece, name) });
     changed(true);
   }
   if (act === 'add-option') {

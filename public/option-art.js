@@ -1,10 +1,10 @@
 // Picture of a form choice: a photo or an exact diagram from public/library/options/<category>/<slug>.
 // A choice without its own image falls back to this, so forms already in use show pictures too.
-import { ART, DETAILS } from './option-art-index.js';
+import { ART, DETAILS, STYLE_ART } from './option-art-index.js';
 
 const slug = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 // Most specific first: ring-size before size. Onboarding field IDs carry the piece in front (chain_length).
-const CATEGORIES = ['center-shape', 'ring-size', 'case-size', 'metal', 'karat', 'stones', 'coverage', 'clarity', 'budget', 'cut', 'mold', 'carat', 'band', 'chain', 'backs', 'length', 'width', 'size'];
+const CATEGORIES = ['center-shape', 'ring-size', 'case-size', 'metal', 'karat', 'stones', 'coverage', 'clarity', 'budget', 'cut', 'mold', 'carat', 'band', 'chain', 'backs', 'length', 'width', 'size', 'finish', 'setting', 'clasp', 'engraving', 'stone-color'];
 export const artCategory = (fieldId) => { const id = String(fieldId || '').replace(/_/g, '-'); return CATEGORIES.find((c) => id === c || id.endsWith(`-${c}`)) || ''; };
 
 // Budget ranges are free text: the picture follows the top of the range.
@@ -53,14 +53,35 @@ export function detailArt(cat, label, piece, family) {
   }
   return '';
 }
+// Default picture of a style, by its name, so a style added later has one too: "Figaro chain" and "Figaro" are one style.
+const STYLE_ALIASES = { 'miami-cuban': 'cuban', 'top-6': 'top6', 'top-8': 'top8', 'top-bottom': 'set', 'full-set': 'set', 'fully-iced': 'iced', 'iced-bezel': 'bezel', 'bezel-only': 'bezel', 'script-name': 'script', beaded: 'bead', ball: 'bead' };
+const STYLE_NOISE = /(^|-)(chain|bracelet|necklace|ring|earrings?|pendant|watch|links?|style|band|letters)(?=-|$)/g;
+export function styleArt(piece, label) {
+  const files = STYLE_ART[piece];
+  if (!files || piece === 'pieces') return '';
+  const s = slug(label);
+  const short = s.replace(STYLE_NOISE, '').replace(/^-+|-+$/g, '');
+  const name = [s, STYLE_ALIASES[s], short, STYLE_ALIASES[short], short.replace(/s$/, ''), `${short}s`].find((n) => n && files.includes(n))
+    || short.split('-').map((w) => STYLE_ALIASES[w] || w).find((w) => files.includes(w) || files.includes(`${w}s`));
+  if (!name) return '';
+  return `/library/${piece}/${files.includes(name) ? name : `${name}s`}.webp`;
+}
 // Picture of a built-in piece on the first step of the form.
 const PIECES = { pendant: '/library/pendant/script.webp', chain: '/site/gallery/chain-category-v2.webp', ring: '/library/ring/solitaire.webp', grillz: '/library/grillz/top8.webp', bracelet: '/library/bracelet/cuban.webp', earrings: '/library/earrings/hoops.webp', watch: '/library/watch/iced.webp' };
-export const optionArt = (fieldId, option, piece = '') => option.image || (fieldId === 'type' ? PIECES[option.value] || '' : artFor(fieldId, option.label, piece));
+const addedPiece = (label) => (STYLE_ART.pieces?.includes(slug(label)) ? `/library/pieces/${slug(label)}.webp` : '');
+export const optionArt = (fieldId, option, piece = '') => option.image || (fieldId === 'type' ? PIECES[option.value] || addedPiece(option.label) : artFor(fieldId, option.label, piece));
+// A question added by hand has a generated ID, so its wording says what it asks about.
+export const artField = (field) => (artCategory(field.id) ? field.id : slug(field.label));
 // Option as the form receives it: its picture, plus per-piece pictures unless the jeweler set their own image.
 export function withArt(field, o) {
-  const image = optionArt(field.id, o);
-  const byPiece = o.image || field.id === 'type' ? {} : pieceArt(field.id, o.label);
+  const key = field.id === 'type' ? 'type' : artField(field);
+  const image = optionArt(key, o);
+  const byPiece = o.image || key === 'type' ? {} : pieceArt(key, o.label);
   return { ...o, ...(image ? { image } : {}), ...(Object.keys(byPiece).length ? { pieceArt: byPiece } : {}) };
 }
+// Every style and added piece picture, for the image library in the builder.
+export const styleList = () => Object.entries(STYLE_ART).flatMap(([category, files]) => files.map((name) => (category === 'pieces'
+  ? { image: `/library/pieces/${name}.webp`, label: `Piece: ${name.replace(/-/g, ' ')}`, category: 'options' }
+  : { image: `/library/${category}/${name}.webp`, label: name.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase()), category })));
 // The whole catalogue, for the image library in the builder.
 export const artList = () => Object.entries(ART).flatMap(([cat, files]) => Object.entries(files).map(([name, ext]) => ({ image: `/library/options/${cat}/${name}.${ext}`, label: `${cat.replace(/[-/]/g, ' ')}: ${name.replace(/-/g, ' ')}` })));

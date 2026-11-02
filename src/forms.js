@@ -5,7 +5,7 @@
 import LIBRARY from './library.json' with { type: 'json' };
 import { PRESET_TEETH, presetTeeth } from '../public/grillz-selection.js';
 import { parseTeeth } from './teeth.js';
-import { withArt } from '../public/option-art.js';
+import { styleArt, withArt } from '../public/option-art.js';
 
 // Početni stilovi po tipu iz src/library.json. Slika ide i u karticu i modelu kao referenca oblika.
 export const DEFAULT_STYLES = Object.fromEntries(
@@ -18,7 +18,8 @@ const OTHER_STYLE = { value: 'other', label: 'Something else', icon: 'gem' };
 export const CHOICE_TYPES = ['cards', 'chips', 'yesno', 'dropdown'];
 
 export function styleOf(form, a) {
-  const style = (form.styles?.[a.type] || []).find((s) => s.value === a.style) || null;
+  const found = (form.styles?.[a.type] || []).find((s) => s.value === a.style) || null;
+  const style = found && !found.image ? { ...found, image: styleArt(a.type, found.label) } : found;
   if (a.type !== 'grillz' || !style) return style;
   // Older onboardings renamed preset IDs and sometimes copied their library photo into R2.
   const original = DEFAULT_STYLES.grillz.find(s => s.shape && s.shape === style.shape);
@@ -34,7 +35,8 @@ export function withStyleTeeth(form) {
 // perPiece: { komad: [vrijednosti] } suzi opcije za izabrani komad (npr. grillz bez platine); prazna lista = pitanje se za taj komad ne postavlja.
 export function optionsOf(field, a, form) {
   if (field.optionsFrom?.styles) {
-    const list = (form.styles?.[a[field.optionsFrom.field]] || []).map(({ value, label, image }) => ({ value, label, image }));
+    const type = a[field.optionsFrom.field];
+    const list = (form.styles?.[type] || []).map(({ value, label, image }) => ({ value, label, image: image || styleArt(type, label) }));
     // "Something else" je uključen dok ga zlatar ne isključi (other: false na pitanju stila).
     return field.other === false ? list : [...list, OTHER_STYLE];
   }
@@ -270,7 +272,7 @@ export function publicForm(form) {
   }));
   const styles = Object.fromEntries(Object.entries(form.styles || {}).map(([t, list]) => [t, list.map(({ value, label, image }) => {
     const teeth = t === 'grillz' ? styleOf(form, { type: t, style: value })?.teeth : null;
-    return { value, label, image, ...(teeth ? { teeth } : {}) };
+    return { value, label, image: image || styleArt(t, label), ...(teeth ? { teeth } : {}) };
   })]));
   return { id, brand, theme, maxRenders, steps, styles, contact, result, tryOn, ...(products?.length ? { products } : {}) };
 }
