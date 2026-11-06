@@ -5,7 +5,7 @@
 import LIBRARY from './library.json' with { type: 'json' };
 import { PRESET_TEETH, presetTeeth } from '../public/grillz-selection.js';
 import { parseTeeth } from './teeth.js';
-import { styleArt, withArt } from '../public/option-art.js';
+import { styleArt, styleImage, withArt } from '../public/option-art.js';
 
 // Početni stilovi po tipu iz src/library.json. Slika ide i u karticu i modelu kao referenca oblika.
 export const DEFAULT_STYLES = Object.fromEntries(
@@ -36,7 +36,7 @@ export function withStyleTeeth(form) {
 export function optionsOf(field, a, form) {
   if (field.optionsFrom?.styles) {
     const type = a[field.optionsFrom.field];
-    const list = (form.styles?.[type] || []).map(({ value, label, image }) => ({ value, label, image: image || styleArt(type, label) }));
+    const list = (form.styles?.[type] || []).map((s) => ({ value: s.value, label: s.label, image: styleImage(type, s) }));
     // "Something else" je uključen dok ga zlatar ne isključi (other: false na pitanju stila).
     return field.other === false ? list : [...list, OTHER_STYLE];
   }
@@ -270,9 +270,10 @@ export function publicForm(form) {
     ...s,
     fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => withArt(f, o)) } : f)), // izbor bez svoje slike dobija sliku iz biblioteke, i u već postojećim formama
   }));
-  const styles = Object.fromEntries(Object.entries(form.styles || {}).map(([t, list]) => [t, list.map(({ value, label, image }) => {
+  const styles = Object.fromEntries(Object.entries(form.styles || {}).map(([t, list]) => [t, list.map((s) => {
+    const { value, label } = s;
     const teeth = t === 'grillz' ? styleOf(form, { type: t, style: value })?.teeth : null;
-    return { value, label, image: image || styleArt(t, label), ...(teeth ? { teeth } : {}) };
+    return { value, label, image: styleImage(t, s), ...(teeth ? { teeth } : {}) };
   })]));
   return { id, brand, theme, maxRenders, steps, styles, contact, result, tryOn, ...(products?.length ? { products } : {}) };
 }
@@ -353,6 +354,7 @@ export function validateFormDef(f, id) {
           if (o.swatch && !SWATCH.test(o.swatch)) err(`Option ${o.value}: color must be hex or a simple gradient`);
           if (o.icon && !ICONS.includes(o.icon)) err(`Option ${o.value}: unknown icon`);
           if (o.image && !imgOk(o.image)) err(`Option ${o.value}: image must come from the library or this form`);
+          bool(o.noImage, `Option ${o.value} without image`);
           str(o.subject, 300, `AI description (${o.value})`);
           str(o.note, 300, `AI note (${o.value})`);
         }
@@ -407,6 +409,7 @@ export function validateFormDef(f, id) {
       str(s.shape, 300, `Shape of ${s.value}`);
       if (s.teeth != null && !parseTeeth(s.teeth)) err(`Style ${s.value}: invalid tooth selection`);
       if (!imgOk(s.image)) err(`Style ${s.value}: image must come from the library or this form`);
+      bool(s.noImage, `Style ${s.value} without image`);
     }
   }
 

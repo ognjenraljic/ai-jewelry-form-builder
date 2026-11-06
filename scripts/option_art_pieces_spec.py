@@ -20,8 +20,6 @@ ICE = {'ring': 'A wide gold band ring', 'chain': 'A short curved section of a Mi
 LEVEL = {'accents': 'plain polished metal with only a few small diamonds as accents', 'half-iced': 'with diamonds set on only about half of the surface, the rest plain polished metal', 'fully-iced': 'completely covered in pavé diamonds, no plain metal visible'}
 STONE = {'moissanite': 'a round moissanite with strong rainbow fire', 'lab-grown-diamonds': 'a round lab-grown diamond, crisp and icy white', 'natural-diamonds': 'a round natural diamond, colorless and bright',
          'cubic-zirconia': 'a round cubic zirconia, very bright', 'ruby': 'an oval deep red ruby', 'sapphire': 'an oval blue sapphire', 'emerald': 'an emerald-cut green emerald', 'black-diamonds': 'a round black diamond, opaque and glossy'}
-TIER = {1: 'a slim plain band with one tiny diamond', 2: 'a simple solitaire with a small diamond', 3: 'a solitaire with a medium diamond', 4: 'a halo ring with a large center diamond',
-        5: 'a three-stone ring with large diamonds', 6: 'a very large statement ring, huge center diamond surrounded by a diamond halo and a pavé band'}
 
 A = {}
 for piece, show in SHOW.items():
@@ -34,8 +32,6 @@ for piece, base in ICE.items():
 for key, stone in STONE.items():
     A[f'stones/ring/{key}'] = f'A white gold solitaire ring with {stone} as the center stone, three-quarter view.'
 A['stones/ring/no-stones'] = 'A plain polished yellow gold band ring with no stones at all, three-quarter view.'
-for n, what in TIER.items():
-    A[f'budget/ring/tier-{n}'] = f'A white gold ring: {what}, three-quarter view.'
 for label, slug in (('4', '4'), ('5', '5'), ('6', '6'), ('7', '7'), ('8', '8'), ('9', '9'), ('10', '10'), ('11', '11'), ('12+', '12')):
     A[f'ring-size/ring/{slug}'] = f'A single steel ring sizer gauge band lying flat, with the number "{label}" clearly stamped on its top surface, and no other text.'
 

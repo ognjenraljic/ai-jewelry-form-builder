@@ -155,36 +155,6 @@
   "aspect": "1:1"
  },
  {
-  "name": "budget__tier-1",
-  "prompt": "One small polished gold bullion ingots stacked neatly in a small pile, exactly 1 bar, plain with no engraving. Professional studio jewelry product photograph, one subject centered with generous space around it, plain matte deep charcoal gray background, soft studio light, subtle shadow, sharp focus, photorealistic. No text, no logo, no watermark, no hands, no people, no props.",
-  "aspect": "1:1"
- },
- {
-  "name": "budget__tier-2",
-  "prompt": "Two small polished gold bullion ingots stacked neatly in a small pile, exactly 2 bars, plain with no engraving. Professional studio jewelry product photograph, one subject centered with generous space around it, plain matte deep charcoal gray background, soft studio light, subtle shadow, sharp focus, photorealistic. No text, no logo, no watermark, no hands, no people, no props.",
-  "aspect": "1:1"
- },
- {
-  "name": "budget__tier-3",
-  "prompt": "Three polished gold bullion ingots stacked neatly in a small pile, exactly 3 bars, plain with no engraving. Professional studio jewelry product photograph, one subject centered with generous space around it, plain matte deep charcoal gray background, soft studio light, subtle shadow, sharp focus, photorealistic. No text, no logo, no watermark, no hands, no people, no props.",
-  "aspect": "1:1"
- },
- {
-  "name": "budget__tier-4",
-  "prompt": "Five polished gold bullion ingots stacked neatly in a small pile, exactly 5 bars, plain with no engraving. Professional studio jewelry product photograph, one subject centered with generous space around it, plain matte deep charcoal gray background, soft studio light, subtle shadow, sharp focus, photorealistic. No text, no logo, no watermark, no hands, no people, no props.",
-  "aspect": "1:1"
- },
- {
-  "name": "budget__tier-5",
-  "prompt": "Eight polished gold bullion ingots stacked neatly in a small pile, exactly 8 bars, plain with no engraving. Professional studio jewelry product photograph, one subject centered with generous space around it, plain matte deep charcoal gray background, soft studio light, subtle shadow, sharp focus, photorealistic. No text, no logo, no watermark, no hands, no people, no props.",
-  "aspect": "1:1"
- },
- {
-  "name": "budget__tier-6",
-  "prompt": "A large, rich pile of many polished gold bullion ingots, plain with no engraving. Professional studio jewelry product photograph, one subject centered with generous space around it, plain matte deep charcoal gray background, soft studio light, subtle shadow, sharp focus, photorealistic. No text, no logo, no watermark, no hands, no people, no props.",
-  "aspect": "1:1"
- },
- {
   "name": "cut__solid",
   "prompt": "A dental grill covering six upper front teeth in plain solid polished yellow gold, displayed on its own, front view, no mouth. Professional studio jewelry product photograph, one subject centered with generous space around it, plain matte deep charcoal gray background, soft studio light, subtle shadow, sharp focus, photorealistic. No text, no logo, no watermark, no hands, no people, no props.",
   "aspect": "1:1"

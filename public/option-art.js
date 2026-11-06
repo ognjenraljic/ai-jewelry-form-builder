@@ -7,14 +7,8 @@ const slug = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0
 const CATEGORIES = ['center-shape', 'ring-size', 'case-size', 'metal', 'karat', 'stones', 'coverage', 'clarity', 'budget', 'cut', 'mold', 'carat', 'band', 'chain', 'backs', 'length', 'width', 'size', 'finish', 'setting', 'clasp', 'engraving', 'stone-color'];
 export const artCategory = (fieldId) => { const id = String(fieldId || '').replace(/_/g, '-'); return CATEGORIES.find((c) => id === c || id.endsWith(`-${c}`)) || ''; };
 
-// Budget ranges are free text: the picture follows the top of the range.
-function budgetTier(label) {
-  const amounts = [...String(label).matchAll(/\d[\d,]*/g)].map((m) => Number(m[0].replace(/,/g, '')));
-  if (!amounts.length) return '';
-  const top = Math.max(...amounts);
-  if (/\+/.test(label) && top >= 20000) return 'tier-6';
-  return `tier-${[1500, 2500, 5000, 10000, 20000].findIndex((x) => top <= x) + 1 || 6}`;
-}
+// A budget is shown as numbers only, never as a picture.
+const NO_ART = new Set(['budget']);
 const ALIASES = { metal: { silver: 'sterling-silver', gold: 'yellow-gold' }, stones: { none: 'no-stones', cz: 'cubic-zirconia', diamonds: 'natural-diamonds' }, carat: Object.fromEntries([1, 2, 3, 4, 5, 6].map((n) => [`${n}ct`, `${n}-ct`])) };
 
 const fileIn = (folder, cat, s) => {
@@ -25,17 +19,18 @@ const fileIn = (folder, cat, s) => {
 // A ring shows its metal on a ring, not on a chain: <category>/<piece>/ first, then the general photo.
 export function artFor(fieldId, label, piece = '') {
   const cat = artCategory(fieldId);
-  if (!cat) return '';
-  const s = cat === 'budget' ? budgetTier(label) : slug(label);
+  if (!cat || NO_ART.has(cat)) return '';
+  const s = slug(label);
   return (piece && fileIn(`${cat}/${piece}`, cat, s)) || fileIn(cat, cat, s);
 }
 // Photos of one choice per piece, for a shared question whose picture follows the piece the customer picked.
 export function pieceArt(fieldId, label) {
   const cat = artCategory(fieldId);
   const out = {};
+  if (NO_ART.has(cat)) return out;
   for (const folder of Object.keys(ART)) {
     if (!cat || !folder.startsWith(`${cat}/`)) continue;
-    const src = fileIn(folder, cat, cat === 'budget' ? budgetTier(label) : slug(label));
+    const src = fileIn(folder, cat, slug(label));
     if (src) out[folder.slice(cat.length + 1)] = src;
   }
   return out;
@@ -56,6 +51,7 @@ export function detailArt(cat, label, piece, family) {
 // Default picture of a style, by its name, so a style added later has one too: "Figaro chain" and "Figaro" are one style.
 const STYLE_ALIASES = { 'miami-cuban': 'cuban', 'top-6': 'top6', 'top-8': 'top8', 'top-bottom': 'set', 'full-set': 'set', 'fully-iced': 'iced', 'iced-bezel': 'bezel', 'bezel-only': 'bezel', 'script-name': 'script', beaded: 'bead', ball: 'bead' };
 const STYLE_NOISE = /(^|-)(chain|bracelet|necklace|ring|earrings?|pendant|watch|links?|style|band|letters)(?=-|$)/g;
+export const styleImage = (piece, s) => s.image || (s.noImage ? '' : styleArt(piece, s.label));
 export function styleArt(piece, label) {
   const files = STYLE_ART[piece];
   if (!files || piece === 'pieces') return '';
@@ -69,15 +65,19 @@ export function styleArt(piece, label) {
 // Picture of a built-in piece on the first step of the form.
 const PIECES = { pendant: '/library/pendant/script.webp', chain: '/site/gallery/chain-category-v2.webp', ring: '/library/ring/solitaire.webp', grillz: '/library/grillz/top8.webp', bracelet: '/library/bracelet/cuban.webp', earrings: '/library/earrings/hoops.webp', watch: '/library/watch/iced.webp' };
 const addedPiece = (label) => (STYLE_ART.pieces?.includes(slug(label)) ? `/library/pieces/${slug(label)}.webp` : '');
-export const optionArt = (fieldId, option, piece = '') => option.image || (fieldId === 'type' ? PIECES[option.value] || addedPiece(option.label) : artFor(fieldId, option.label, piece));
+// noImage: the jeweler removed the picture in the builder, so no default fills in. Their own image still wins.
+// Budget pictures were removed from the library, so a form that saved one as its own image shows none instead of a broken one.
+const ownImage = (o) => (o.image && !o.image.startsWith('/library/options/budget/') ? o.image : '');
+export const optionArt = (fieldId, option, piece = '') => ownImage(option) || (option.noImage ? '' : fieldId === 'type' ? PIECES[option.value] || addedPiece(option.label) : artFor(fieldId, option.label, piece));
 // A question added by hand has a generated ID, so its wording says what it asks about.
 export const artField = (field) => (artCategory(field.id) ? field.id : /stone-size/.test(slug(field.label)) ? 'carat' : slug(field.label));
 // Option as the form receives it: its picture, plus per-piece pictures unless the jeweler set their own image.
 export function withArt(field, o) {
   const key = field.id === 'type' ? 'type' : artField(field);
   const image = optionArt(key, o);
-  const byPiece = o.image || key === 'type' ? {} : pieceArt(key, o.label);
-  return { ...o, ...(image ? { image } : {}), ...(Object.keys(byPiece).length ? { pieceArt: byPiece } : {}) };
+  const byPiece = ownImage(o) || o.noImage || key === 'type' ? {} : pieceArt(key, o.label);
+  const { image: _, ...rest } = o;
+  return { ...rest, ...(image ? { image } : {}), ...(Object.keys(byPiece).length ? { pieceArt: byPiece } : {}) };
 }
 // Every style and added piece picture, for the image library in the builder.
 export const styleList = () => Object.entries(STYLE_ART).flatMap(([category, files]) => files.map((name) => (category === 'pieces'

@@ -1,6 +1,6 @@
 // JewelryLead Builder: klijenti (zlatari) -> forme iz šablona -> uređivanje bez koda, sa živim pregledom.
 // Čuvanje forme: PUT /api/admin/forms/:id (server provjerava validateFormDef). Klijent: PUT /api/admin/clients/:id.
-import { artField, optionArt, styleArt, withArt } from '/option-art.js';
+import { artField, optionArt, styleArt, styleImage, withArt } from '/option-art.js';
 import { SUGGESTED, answersFor, suggestOptions, notTaken } from '/option-suggestions.js';
 
 const ICONS = {
@@ -701,10 +701,18 @@ const imgPick = (path, { scope = 'forms', size = 'sm', empty = 'Image' } = {}) =
   const v = getP(path);
   return `<label class="pick ${size}" title="${v ? 'Replace image or drag a new photo here' : 'Upload or drop an image'}">${v ? `<img src="${esc(v)}" alt="" />` : `<span>${esc(empty)}${size === 'logo' ? '<small>or drag & drop here</small>' : ''}</span>`}<input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="${path}" data-scope="${scope}" /></label>${v ? `<button class="icon-btn danger" title="Remove image" data-act="unset" data-path="${path}">✕</button>` : ''}`;
 };
+// Uklanjanje slike: briše i vlastitu i automatsku (noImage), pa ništa ne stoji. "Use default image" vraća automatsku.
+// path = putanja do .image; auto = slika iz biblioteke koju bi stavka imala bez izbora zlatara.
+const imageOff = (path, shown, auto, label = 'Remove image') => {
+  const base = path.replace(/\.image$/, '');
+  if (shown) return `<button type="button" class="btn small img-off" title="Show no image for this choice" data-act="no-image" data-path="${esc(base)}">${esc(label)}</button>`;
+  if (getP(`${base}.noImage`) && auto) return `<button type="button" class="btn small ghost img-off" title="Show the library image again" data-act="default-image" data-path="${esc(base)}">Use default image</button>`;
+  return '';
+};
 // Card art is selected from the catalogue or this form's own uploaded images.
-const cardImagePick = (path, shown = getP(path)) => {
+const cardImagePick = (path, shown = getP(path), auto = '') => {
   const image = getP(path);
-  return `<button class="card-image-select" aria-label="Change image" data-act="image-library" data-path="${esc(path)}" data-shown="${esc(shown || '')}">${shown ? `<img src="${esc(shown)}" alt="Selected card image" />` : `<span class="card-image-placeholder">${nav('image')}</span>`}<span><b>${shown ? 'Change image' : 'Select image'}</b><small>${shown && !image ? 'Default image. Pick another or add your own' : 'Browse library or add your own'}</small></span>${nav('plus')}</button>${image ? `<button class="icon-btn danger" title="Remove image" aria-label="Remove card image" data-act="unset" data-path="${esc(path)}">✕</button>` : ''}`;
+  return `<button class="card-image-select" aria-label="Change image" data-act="image-library" data-path="${esc(path)}" data-shown="${esc(shown || '')}">${shown ? `<img src="${esc(shown)}" alt="Selected card image" />` : `<span class="card-image-placeholder">${nav('image')}</span>`}<span><b>${shown ? 'Change image' : 'Select image'}</b><small>${shown && !image ? 'Default image. Pick another or add your own' : getP(path.replace(/\.image$/, '.noImage')) && !shown ? 'No image. Pick one or add your own' : 'Browse library or add your own'}</small></span>${nav('plus')}</button>${imageOff(path, shown, auto)}`;
 };
 
 async function openImageLibrary(path, shown = '') {
@@ -716,7 +724,7 @@ async function openImageLibrary(path, shown = '') {
   d.setAttribute('aria-labelledby', 'image-library-title');
   let images = [], next = null, category = selected?.startsWith('/media/') ? 'uploads' : selected?.match(/^\/library\/([a-z]+)\//)?.[1] || (!shown && path.includes('.options.') ? 'options' : B.piece || ''), search = '', busy = false;
   const controller = new AbortController();
-  d.innerHTML = `<div class="image-library-head"><div><h2 id="image-library-title">Select image</h2><p class="hint">Choose from the library or upload an image for this form.</p></div><button class="icon-btn" data-library-close aria-label="Close image library">✕</button></div>
+  d.innerHTML = `<div class="image-library-head"><div><h2 id="image-library-title">Select image</h2><p class="hint">Choose from the library or upload an image for this form.</p></div><span class="image-library-actions">${selected ? '<button type="button" class="btn small" data-library-none>No image</button>' : ''}<button class="icon-btn" data-library-close aria-label="Close image library">✕</button></span></div>
     <div class="image-library-upload" data-upload-box><button type="button" data-library-add aria-label="Add new image">${nav('plus')}<b>Add new</b></button><small>Choose a JPG, PNG or WebP, or drag & drop here</small><input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="${esc(path)}" data-scope="forms" /></div>
     <label class="image-library-search"><span class="sr-only">Search images</span><input class="in" type="search" placeholder="Search images…" aria-label="Search images" /></label>
     <div class="image-library-filters" role="group" aria-label="Image categories"></div>
@@ -750,6 +758,10 @@ async function openImageLibrary(path, shown = '') {
     const button = e.target.closest('button');
     if (!button || d.dataset.uploading === 'true') return;
     if (button.hasAttribute('data-library-close')) return d.close();
+    if (button.hasAttribute('data-library-none')) {
+      if (B.id !== formId) return d.close();
+      setP(path, undefined); setP(path.replace(/\.image$/, '.noImage'), true); changed(true); return d.close();
+    }
     if (button.dataset.category !== undefined) { category = button.dataset.category; show(); }
     if (button.hasAttribute('data-library-more') && !busy) load(true);
     if (button.dataset.libraryImage && images.some((image) => image.image === button.dataset.libraryImage)) {
@@ -886,12 +898,13 @@ function piecesView() {
     const cards = styles.map((s, j) => `
       <div class="style">
         <label class="img" title="Upload image">
-          ${s.image || styleArt(o.value, s.label) ? `<img src="${esc(s.image || styleArt(o.value, s.label))}" alt="" />` : '<span class="empty">No image yet<br />Click to upload</span>'}
+          ${styleImage(o.value, s) ? `<img src="${esc(styleImage(o.value, s))}" alt="" />` : `<span class="empty">${s.noImage ? 'No image' : 'No image yet'}<br />Click to upload</span>`}
           <span class="up">Replace image or drag & drop</span>
           <input type="file" accept="image/jpeg,image/png,image/webp" hidden data-upload="styles.${esc(o.value)}.${j}.image" data-scope="forms" />
         </label>
         <div class="body">
           <input class="in" data-bind="styles.${esc(o.value)}.${j}.label" value="${esc(s.label)}" placeholder="Style name" />
+          ${imageOff(`styles.${o.value}.${j}.image`, styleImage(o.value, s), styleArt(o.value, s.label))}
           <textarea class="ta" data-bind="styles.${esc(o.value)}.${j}.shape" placeholder="Shape for the AI, e.g. thick interlocking oval links with a box clasp">${esc(s.shape || '')}</textarea>
           <div class="tools">
             <span><button class="icon-btn" title="Move left" data-act="move" data-path="styles.${esc(o.value)}" data-i="${j}" data-d="-1">←</button><button class="icon-btn" title="Move right" data-act="move" data-path="styles.${esc(o.value)}" data-i="${j}" data-d="1">→</button></span>
@@ -902,7 +915,7 @@ function piecesView() {
     editor = `
       <div class="card sel" style="margin-top:16px">
         ${art ? inp(`${op}.label`, 'Name shown to customers') : `<div class="row">${inp(`${op}.label`, 'Name shown to customers')}${iconPicker(`${op}.icon`, o.icon)}</div>`}
-        <div class="f"><span>${art ? 'Card image' : 'Card image (optional, replaces the icon)'}</span><div class="pick-row">${cardImagePick(`${op}.image`, art)}</div></div>
+        <div class="f"><span>${art ? 'Card image' : 'Card image (optional, replaces the icon)'}</span><div class="pick-row">${cardImagePick(`${op}.image`, art, optionArt('type', { ...o, image: '', noImage: false }))}</div></div>
         ${area(`${op}.subject`, 'How the AI should describe this piece', { ph: 'e.g. a custom western belt buckle, oval, front view', hint: 'Optional for built-in pieces (pendant, chain, ring, grillz, bracelet, earrings, watch). Needed for new ones.' })}
       </div>
       ${o.value === 'grillz' ? `<div class="toggles" style="margin:14px 0 4px">${toggle('tryOn', 'Offer "See them on your smile" after the render (customer uploads a smiling photo)', { invert: true, title: 'The AI shows the customer wearing the grillz. The photo stays private.' })}</div>` : ''}
@@ -1076,7 +1089,7 @@ const otherToggle = (i, j) => toggle(`steps.${i}.fields.${j}.other`, 'Offer "Som
 // Slika opcije: svoja, ili automatska iz biblioteke izbora (blijeđa, dok se ne izabere druga).
 function optionPick(path, f, o) {
   const src = optionImage(f, o);
-  return `<button class="opt-img ${src && !o.image ? 'auto' : ''}" data-act="image-library" data-path="${esc(path)}" title="${o.image ? 'Change image' : src ? 'Automatic image. Click to choose another or upload your own.' : 'Add an image'}">${src ? `<img src="${esc(src)}" alt="" />` : nav('image')}</button>${o.image ? `<button class="icon-btn danger" title="Remove image" data-act="unset" data-path="${esc(path)}">✕</button>` : ''}`;
+  return `<button class="opt-img ${src && !o.image ? 'auto' : ''}" data-act="image-library" data-path="${esc(path)}" data-shown="${esc(src || '')}" title="${o.image ? 'Change image' : src ? 'Automatic image. Click to choose another or upload your own.' : 'Add an image'}">${src ? `<img src="${esc(src)}" alt="" />` : nav('image')}</button>${imageOff(path, src, optionImage(f, { ...o, image: '', noImage: false }), 'No image')}`;
 }
 
 function fieldEditor(i, j, f) {
@@ -1414,6 +1427,8 @@ app.addEventListener('click', async (e) => {
   if (act === 'preset') { B.draft.theme = { ...PRESETS[el.dataset.p] }; changed(true); }
   if (act === 'use-client-logo') { B.draft.brand.logo = B.client.logo; changed(true); }
   if (act === 'unset') { setP(el.dataset.path, undefined); changed(true); }
+  if (act === 'no-image') { setP(`${el.dataset.path}.image`, undefined); setP(`${el.dataset.path}.noImage`, true); changed(true); }
+  if (act === 'default-image') { setP(`${el.dataset.path}.noImage`, undefined); changed(true); }
   if (act === 'pick-piece' && !e.target.closest('button')) {
     B.piece = el.dataset.v;
     renderPane();
@@ -1742,7 +1757,7 @@ function schedulePreview() { clearTimeout(pt); pt = setTimeout(() => pushPreview
 // Skok na korak šalje i izabrani komad, da korak sa stilovima pokaže stilove tog komada.
 // soft: skok iz editora (sinhronizacija) ne mijenja kupčeve odgovore u pregledu, samo dopuni komad ako ga nema.
 // Izbori bez svoje slike idu sa slikom iz biblioteke izbora, isto kao javna forma.
-const previewForm = () => ({ ...B.draft, steps: B.draft.steps.map((s) => ({ ...s, fields: s.fields.map((f) => (f.options ? { ...f, options: f.options.map((o) => withArt(f, o)) } : f)) })) });
+const previewForm = () => ({ ...B.draft, steps: B.draft.steps.map((s) => ({ ...s, fields: s.fields.map((f) => (f.options ? { ...f, options: f.options.map((o) => withArt(f, o)) } : f)) })), styles: Object.fromEntries(Object.entries(B.draft.styles || {}).map(([t, list]) => [t, list.map((s) => ({ ...s, image: styleImage(t, s) }))])) });
 function pushPreview(step, { soft = false, focus = null } = {}) {
   const frame = document.getElementById('frame');
   const type = B.piece || typeLoc()?.field.options[0]?.value;

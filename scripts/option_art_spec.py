@@ -10,7 +10,6 @@ STYLE = (' Professional studio jewelry product photograph, one subject centered 
 def link(metal): return f'A short curved section of a heavy Miami Cuban link chain in polished {metal}, seen at a three-quarter angle, showing the true color of the metal.'
 def stamp(mark, metal): return f'Extreme macro of the inner surface of a polished {metal} ring band, with a small crisp hallmark stamp that reads exactly "{mark}" and nothing else. Only that stamp may contain text.'
 def gem(what): return f'A single loose {what}, resting on its pavilion at a slight angle, sharply lit so the facets and fire are clear.'
-def bars(n, s): return f'{s} polished gold bullion ingots stacked neatly in a small pile, exactly {n} {"bar" if n == 1 else "bars"}, plain with no engraving.'
 def ice(s): return f'A bold cross pendant in yellow gold, {s}, front view on a thin chain.'
 def clarity(s): return f'Extreme jeweler loupe macro of a single round brilliant diamond seen from the top, {s}.'
 def shape(s): return f'A single loose {s} cut diamond seen from the top at a slight angle, showing its exact outline.'
@@ -33,8 +32,6 @@ A = {
   'coverage/fully-iced': ice('completely covered in pavé diamonds, no plain metal visible'),
   'clarity/si': 'Extreme jeweler loupe macro of a single round brilliant diamond seen from the top, with several small dark crystal inclusions and a tiny white feather clearly visible inside the stone through the table.', 'clarity/vs': clarity('one very tiny inclusion barely visible'),
   'clarity/vvs': clarity('extremely clean, almost no visible inclusion'), 'clarity/flawless': clarity('perfectly clean and flawless, maximum brilliance'),
-  'budget/tier-1': bars(1, 'One small'), 'budget/tier-2': bars(2, 'Two small'), 'budget/tier-3': bars(3, 'Three'), 'budget/tier-4': bars(5, 'Five'), 'budget/tier-5': bars(8, 'Eight'),
-  'budget/tier-6': 'A large, rich pile of many polished gold bullion ingots, plain with no engraving.',
   'cut/solid': 'A dental grill covering six upper front teeth in plain solid polished yellow gold, displayed on its own, front view, no mouth.',
   'cut/open-face': 'A dental grill covering six upper front teeth in yellow gold where only the outline of each tooth is metal and the center of each tooth is open, displayed on its own, front view, no mouth.',
   'cut/diamond-cut': 'A dental grill covering six upper front teeth in yellow gold with a faceted, sparkling diamond-cut engraved metal surface, no stones, displayed on its own, front view, no mouth.',

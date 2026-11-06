@@ -485,3 +485,9 @@ dialog.field-editor[open] { display: flex; flex-direction: column; }
 .ask-suggest small { flex-basis: 100%; color: var(--ink-faint); font-size: 12px; }
 .ask-chip { border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 5px 11px; font: inherit; font-size: 12.5px; cursor: pointer; }
 .ask-chip:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Uklanjanje slike: vidljivo dugme pored slike, ne samo ✕ */
+.img-off { flex: none; }
+.img-off:not(.ghost):hover { border-color: var(--danger); color: var(--danger); }
+.style .body .img-off { justify-self: start; }
+.image-library-actions { display: flex; align-items: center; gap: 8px; }
