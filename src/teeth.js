@@ -24,9 +24,18 @@ function rowText(nums, upper) {
   const which = upper ? 'upper' : 'lower';
   if (centered) {
     const span = ['', 'the two front teeth (both central incisors)', 'the four front teeth (central and lateral incisors)', 'six front teeth, canine to canine', 'eight teeth, first premolar to first premolar', 'ten teeth, second premolar to second premolar'][n / 2];
-    return `${upper ? 'Top' : 'Bottom'} row: exactly ${n} teeth (${which}), ${span}`;
+    return `${upper ? 'Top' : 'Bottom'} row: exactly ${n} teeth (${which}), ${span}. ${sequence(nums, upper)}`;
   }
-  return `${upper ? 'Top' : 'Bottom'} row: exactly ${n} ${which} ${n === 1 ? 'tooth' : 'teeth'}: ${nums.map((i) => nameOf(i, upper)).join(', ')}`;
+  return `${upper ? 'Top' : 'Bottom'} row: exactly ${n} ${which} ${n === 1 ? 'tooth' : 'teeth'}: ${nums.map((i) => nameOf(i, upper)).join(', ')}${n > 1 ? `. ${sequence(nums, upper)}` : ''}`;
+}
+
+// Zub po zub slijeva nadesno sa rednim brojem: "canine to canine" modelu ostavlja prostor da red dopuni do navike (8),
+// a nabrojan red ima jasan prvi i zadnji zub. Rupe (npr. dva očnjaka) ostaju prazne.
+function sequence(nums, upper) {
+  const which = upper ? 'upper' : 'lower';
+  const list = nums.map((i, k) => `${k + 1}) ${which} ${NAMES[i <= 5 ? i - 1 : 10 - i]}`).join(', ');
+  const gaps = nums.some((x, k) => k && x - nums[k - 1] > 1) ? ' Leave the unselected positions between them empty.' : '';
+  return `Caps left to right as seen from the front: ${list}. The row starts at cap 1 and ends at cap ${nums.length}; nothing beyond them on either side.${gaps}`;
 }
 
 // Redovi za grillzPlan + rečenice za prompt.
@@ -35,10 +44,13 @@ export function teethPlan(v) {
   if (!t || (!t.top.length && !t.bottom.length)) return null;
   const rows = t.top.length && t.bottom.length ? 'both' : t.top.length ? 'top' : 'bottom';
   const lines = [];
-  if (t.top.length) lines.push(`${rowText(t.top, true)}.`);
-  if (t.bottom.length) lines.push(`${rowText(t.bottom, false)}.`);
+  const end = (x) => (x.endsWith('.') ? x : `${x}.`);
+  if (t.top.length) lines.push(end(rowText(t.top, true)));
+  if (t.bottom.length) lines.push(end(rowText(t.bottom, false)));
   const total = t.top.length + t.bottom.length;
   const count = [t.top.length ? `top row ${t.top.length}` : '', t.bottom.length ? `bottom row ${t.bottom.length}` : ''].filter(Boolean).join(', ');
+  // Donji sjekutići su uži od gornjih: model je donji red razvlačio na širinu gornjeg i dopunjavao ga do 8 (test 9.11).
+  if (t.top.length && t.bottom.length) lines.push('Lower teeth are narrower than upper teeth, as in a real mouth: each lower incisor cap is about two thirds the width of an upper central incisor cap. Each row is only as wide as its own caps; never stretch the bottom row to the width of the top row or fill extra width with additional caps.');
   lines.push(`Exactly ${total} ${total === 1 ? 'tooth is' : 'teeth are'} covered in total (${count}). Count the teeth one by one before finishing: no extra teeth on either side of any row, and every row has exactly its own number even if another row has more. This exact tooth selection takes priority over any reference image.`);
   return { rows, top: t.top.length, bottom: t.bottom.length, lines };
 }
