@@ -1,5 +1,5 @@
 // Local integration: capture the exact two model inputs, source design and restored association.
-// Run with the mock API (models from wrangler.jsonc, all GPT Image 2.6 Sunburst). No paid AI calls.
+// Run with the mock API (try-on defaults to GPT Image 2.5 Sunburst). No paid AI calls.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -54,7 +54,7 @@ const sent = entries.filter(e => e.path === '/v1/images/edits').at(-1);
 check(sent.images === 2 && sent.imageHashes[0] === hash(selfie), 'first model image is exactly the submitted photograph');
 check(sent.imageHashes[1] === hash(chosen) && hash(chosen) !== hash(latest), 'second model image is exactly the chosen design');
 check(sent.prompt === mixed && sent.size === 'auto', 'placement instructions and original-aspect output reach the model');
-check(sent.model === 'gpt-image-2.6-sunburst' && sent.quality === 'xhigh', 'try-on uses the precision model at extra-high quality');
+check(sent.model === 'gpt-image-2.5-sunburst' && sent.quality === 'xhigh', 'try-on uses the precision model at extra-high quality');
 photo.set('base', '3');
 const second = await request(path + '/tryon', photo);
 const both = await request(path, null, { 'x-lead-token': lead.token });

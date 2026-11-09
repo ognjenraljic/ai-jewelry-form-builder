@@ -1,5 +1,5 @@
-// Prvi render ide na GPT Image 2.6 Sunburst; ako OpenAI odbije model, isti render prođe na 2.5 Sunburst.
-// Lažni OpenAI (ništa ne košta), drugi prolaz sa MOCK_REJECT_MODEL=gpt-image-2.6-sunburst:
+// Prvi render ide na GPT Image 2.6 Flare; ako OpenAI odbije model, isti render prođe na 2.5 Flare.
+// Lažni OpenAI (ništa ne košta), drugi prolaz sa MOCK_REJECT_MODEL=gpt-image-2.6-flare:
 //   node scripts/mock-openai.mjs 8898 log.json
 //   npx wrangler dev --port 8818 --var OPENAI_API_KEY:mock --var OPENAI_BASE:http://127.0.0.1:8898
 //   BASE=http://127.0.0.1:8818 LOG=log.json EXPECT=ok|fallback node scripts/model-fallback-check.mjs
@@ -30,10 +30,10 @@ console.log('render', r.status, r.body.dev?.model, '| OpenAI pozivi:', calls.joi
 assert.equal(r.status, 200, `render ok (${JSON.stringify(r.body).slice(0, 300)})`);
 assert.ok(r.body.url, 'render has an image');
 if (EXPECT === 'ok') {
-  assert.deepEqual(calls, ['gpt-image-2.6-sunburst'], 'first render uses 2.6 Sunburst only');
-  assert.equal(r.body.dev?.model, 'GPT Image 2.6 Sunburst');
+  assert.deepEqual(calls, ['gpt-image-2.6-flare'], 'first render uses 2.6 Flare only');
+  assert.equal(r.body.dev?.model, 'GPT Image 2.6 Flare');
 } else {
-  assert.deepEqual(calls, ['gpt-image-2.6-sunburst', 'gpt-image-2.5-sunburst'], 'rejected 2.6 falls back to 2.5 Sunburst');
-  assert.equal(r.body.dev?.model, 'GPT Image 2.6 Sunburst -> gpt-image-2.5-sunburst');
+  assert.deepEqual(calls, ['gpt-image-2.6-flare', 'gpt-image-2.5-flare'], 'rejected 2.6 falls back to 2.5 Flare');
+  assert.equal(r.body.dev?.model, 'GPT Image 2.6 Flare -> gpt-image-2.5-flare');
 }
 console.log('OK', EXPECT);
