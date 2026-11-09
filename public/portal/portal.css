@@ -146,6 +146,8 @@ textarea.in { resize: vertical; line-height: 1.5; }
 .ob-theme.light i { background: linear-gradient(135deg, #faf7f2 60%, var(--a) 60%); }
 .ob-theme small { color: var(--ink-faint); font-size: 12px; }
 .ob-theme.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.ob-f .ob-row + .hint { margin-top: 10px; }
+.ob-pics img { grid-row: span 2; width: 44px; height: 44px; border-radius: 10px; object-fit: cover; border: 1px solid var(--line-strong); }
 .ob-pieces { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .ob-piece { position: relative; display: flex; flex-direction: column; border-radius: 16px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); padding: 0; overflow: hidden; cursor: pointer; transition: border-color 0.2s, transform 0.15s; }
 .ob-piece:hover { transform: translateY(-2px); border-color: var(--accent); }

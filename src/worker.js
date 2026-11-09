@@ -1238,7 +1238,7 @@ function cleanOnboarding(d, clientId) {
   return {
     step: stepKey,
     formName: str(d.formName, 80),
-    store: { name: str(st.name, 60), website: str(st.website, 200), logo: img(st.logo), accent: /^#[0-9a-f]{6}$/i.test(st.accent || '') ? st.accent : '#35d0c4', theme: st.theme === 'light' ? 'light' : 'dark' },
+    store: { name: str(st.name, 60), website: str(st.website, 200), logo: img(st.logo), accent: /^#[0-9a-f]{6}$/i.test(st.accent || '') ? st.accent : '#35d0c4', imageStyle: st.imageStyle === 'light' ? 'light' : 'dark', theme: st.theme === 'light' ? 'light' :'dark' },
     pieces: list(d.pieces, 12).filter((x) => x && typeof x === 'object').map((x) => ({
       uid: str(x.uid, 24), value: str(x.value, 40), label: str(x.label, 60), image: img(x.image),
       styles: list(x.styles, 24).filter((y) => y && typeof y === 'object').map((y) => ({

@@ -608,7 +608,10 @@ function obStepView() {
       <div class="ob-f"><span>Brand color</span><div class="ob-row">${ACCENTS.map((c) => `<button class="ob-swatch ${d.store.accent.toLowerCase() === c ? 'on' : ''}" style="background:${c}" data-ob-accent="${c}" aria-label="${c}"></button>`).join('')}<label class="ob-swatch custom" title="Your own color"><input type="color" aria-label="Your own color" data-ob="store.accent" value="${esc(d.store.accent)}" /></label></div></div>
       <div class="ob-f"><span>Look</span><div class="ob-row">
         ${[['dark', 'Dark', 'Elegant, like a jewelry case'], ['light', 'Light', 'Bright and clean']].map(([v, l, h]) => `<button class="ob-theme ${d.store.theme === v ? 'on' : ''} ${v}" data-ob-theme="${v}"><i style="--a:${esc(d.store.accent)}"></i><b>${l}</b><small>${h}</small></button>`).join('')}
-      </div></div>`;
+      </div></div>
+      <div class="ob-f"><span>Picture style</span><div class="ob-row">
+        ${[['dark', 'Studio Dark', 'Pieces on a dark studio backdrop', '/library/ring/solitaire.webp'], ['light', 'Studio Light', 'Pieces on a soft ivory backdrop', '/library-light/ring/solitaire.webp']].map(([v, l, h, src]) => `<button class="ob-theme ob-pics ${(d.store.imageStyle || 'dark') === v ? 'on' : ''}" data-ob-pics="${v}" aria-pressed="${(d.store.imageStyle || 'dark') === v}"><img src="${src}" alt="" /><b>${l}</b><small>${h}</small></button>`).join('')}
+      </div><p class="hint">The pictures customers see on every choice in your form.</p></div>`;
   }
   if (key === 'pieces') {
     const on = new Set(d.pieces.map((p) => p.value).filter(Boolean));
@@ -653,7 +656,7 @@ function obStepView() {
     <h2>Review & send</h2>
     <p class="ob-lead">Check everything once. After you send it, we build your form and it appears in this portal.</p>
     <dl class="ob-review">
-      <dt>Store</dt><dd>${esc(d.store.name)}${d.store.website ? ` · ${esc(d.store.website)}` : ''} · ${d.store.theme === 'light' ? 'Light' : 'Dark'} look <i class="ob-dotc" style="background:${esc(d.store.accent)}"></i></dd>
+      <dt>Store</dt><dd>${esc(d.store.name)}${d.store.website ? ` · ${esc(d.store.website)}` : ''} · ${d.store.theme === 'light' ? 'Light' : 'Dark'} look · ${d.store.imageStyle === 'light' ? 'Studio Light' : 'Studio Dark'} pictures <i class="ob-dotc" style="background:${esc(d.store.accent)}"></i></dd>
       ${d.pieces.map(pieceRow).join('')}
       <dt>Shop products</dt><dd>${prods.length ? prods.map((x) => `${esc(x.name)}${x.price ? ` (${esc(x.price)})` : ''}`).join(', ') : '<span class="faint">none, nothing is recommended under the preview</span>'}</dd>
       ${d.notes ? `<dt>Notes</dt><dd>${esc(d.notes)}</dd>` : ''}
@@ -860,6 +863,7 @@ app.addEventListener('click', async (e) => {
   if (act === 'back') { OB.step = obSteps()[Math.max(0, obIdx() - 1)][0]; obSave(true); renderOnboarding(); scrollTo(0, 0); }
   if (t.dataset.obAccent) { d.store.accent = t.dataset.obAccent; redraw(); }
   if (t.dataset.obTheme) { d.store.theme = t.dataset.obTheme; redraw(); }
+  if (t.dataset.obPics) { d.store.imageStyle = t.dataset.obPics; redraw(); }
   if (t.dataset.obAddOption) {
     const kind = t.dataset.obAddOption;
     const answer = kind === 'metals'

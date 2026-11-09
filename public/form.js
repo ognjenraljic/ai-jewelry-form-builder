@@ -174,8 +174,22 @@ function visible(f) {
   return true;
 }
 
+// Stil slika forme: Studio Light uzima istu sliku iz /library-light/ (iste putanje). Makro kadrovi ostaju.
+// Slika komada Chain nije iz biblioteke (galerija sajta), pa ima svoj svijetli par.
+const LIGHT_EXTRA = { '/site/gallery/chain-category-v2.webp': '/library-light/pieces/chain-category.webp' };
+const art = (src) => {
+  if (S.cfg?.imageStyle !== 'light' || typeof src !== 'string') return src;
+  if (LIGHT_EXTRA[src]) return LIGHT_EXTRA[src];
+  return /^\/library\/(?!details\/)[^?#]+\.webp$/.test(src) ? `/library-light/${src.slice(9)}` : src;
+};
+// Svijetla slika koja ne postoji (nova slika u biblioteci bez svijetle verzije) vraća se na tamnu.
+document.addEventListener('error', (e) => {
+  const el = e.target;
+  if (el?.tagName === 'IMG' && el.getAttribute('src')?.startsWith('/library-light/')) el.src = `/library/${el.getAttribute('src').slice(15)}`;
+}, true);
+
 // Slika izbora prati komad: metal za prsten je na prstenu, ne na lancu.
-const pic = (o) => o.pieceArt?.[S.a.type] || o.image;
+const pic = (o) => art(o.pieceArt?.[S.a.type] || o.image);
 
 // Stilovi zavise od izabranog tipa; "Something else" je zadnji (bez reference), osim ako ga zlatar isključi.
 const optionsOf = (f) => {

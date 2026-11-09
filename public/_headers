@@ -3,6 +3,8 @@
   Cache-Control: public, max-age=604800
 /library/*
   Cache-Control: public, max-age=604800
+/library-light/*
+  Cache-Control: public, max-age=604800
 /favicon.svg
   Cache-Control: public, max-age=604800
 # Sve statično: bez pogađanja tipa fajla.

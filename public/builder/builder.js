@@ -440,7 +440,7 @@ async function reviewOnboarding(obid) {
   dlg.innerHTML = `
     <h2>${esc(ob.name || 'Onboarding')}</h2>
     <p class="lead">${ob.status === 'submitted' || ob.status === 'building' ? `Sent ${esc(day(ob.submitted_at))}.` : ob.status === 'done' ? 'A form was already created from this onboarding.' : 'Still in progress (not sent yet).'}</p>
-    <div class="obr-store">${s.logo ? `<img src="${esc(s.logo)}" alt="" />` : ''}<div><b>${esc(s.name || '')}</b><small>${esc(s.website || '')} · ${s.theme === 'light' ? 'Light' : 'Dark'} look <i style="background:${esc(s.accent || '#35d0c4')}"></i></small></div></div>
+    <div class="obr-store">${s.logo ? `<img src="${esc(s.logo)}" alt="" />` : ''}<div><b>${esc(s.name || '')}</b><small>${esc(s.website || '')} · ${s.theme === 'light' ? 'Light' : 'Dark'} look · ${s.imageStyle === 'light' ? 'Studio Light' : 'Studio Dark'} pictures <i style="background:${esc(s.accent || '#35d0c4')}"></i></small></div></div>
     ${pieces}
     <dl class="obr-list">
       ${perPiece ? '' : `<dt>Metals</dt><dd>${esc([...(d.metals || []).map(materialName), ...String(d.metalsOther || '').split(',').map((x) => x.trim()).filter(Boolean)].join(', ') || 'All')}</dd>
@@ -840,6 +840,7 @@ function brandView() {
       ${inp('maxRenders', 'Previews per customer', { kind: 'number', type: 'number', hint: 'First render plus refinements, 1 to 10.' })}
       ${inp('background', 'Render background', { ph: 'deep charcoal black', hint: 'Backdrop of the AI renders.' })}
     </div>
+    <label class="f"><span>Picture style</span><select class="sel" data-bind="imageStyle" data-rerender><option value="dark" ${d.imageStyle === 'light' ? '' : 'selected'}>Studio Dark</option><option value="light" ${d.imageStyle === 'light' ? 'selected' : ''}>Studio Light</option></select><p class="hint">Pictures on every choice in the form: dark studio backdrop or soft ivory backdrop.</p></label>
     <label class="f"><span>Client</span><select class="sel" data-bind="clientId" data-rerender>${d.clientId ? '' : '<option value="">No client</option>'}${clientOpts}</select></label>
     <h3>Theme</h3>
     <div class="presets">${presets}</div>

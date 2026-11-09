@@ -265,7 +265,7 @@ export const FORMS = { demo: { ...fromTemplate('custom-enquiry', { id: 'demo', b
 
 export function publicForm(form) {
   // Sve što ide u browser. Opis oblika (shape) i napomene za AI (note) nisu za kupca.
-  const { id, brand, theme, maxRenders, contact, result, tryOn, products } = form;
+  const { id, brand, theme, maxRenders, contact, result, tryOn, products, imageStyle } = form;
   const steps = (form.steps || []).map((s) => ({
     ...s,
     fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => withArt(f, o)) } : f)), // izbor bez svoje slike dobija sliku iz biblioteke, i u već postojećim formama
@@ -275,7 +275,7 @@ export function publicForm(form) {
     const teeth = t === 'grillz' ? styleOf(form, { type: t, style: value })?.teeth : null;
     return { value, label, image: styleImage(t, s), ...(teeth ? { teeth } : {}) };
   })]));
-  return { id, brand, theme, maxRenders, steps, styles, contact, result, tryOn, ...(products?.length ? { products } : {}) };
+  return { id, brand, theme, maxRenders, steps, styles, contact, result, tryOn, ...(products?.length ? { products } : {}), ...(imageStyle === 'light' ? { imageStyle } : {}) };
 }
 
 // ---------- Provjera definicije forme (builder čuva samo ono što prođe ovo) ----------
@@ -286,6 +286,8 @@ const HEX = /^#[0-9a-f]{3,8}$/i;
 const SWATCH = /^(#[0-9a-f]{3,8}|linear-gradient\(\s*\d{1,3}deg\s*(,\s*#[0-9a-f]{3,8}\s+\d{1,3}%){2,4}\s*\))$/i;
 const FIELD_TYPES = ['cards', 'chips', 'yesno', 'dropdown', 'text', 'textarea', 'upload', 'teeth'];
 const ICONS = ['pendant', 'chain', 'ring', 'grillz', 'bracelet', 'earrings', 'watch', 'gem'];
+// Stil slika izbora: dark = public/library, light = public/library-light (iste putanje).
+export const IMAGE_STYLES = ['dark', 'light'];
 
 export function validateFormDef(f, id) {
   const err = (m) => { throw new Error(m); };
@@ -312,6 +314,7 @@ export function validateFormDef(f, id) {
   if (f.brand?.logo && !imgOk(f.brand.logo)) err('Logo must be uploaded here');
   str(f.background, 80, 'Render background');
   for (const [k, v] of Object.entries(f.theme || {})) if (!SLUG.test(k) || !HEX.test(v)) err(`Color ${k}: hex only (#rrggbb)`);
+  if (f.imageStyle != null && !IMAGE_STYLES.includes(f.imageStyle)) err('Picture style: Studio Dark or Studio Light');
   if (!Number.isInteger(f.maxRenders) || f.maxRenders < 1 || f.maxRenders > 10) err('Previews per customer: 1 to 10');
 
   // Do 24 koraka: forma iz onboardinga ima i korak detalja po komadu.
@@ -663,6 +666,7 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
   // Izgled: svijetla ili tamna tema i boja brenda.
   const store = d.store || {};
   if (store.theme === 'light') form.theme = { ...LIGHT_THEME };
+  if (store.imageStyle === 'light') form.imageStyle = 'light';
   if (/^#[0-9a-f]{6}$/i.test(store.accent || '')) { form.theme.accent = store.accent; form.theme['accent-ink'] = inkOn(store.accent); }
   return form;
 }
