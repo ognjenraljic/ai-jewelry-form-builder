@@ -18,6 +18,8 @@ import {
 // GPT Image 2.6: procjena iz Pika kataloga (Pika 5/8/30 = OpenAI cijena minus 5%), provjeriti na OpenAI računu.
 const MODELS = {
   // 2.6 Flare (9.11.2026): ~2x brži od 2.5 Flare za istu cijenu. Ako OpenAI odbije model, render ide na 2.5 Flare.
+  // 2.6 Sunburst (9.11.2026): podrazumijevani za sve rendere (prvi, dorada, grillz, try-on). Ako OpenAI odbije model, render ide na 2.5 Sunburst.
+  gpt26sun: { provider: 'openai', id: 'gpt-image-2.6-sunburst', label: 'GPT Image 2.6 Sunburst', inPerM: 5.26, imgInPerM: 8.42, outPerM: 31.58, quality: 'high', fallback: 'gptsun' },
   gpt26flare: { provider: 'openai', id: 'gpt-image-2.6-flare', label: 'GPT Image 2.6 Flare', inPerM: 5.26, imgInPerM: 8.42, outPerM: 31.58, quality: 'high', fallback: 'gptflare' },
   flash: { id: 'gemini-2.5-flash-image', label: 'Nano Banana (Flash)', inPerM: 0.3, outPerM: 30 },
   pro: { id: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro', inPerM: 2, outPerM: 120 },
@@ -36,10 +38,10 @@ function withKey(env, key, geminiFallback) {
 const firstModel = (env) => withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro');
 const tweakModel = (env) => withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash');
 // Precision edits and sparse grillz need stronger count/shape adherence than everyday image generation.
-const grillzModel = (env) => withKey(env, MODELS[env.GRILLZ_MODEL] ? env.GRILLZ_MODEL : 'gptsun', 'pro');
+const grillzModel = (env) => withKey(env, MODELS[env.GRILLZ_MODEL] ? env.GRILLZ_MODEL : 'gpt26sun', 'pro');
 const tryOnModel = (env) => {
-  const model = MODELS[withKey(env, MODELS[env.TRYON_MODEL] ? env.TRYON_MODEL : 'gptsun', 'pro')];
-  return { ...model, quality: model.id.startsWith('gpt-image-2.5-') ? 'xhigh' : model.quality };
+  const model = MODELS[withKey(env, MODELS[env.TRYON_MODEL] ? env.TRYON_MODEL : 'gpt26sun', 'pro')];
+  return { ...model, quality: /^gpt-image-2\.[56]-/.test(model.id) ? 'xhigh' : model.quality };
 };
 
 const LEADS_PER_IP_HOUR = 10;
@@ -501,7 +503,7 @@ async function runModel(env, model, prompt, images, mask = null, size = '1024x10
       if (!fb || !/^OpenAI (400|403|404): .*model/i.test(err.message)) throw err;
       console.error('model fallback', model.id, '->', fb.id, err.message);
       used = fb;
-      out = await openaiImage(env, fb, prompt, images, mask, size);
+      out = await openaiImage(env, { ...fb, quality: model.quality }, prompt, images, mask, size);
     }
   }
   const inT = out.usage.promptTokenCount ?? out.usage.input_tokens ?? 0;

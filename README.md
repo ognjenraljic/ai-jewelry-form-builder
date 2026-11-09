@@ -26,7 +26,8 @@ Image models (pick per environment in `wrangler.jsonc`, keys in `src/worker.js` 
 
 | key | model | notes |
 | --- | --- | --- |
-| `gpt26flare` | GPT Image 2.6 Flare | default for first render and refinements, ~$0.065, ~11 s; falls back to `gptflare` if OpenAI rejects the model |
+| `gpt26sun` | GPT Image 2.6 Sunburst | default for every render (first, refinements, grillz, try-on), ~$0.065, ~40-50 s; falls back to `gptsun` if OpenAI rejects the model |
+| `gpt26flare` | GPT Image 2.6 Flare | fastest, ~$0.065, ~10 s; can miss the tooth count on two-row grillz |
 | `gptflare` | GPT Image 2.5 Flare | previous default, ~$0.065, ~20 s |
 | `gptsun` | GPT Image 2.5 Sunburst | same quality, ~37 s |
 | `gpt2` | GPT Image 2 | ~$0.22, ~90 s |
