@@ -48,6 +48,12 @@ createServer((req, res) => {
     }
     log.push(entry);
     writeFileSync(out, JSON.stringify(log, null, 2));
+    // MOCK_REJECT_MODEL=<id>: taj model dobija 404 kao nalog koji ga nema (provjera rezervnog modela).
+    if (process.env.MOCK_REJECT_MODEL && entry.model === process.env.MOCK_REJECT_MODEL) {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: `The model '${entry.model}' does not exist or you do not have access to it.` } }));
+      return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ data: [{ b64_json: pics[k++ % pics.length] }], usage: { input_tokens: 1200, output_tokens: 4160, input_tokens_details: { image_tokens: 1000 } } }));
   });

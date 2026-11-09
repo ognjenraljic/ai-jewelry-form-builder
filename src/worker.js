@@ -15,7 +15,10 @@ import {
 
 // Cijene su procjena (USD po 1M tokena, Gemini API, početak 2026). Provjeriti prije budžeta.
 // OpenAI (GPT Image 2.5): tekst $5, ulazna slika $8, izlazna slika $30 po 1M tokena (bez obzira na kvalitet).
+// GPT Image 2.6: procjena iz Pika kataloga (Pika 5/8/30 = OpenAI cijena minus 5%), provjeriti na OpenAI računu.
 const MODELS = {
+  // 2.6 Flare (9.11.2026): ~2x brži od 2.5 Flare za istu cijenu. Ako OpenAI odbije model, render ide na 2.5 Flare.
+  gpt26flare: { provider: 'openai', id: 'gpt-image-2.6-flare', label: 'GPT Image 2.6 Flare', inPerM: 5.26, imgInPerM: 8.42, outPerM: 31.58, quality: 'high', fallback: 'gptflare' },
   flash: { id: 'gemini-2.5-flash-image', label: 'Nano Banana (Flash)', inPerM: 0.3, outPerM: 30 },
   pro: { id: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro', inPerM: 2, outPerM: 120 },
   gptflare: { provider: 'openai', id: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high' },
@@ -297,12 +300,12 @@ async function createRender(request, env, leadId, ctx) {
       const ext = out.mime.split('/')[1] || 'png';
       const key = `renders/${leadId}/${n}-${rid(8)}.${ext}`;
       await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
-      await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ? WHERE id = ?')
-        .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, renderId).run();
+      await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ?, model = ? WHERE id = ?')
+        .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
       await monthlyBudgetCheck(env, lead.form_id).catch((e) => console.error('monthly budget check', e.message));
       return json({
         url: `/media/${key}`, n, remaining: form.maxRenders - n,
-        ...(env.DEV_MODE === '1' ? { dev: { model: model.label, ms: out.ms, inTokens: out.inT, outTokens: out.outT, costUsd: out.cost, prompt } } : {}),
+        ...(env.DEV_MODE === '1' ? { dev: { model: out.modelUsed && out.modelUsed !== model.id ? `${model.label} -> ${out.modelUsed}` : model.label, ms: out.ms, inTokens: out.inT, outTokens: out.outT, costUsd: out.cost, prompt } } : {}),
       });
     } catch (err) {
       console.error('render failed', model.id, err.message);
@@ -391,8 +394,8 @@ async function createTryOn(request, env, leadId, ctx) {
       const out = await runModel(env, model, prompt, [selfie, base], null, model.provider === 'openai' ? 'auto' : '1024x1024');
       const key = `refs/${leadId}-tryon-${rid(8)}.${out.mime.split('/')[1] || 'png'}`;
       await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
-      await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ? WHERE id = ?')
-        .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, renderId).run();
+      await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ?, model = ? WHERE id = ?')
+        .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
       await monthlyBudgetCheck(env, lead.form_id).catch((e) => console.error('monthly budget check', e.message));
       return json({ url: await signMedia(env, key), base: pick.n, remaining: TRYONS_PER_LEAD - (tries.filter((r) => r.status === 'ok').length + 1) });
     } catch (err) {
@@ -486,12 +489,26 @@ function maskFrom(v) {
 // Poziv modela + trošak iz potrošnje tokena (cijene u MODELS).
 async function runModel(env, model, prompt, images, mask = null, size = '1024x1024') {
   const t0 = Date.now();
-  const out = model.provider === 'openai' ? await openaiImage(env, model, prompt, images, mask, size) : await gemini(env, model.id, prompt, images);
+  let used = model;
+  let out;
+  if (model.provider !== 'openai') out = await gemini(env, model.id, prompt, images);
+  else {
+    try {
+      out = await openaiImage(env, model, prompt, images, mask, size);
+    } catch (err) {
+      // Novi model koji nalog još nema (ili mu je promijenjeno ime): isti render na rezervnom modelu, kupac ne vidi grešku.
+      const fb = model.fallback && MODELS[model.fallback];
+      if (!fb || !/^OpenAI (400|403|404): .*model/i.test(err.message)) throw err;
+      console.error('model fallback', model.id, '->', fb.id, err.message);
+      used = fb;
+      out = await openaiImage(env, fb, prompt, images, mask, size);
+    }
+  }
   const inT = out.usage.promptTokenCount ?? out.usage.input_tokens ?? 0;
   const outT = out.usage.candidatesTokenCount ?? out.usage.output_tokens ?? 0;
   const imgIn = out.usage.input_tokens_details?.image_tokens || 0;
-  const cost = ((inT - imgIn) * model.inPerM + imgIn * (model.imgInPerM || model.inPerM) + outT * model.outPerM) / 1e6;
-  return { ...out, ms: Date.now() - t0, inT, outT, cost };
+  const cost = ((inT - imgIn) * used.inPerM + imgIn * (used.imgInPerM || used.inPerM) + outT * used.outPerM) / 1e6;
+  return { ...out, ms: Date.now() - t0, inT, outT, cost, modelUsed: used.id };
 }
 
 // Probni render iz buildera: nacrt forme i odgovori iz pregleda, bez upita (lead). Trošak se bilježi u test_renders.
@@ -536,7 +553,7 @@ async function testRender(request, env, ctx) {
     const key = `tests/${form.id}/${rid(10)}.${out.mime.split('/')[1] || 'png'}`;
     await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
     await env.DB.prepare('INSERT INTO test_renders (id, form_id, model, prompt, tweak, image_key, status, ms, in_tokens, out_tokens, cost_usd, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-      .bind(id, form.id, model.id, prompt, note, key, 'ok', out.ms, out.inT, out.outT, out.cost, now).run();
+      .bind(id, form.id, out.modelUsed || model.id, prompt, note, key, 'ok', out.ms, out.inT, out.outT, out.cost, now).run();
     return json({ url: `/media/${key}`, key, model: model.label, ms: out.ms, costUsd: out.cost, prompt });
   } catch (err) {
     console.error('test render failed', model.id, err.message);

@@ -26,7 +26,8 @@ Image models (pick per environment in `wrangler.jsonc`, keys in `src/worker.js` 
 
 | key | model | notes |
 | --- | --- | --- |
-| `gptflare` | GPT Image 2.5 Flare | default for first render and refinements, ~$0.065, ~20 s |
+| `gpt26flare` | GPT Image 2.6 Flare | default for first render and refinements, ~$0.065, ~11 s; falls back to `gptflare` if OpenAI rejects the model |
+| `gptflare` | GPT Image 2.5 Flare | previous default, ~$0.065, ~20 s |
 | `gptsun` | GPT Image 2.5 Sunburst | same quality, ~37 s |
 | `gpt2` | GPT Image 2 | ~$0.22, ~90 s |
 | `pro` | Nano Banana Pro (Gemini 3 Pro Image) | ~$0.16, ~25 s |
