@@ -2,10 +2,11 @@
 # Upiše API ključ u .dev.vars bez prikaza na ekranu. Stari red sa istim imenom se briše.
 #   ./set-key.sh                  -> GEMINI_API_KEY (default)
 #   ./set-key.sh OPENAI_API_KEY   -> OpenAI ključ
+#   ./set-key.sh PIKA_API_KEY     -> Pika ključ (slika i film)
 set -euo pipefail
 cd "$(dirname "$0")"
 NAME="${1:-GEMINI_API_KEY}"
-case "$NAME" in GEMINI_API_KEY|OPENAI_API_KEY) ;; *) echo "Nepoznato ime ključa: $NAME"; exit 1 ;; esac
+case "$NAME" in GEMINI_API_KEY|OPENAI_API_KEY|PIKA_API_KEY) ;; *) echo "Nepoznato ime ključa: $NAME"; exit 1 ;; esac
 read -rsp "$NAME (ne prikazuje se): " K
 echo
 if [ -z "$K" ]; then echo "Prazno, nista nije upisano."; exit 1; fi

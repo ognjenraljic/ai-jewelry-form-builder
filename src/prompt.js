@@ -4,10 +4,10 @@ import { teethPlan } from './teeth.js';
 
 const SUBJECT = {
   pendant: 'a custom pendant hanging from a matching chain, front view, the pendant centered and dominant',
-  chain: 'a custom chain necklace laid in a soft open curve, link detail clearly visible',
+  chain: 'a custom chain necklace: ONE single continuous strand laid in one soft open curve, every link connected in order, never coiled into two loops or separate rings, link detail clearly visible',
   ring: 'a custom ring in a three-quarter view showing both the band and the top setting',
   grillz: 'a custom set of dental grillz (teeth jewelry), front view, displayed on its own without a mouth or face',
-  bracelet: 'a custom bracelet laid in a relaxed oval, link and clasp detail visible',
+  bracelet: 'a custom bracelet laid in one relaxed oval, a single continuous closed loop joined at the clasp, never doubled or stacked, link and clasp detail visible',
   earrings: 'a matching pair of custom earrings, front view, side by side',
   watch: 'a custom iced-out luxury wristwatch, dial facing the camera, strap or bracelet visible, no real brand names or logos on the dial',
 };
@@ -78,9 +78,42 @@ function grillzPlan(a) {
   return { rows: bottomOnly ? 'bottom' : both ? 'both' : 'top', count: m ? +m[1] : null };
 }
 
+// Polirano zlato u studiju zna da "odrazi" prozor ili vrata (pravougaoni svijetli okviri na zubima). Zlatar to ne želi.
+export const NO_ENV_REFLECTIONS =
+  'Reflections in the polished metal show only smooth, soft gradient studio light and dark falloff: never reflected windows, doors, doorways, window frames, rooms, buildings, softbox rectangles, light panels, the camera, people or any recognizable environment.';
+
+// Render koji postaje prvi kadar filma: crna scena, jedan snop svjetla, mjesta oko komada za kameru.
+const CINEMATIC_STYLE =
+  'Style: a cinematic film still for a luxury jewelry commercial. Pure black seamless background, low-key dramatic lighting, one narrow beam of warm light from upper left, ' +
+  'a thin rim light tracing the metal edges, crisp specular highlights, stones throwing visible rainbow fire and tiny star glints, black mirror glass beneath the piece with a soft reflection, ' +
+  'faint warm haze and a gentle glow around the brightest highlights, shallow depth of field, razor sharp macro detail on the piece. ' +
+  'Square composition, the piece fills about 60% of the frame and sits in the center, with dark empty space around it. No people, no hands, no props, no text beyond what is specified, no watermark, no brand logos or trademarks. ' + NO_ENV_REFLECTIONS;
+
+// Nakit se okrene tačno jednom oko svoje ose i vrati na početni ugao: prvi i zadnji kadar su isti, pa se film vrti u krug.
+// Privjesak i minđuše vise, pa se vrte oko tačke na kojoj vise, a ne na postolju.
+const HANGING = new Set(['pendant', 'earrings']);
+
+export function buildFilmPrompt(piece, type = '') {
+  const name = clean(piece, 60).toLowerCase() || 'piece';
+  const turn = 'one complete smooth 360-degree turn at a slow constant speed, ending at precisely the starting angle';
+  return [
+    'Luxury jewelry commercial, one continuous seamless shot that begins and ends on exactly the same frame.',
+    HANGING.has(type)
+      ? type === 'earrings'
+        ? `Both earrings hang in place and slowly spin together, each around its own vertical axis, ${turn}. The hooks stay still.`
+        : `The ${name} hangs in place and slowly spins around its own vertical axis, ${turn}. The chain stays still.`
+      : `The ${name} slowly rotates around its own vertical axis on a hidden turntable, ${turn}.`,
+    'The camera stays almost still, with only a very slight slow drift.',
+    'The jewelry keeps its exact design while it turns: same shape, same stones, same metal, same lettering, no morphing, no extra parts.',
+    'The narrow warm beam of light stays fixed, so highlights glide across the polished metal and the stones flash with rainbow fire and tiny star glints as they turn into the light.',
+    'Thin haze drifts slowly through the beam on a pure black background, with a soft reflection in black mirror glass below.',
+    'Calm, slow, elegant, anamorphic film look. Soft low ambient tone with a delicate shimmer, no beat, no sudden sounds. No cuts, no added text, no hands, no people.',
+  ].join(' ');
+}
+
 // refs: lista referentnih slika istim redom kojim idu modelu, npr. ['style', 'customer'].
 // style: { shape } iz src/library.json za izabrani stil.
-export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
+export function buildPrompt(form, answers, { refs = [], style = null, cinematic = false } = {}) {
   let a = answers;
   const lines = [];
   // Samo uključeni koraci i pitanja; "ai: false" pitanja (kalupi, gravura iznutra) su samo za zlatara. Budžet je izuzetak, vidi budgetLine.
@@ -138,10 +171,15 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
   }
 
   const text = clean(a.inscription, 24);
+  // Stil slova (pitanje sa lettering: true): opis oblika slova ide uz sam natpis, ne među ostale napomene.
+  const fontField = allFields.find((f) => f.lettering && f.ai !== false && a[f.id] != null && a[f.id] !== '');
+  const fontOpt = fontField && (fontField.options || []).find((o) => o.value === a[fontField.id]);
+  const fontMore = fontField ? clean(a[`${fontField.id}__more`], 200) : '';
+  const fontLine = fontOpt ? `Lettering style: ${clean(fontOpt.note || fontOpt.label, 300)}${fontMore ? ` (customer describes the font: "${fontMore}")` : ''}.` : '';
   if (text) {
     const letters = text.split('').join(' ');
-    lines.push(`The piece includes the text "${text}" as part of the design, spelled exactly letter by letter: ${letters}. No other text anywhere.`);
-  }
+    lines.push(`The piece includes the text "${text}" as part of the design, spelled exactly letter by letter: ${letters}. No other text anywhere.${fontLine ? ` ${fontLine}` : ''}`);
+  } else if (fontLine) lines.push(`${fontLine} Use it for any letters in the design.`);
 
   // Budžet uvijek vodi sliku (i kad je "Send to AI" isključen), ako je pitanje uključeno i ima iznos.
   const budget = a.budget ? budgetLine(optOf('budget')?.label || a.budget) : '';
@@ -155,7 +193,7 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
 
   // Napomene za AI uz izabrane opcije (npr. "open face grill: ..."), iz šablona ili buildera.
   const notes = allFields
-    .filter((f) => f.ai !== false && f.options && a[f.id] != null)
+    .filter((f) => f.ai !== false && !f.lettering && f.options && a[f.id] != null)
     .map((f) => clean((f.options.find((o) => o.value === a[f.id]) || {}).note, 300))
     .filter(Boolean);
   if (notes.length) lines.push(`Design details: ${notes.join('; ')}.`);
@@ -163,7 +201,7 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
   // Ostala pitanja (custom i default bez ugrađenog značenja): "pitanje: odgovor", uz dodatni tekst kupca.
   const KNOWN = new Set(['type', 'style', 'teeth', 'metal', 'karat', 'stones', 'coverage', 'clarity', 'budget', 'inscription', 'vision', 'reference']);
   const extra = allFields
-    .filter((f) => !KNOWN.has(f.id) && f.ai !== false && f.type !== 'upload' && ((a[f.id] != null && a[f.id] !== '') || a[`${f.id}__more`]))
+    .filter((f) => !KNOWN.has(f.id) && !f.lettering && f.ai !== false && f.type !== 'upload' && ((a[f.id] != null && a[f.id] !== '') || a[`${f.id}__more`]))
     .map((f) => {
       const o = (f.options || []).find((x) => x.value === a[f.id]);
       const val = o ? o.label : a[f.id] || '';
@@ -189,9 +227,9 @@ export function buildPrompt(form, answers, { refs = [], style = null } = {}) {
     }
   });
 
-  lines.push(
+  lines.push(cinematic ? CINEMATIC_STYLE :
     `Style: luxury catalog photography, soft studio lighting with crisp reflections, sharp macro detail, on a seamless ${form.background || 'neutral'} background. ` +
-      'Square composition, the piece fills about 70% of the frame. No people, no hands, no props, no watermark, no brand logos or trademarks.'
+      'Square composition, the piece fills about 70% of the frame. No people, no hands, no props, no watermark, no brand logos or trademarks. ' + NO_ENV_REFLECTIONS
   );
   if (g?.lines) {
     lines.push(
@@ -217,5 +255,6 @@ export function buildTweakPrompt(tweak, { masked = false } = {}) {
     'If the customer requests a hole, opening or cutout, actually remove the metal and stones in that shape and show the background through the opening; do not merely draw a shape on the surface.',
     'Keep the same camera angle, lighting, background and placement. The requested edit must be visible; do not return an unchanged copy of the input.',
     'Keep it photorealistic. No people, no hands, no watermark, no brand logos.',
+    NO_ENV_REFLECTIONS,
   ].join('\n');
 }

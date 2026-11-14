@@ -1,12 +1,13 @@
 import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
-import { buildPrompt, buildTweakPrompt } from './prompt.js';
-import { parseTeeth, teethSummary } from './teeth.js';
+import { buildPrompt, buildTweakPrompt, buildFilmPrompt } from './prompt.js';
+import { parseTeeth, teethSummary, teethPlan } from './teeth.js';
 import { buildTryOnPrompt } from './tryon.js';
 import { applyPresetTeeth } from '../public/grillz-selection.js';
-import { stepNeedsAnswer, fieldRequired } from '../public/step-rules.js';
+import { stepNeedsAnswer, fieldRequired, conditionsMet } from '../public/step-rules.js';
 import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList } from '../public/option-art.js';
+import { pikaOn, pikaImage, pikaJob, jobFile, jobCharge, startFilm, FILM_API, FILM_EST_USD } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
@@ -23,20 +24,27 @@ const MODELS = {
   gpt26flare: { provider: 'openai', id: 'gpt-image-2.6-flare', label: 'GPT Image 2.6 Flare', inPerM: 5.26, imgInPerM: 8.42, outPerM: 31.58, quality: 'high', fallback: 'gptflare' },
   flash: { id: 'gemini-2.5-flash-image', label: 'Nano Banana (Flash)', inPerM: 0.3, outPerM: 30 },
   pro: { id: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro', inPerM: 2, outPerM: 120 },
-  gptflare: { provider: 'openai', id: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high' },
-  gptsun: { provider: 'openai', id: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high' },
-  gpt2: { provider: 'openai', id: 'gpt-image-2', label: 'GPT Image 2', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high' },
+  gptflare: { provider: 'openai', id: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high', mask: true },
+  gptsun: { provider: 'openai', id: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high', mask: true },
+  gpt2: { provider: 'openai', id: 'gpt-image-2', label: 'GPT Image 2', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high', mask: true },
+  // Isti modeli preko Pike (jedan ključ, cijene po Pika katalogu).
+  pikapro: { provider: 'pika', id: 'google/gemini-3-pro-image', label: 'Nano Banana Pro (Pika)', inPerM: 2, outPerM: 120 },
+  pikaflash: { provider: 'pika', id: 'google/gemini-3.1-flash-image', label: 'Nano Banana (Pika)', inPerM: 0.5, outPerM: 60 },
+  pikagpt: { provider: 'pika', id: 'openai/gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst (Pika)', inPerM: 4.75, imgInPerM: 7.6, outPerM: 28.5, quality: 'high', mask: true },
 };
 
 // Model mora imati svoj ključ: bez OPENAI_API_KEY renderi idu na Gemini i obrnuto, umjesto da padaju.
 function withKey(env, key, geminiFallback) {
   const openai = MODELS[key].provider === 'openai';
+  // Pika ključ preuzima sve: jedan račun za sliku i video. GPT ostaje samo gdje treba tačan broj zuba i maska.
+  if (pikaOn(env)) return key === 'pikagpt' || key === 'gptsun' ? 'pikagpt' : 'pikapro';
   if (openai && !env.OPENAI_API_KEY && env.GEMINI_API_KEY) return geminiFallback;
   if (!openai && !env.GEMINI_API_KEY && env.OPENAI_API_KEY) return 'gptflare';
   return key;
 }
-const firstModel = (env) => withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro');
-const tweakModel = (env) => withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash');
+const maskModel = (env, model) => (pikaOn(env) ? MODELS.pikagpt : model);
+const firstModel = (env) => (pikaOn(env) ? 'pikapro' : withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro'));
+const tweakModel = (env) => (pikaOn(env) ? 'pikaflash' : withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash'));
 // Precision edits and sparse grillz need stronger count/shape adherence than everyday image generation.
 const grillzModel = (env) => withKey(env, MODELS[env.GRILLZ_MODEL] ? env.GRILLZ_MODEL : 'gptsun', 'pro');
 const tryOnModel = (env) => {
@@ -51,6 +59,8 @@ const STALE_BUILD_MS = 120_000;
 const PAGE_SIZE = 50;
 const LEAD_STATUSES = ['new', 'contacted', 'quoted', 'won', 'lost'];
 const SELFIE_DAYS = 30;
+const FILMS_PER_LEAD = 2;
+const STALE_FILM_MS = 10 * 60_000;
 const MAX_VERSIONS = 50;
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\]|.+\.localhost)$/;
@@ -106,6 +116,8 @@ async function route(request, env, ctx, url) {
   if (p.startsWith('/api/admin/onboardings')) return adminOnboardings(request, env, p);
   if (p.startsWith('/api/admin/notifications')) return adminNotifications(request, env, p);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/tryon$/)) && request.method === 'POST') return createTryOn(request, env, m[1], ctx);
+  if ((m = p.match(/^\/api\/leads\/([\w-]+)\/films$/)) && request.method === 'POST') return createFilm(request, env, m[1]);
+  if ((m = p.match(/^\/api\/leads\/([\w-]+)\/films\/([a-z0-9]+)$/)) && request.method === 'GET') return filmStatus(request, env, m[1], m[2]);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)$/)) && request.method === 'GET') return leadStatus(request, env, m[1]);
   if (p.startsWith('/api/admin/clients') && !p.endsWith('/upload')) return adminClients(request, env, p);
   if (p.startsWith('/api/admin/forms') || /^\/api\/admin\/clients\/[a-z0-9-]+\/upload$/.test(p)) return adminForms(request, env, p);
@@ -158,6 +170,7 @@ async function getForm(env, id) {
   if (!form) return json({ error: 'This form is not available.' }, 404);
   const out = publicForm(form);
   if (turnstileOn(env)) out.turnstile = env.TURNSTILE_SITE_KEY;
+  if (filmMode(env, form) === 'button') out.film = true;
   if (env.DEV_MODE === '1') {
     const auto = { key: 'auto', label: `Auto (${MODELS[firstModel(env)].label} pa ${MODELS[tweakModel(env)].label})` };
     out.dev = { models: [auto, ...Object.entries(MODELS).map(([k, v]) => ({ key: k, label: v.label }))], defaultModel: 'auto' };
@@ -272,10 +285,10 @@ async function createRender(request, env, leadId, ctx) {
   // Prvi render ide na jači model (to je trenutak kad kupac odlučuje), dorade na brži i jeftiniji.
   // U dev modu forma može izabrati model ručno radi poređenja.
   const modelKey = env.DEV_MODE === '1' && MODELS[body.model] ? body.model : isTweak ? tweakModel(env) : JSON.parse(lead.answers).type === 'grillz' ? grillzModel(env) : firstModel(env);
-  const model = MODELS[modelKey];
-  // Označeni dio slike (maska) razumije samo OpenAI; ako stigne a ne može se pročitati, bolje reći nego mijenjati cijelu sliku.
-  const mask = isTweak && body.mask && model.provider === 'openai' ? maskFrom(body.mask) : null;
-  if (isTweak && body.mask && model.provider === 'openai' && !mask) return json({ error: 'We could not read the marked area. Please mark it again.' }, 400);
+  const model = isTweak && body.mask ? maskModel(env, MODELS[modelKey]) : MODELS[modelKey];
+  // Označeni dio slike (maska) razumiju samo GPT modeli; ako stigne a ne može se pročitati, bolje reći nego mijenjati cijelu sliku.
+  const mask = isTweak && body.mask && model.mask ? maskFrom(body.mask) : null;
+  if (isTweak && body.mask && model.mask && !mask) return json({ error: 'We could not read the marked area. Please mark it again.' }, 400);
   if (isTweak && (await flagged(env, { text: tweak }))) return json({ error: FLAG_MESSAGE }, 400);
   const block = await spendBlock(env, lead.form_id);
   if (block) { await budgetNotice(env, block, lead.form_id); return json({ error: SPEND_MESSAGE, paused: true }, 503); }
@@ -298,16 +311,34 @@ async function createRender(request, env, leadId, ctx) {
     const { images, prompt } = await renderInputs(env, request, form, answers, { ref, tweak: isTweak ? tweak : '', base, masked: !!(mask && base) });
     const t0 = Date.now();
     try {
-      const out = await runModel(env, model, prompt, images, base ? mask : null);
+      let out = await runModel(env, model, prompt, images, base ? mask : null);
+      // Grillz: model zna dodati ili izgubiti zub. Brojimo kape na slici; kad se ne slažu sa izborom, jedan novi pokušaj sa ispravkom.
+      const plan = !isTweak ? teethPlan(answers.teeth) : null;
+      let usedPrompt = prompt;
+      if (plan) {
+        const seen = await countCaps(env, out);
+        if (seen && (seen.top !== plan.top || seen.bottom !== plan.bottom)) {
+          console.log('teeth mismatch', leadId, JSON.stringify({ want: [plan.top, plan.bottom], got: [seen.top, seen.bottom] }));
+          usedPrompt = `${prompt}\n${teethRetryLine(plan, seen)}`;
+          const again = await runModel(env, model, usedPrompt, images, null);
+          const check = await countCaps(env, again);
+          console.log('teeth retry', leadId, JSON.stringify({ want: [plan.top, plan.bottom], got: check ? [check.top, check.bottom] : null }));
+          again.cost += out.cost + (seen.cost || 0) + (check?.cost || 0);
+          again.ms += out.ms;
+          out = again;
+        } else if (seen) out.cost += seen.cost || 0;
+      }
       const ext = out.mime.split('/')[1] || 'png';
       const key = `renders/${leadId}/${n}-${rid(8)}.${ext}`;
       await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
       await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ?, model = ? WHERE id = ?')
-        .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
+        .bind('ok', key, usedPrompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
       await monthlyBudgetCheck(env, lead.form_id).catch((e) => console.error('monthly budget check', e.message));
+      // Video samo za zlatara: prvi render odmah ide na film, kupac ništa ne vidi; portal ga pokupi kad je gotov.
+      if (!isTweak && n === 1 && filmMode(env, form) === 'backend') ctx?.waitUntil?.(startLeadFilm(env, lead, form, n).catch((e) => console.error('backend film', e.message)));
       return json({
         url: `/media/${key}`, n, remaining: form.maxRenders - n,
-        ...(env.DEV_MODE === '1' ? { dev: { model: out.modelUsed && out.modelUsed !== model.id ? `${model.label} -> ${out.modelUsed}` : model.label, ms: out.ms, inTokens: out.inT, outTokens: out.outT, costUsd: out.cost, prompt } } : {}),
+        ...(env.DEV_MODE === '1' ? { dev: { model: out.modelUsed && out.modelUsed !== model.id ? `${model.label} -> ${out.modelUsed}` : model.label, ms: out.ms, inTokens: out.inT, outTokens: out.outT, costUsd: out.cost, prompt: usedPrompt } } : {}),
       });
     } catch (err) {
       console.error('render failed', model.id, err.message);
@@ -319,15 +350,145 @@ async function createRender(request, env, leadId, ctx) {
   return job;
 }
 
+// ---------- Broj zuba (grillz) ----------
+// Jeftin model sa vidom broji kape po redu. Ako poziv ne uspije, render ide dalje bez provjere (nikad ne ruši render).
+// TEETH_CHECK=0 gasi provjeru; COUNT_MODEL bira model (podrazumijevano gpt-5-mini).
+const COUNT_PRICE = { in: 0.25, out: 2 }; // $ po milion tokena, gpt-5-mini
+async function countCaps(env, out) {
+  if (env.TEETH_CHECK === '0' || !env.OPENAI_API_KEY || !out?.b64) return null;
+  const api = env.DEV_MODE === '1' && env.OPENAI_BASE ? env.OPENAI_BASE : 'https://api.openai.com';
+  try {
+    const res = await fetch(`${api}/v1/responses`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: env.COUNT_MODEL || 'gpt-5-mini',
+        reasoning: { effort: 'low' },
+        input: [{ role: 'user', content: [
+          { type: 'input_text', text: 'This is a product photo of dental grillz (teeth jewelry). Count the individual tooth caps in the upper (top) row and in the lower (bottom) row separately. A cap is one covered tooth; count each one left to right. If there is no lower row, bottom is 0; if there is no upper row, top is 0.' },
+          { type: 'input_image', image_url: `data:${out.mime};base64,${out.b64}`, detail: 'high' },
+        ] }],
+        text: { format: { type: 'json_schema', name: 'caps', strict: true, schema: { type: 'object', additionalProperties: false, required: ['top', 'bottom'], properties: { top: { type: 'integer' }, bottom: { type: 'integer' } } } } },
+      }),
+      signal: AbortSignal.timeout(25_000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`${res.status} ${data.error?.message || ''}`);
+    const text = data.output_text || (data.output || []).flatMap((o) => o.content || []).find((c) => c.type === 'output_text')?.text;
+    const n = JSON.parse(text || '{}');
+    if (!Number.isInteger(n.top) || !Number.isInteger(n.bottom)) return null;
+    const u = data.usage || {};
+    return { top: n.top, bottom: n.bottom, cost: ((u.input_tokens || 0) * COUNT_PRICE.in + (u.output_tokens || 0) * COUNT_PRICE.out) / 1e6 };
+  } catch (err) {
+    console.error('teeth count failed', err.message);
+    return null;
+  }
+}
+
+function teethRetryLine(plan, seen) {
+  const row = (name, want, got) => (want === got ? `The ${name} row is right with ${want}.` : `The ${name} row must have exactly ${want} ${want === 1 ? 'cap' : 'caps'}, not ${got}${got > want ? ': remove the extra caps at the outer ends' : ': add the missing caps'}.`);
+  return `IMPORTANT correction: a previous attempt got the number of tooth caps wrong. ${plan.top || seen.top ? row('top', plan.top, seen.top) : ''} ${plan.bottom || seen.bottom ? row('bottom', plan.bottom, seen.bottom) : ''} Count every cap before finishing.`.replace(/\s+/g, ' ').trim();
+}
+
+// ---------- Film komada (Pika) ----------
+// Render postaje prvi kadar kratkog filma. Posao traje oko 3 minute, pa forma pita za stanje, a Worker
+// tek kad je gotovo prebaci video u R2. Dva filma po upitu; greška se ne broji.
+const filmJson = (f) => ({ id: f.id, status: f.status, created: f.created_at, ...(f.video_key ? { url: `/media/${f.video_key}` } : {}) });
+
+// Video komada po formi (form.highlightVideo): 'button' = kupac klikne "Generate a highlight video",
+// 'backend' = pravi se sam poslije prvog rendera i vidi ga samo zlatar u portalu, bez = isključeno. Uvijek traži PIKA_API_KEY.
+const filmMode = (env, form) => (pikaOn(env) && ['button', 'backend'].includes(form?.highlightVideo) ? form.highlightVideo : null);
+
+async function createFilm(request, env, leadId) {
+  if (!pikaOn(env)) return json({ error: 'Not available.' }, 404);
+  const body = await request.json().catch(() => ({}));
+  const lead = await env.DB.prepare('SELECT * FROM leads WHERE id = ?').bind(leadId).first();
+  if (!lead || !body.token || !safeEqual(body.token, lead.token)) return json({ error: 'Not allowed.' }, 403);
+  const form = await loadForm(env, lead.form_id);
+  if (filmMode(env, form) !== 'button') return json({ error: 'Not available.' }, 404);
+  const out = await startLeadFilm(env, lead, form, body.n);
+  return json(out.film ? { film: out.film } : { error: out.error, ...(out.paused ? { paused: true } : {}), ...(out.dev ? { dev: out.dev } : {}) }, out.status);
+}
+
+// Zajedničko za dugme kupca i pozadinski film: zauzme mjesto jednim upisom i pošalje posao Piki.
+async function startLeadFilm(env, lead, form, n) {
+  const leadId = lead.id;
+  const render = await env.DB.prepare("SELECT id, image_key FROM renders WHERE lead_id = ? AND n = ? AND status = 'ok' AND kind IS NULL AND image_key IS NOT NULL").bind(leadId, n).first();
+  if (!render) return { error: 'Preview not found.', status: 404 };
+  const block = await spendBlock(env, lead.form_id);
+  if (block) { await budgetNotice(env, block, lead.form_id); return { error: SPEND_MESSAGE, paused: true, status: 503 }; }
+
+  const now = Date.now();
+  await env.DB.prepare("UPDATE films SET status = 'error', error = 'timed out', cost_usd = 0 WHERE lead_id = ? AND status = 'pending' AND created_at < ?").bind(leadId, now - STALE_FILM_MS).run();
+  const typeField = form?.steps?.flatMap((st) => st.fields).find((f) => f.id === 'type');
+  const answers = JSON.parse(lead.answers);
+  const piece = (typeField?.options || []).find((o) => o.value === answers.type)?.label || answers.type;
+  const prompt = buildFilmPrompt(piece, answers.type);
+  const id = rid(12);
+  // Mjesto se zauzima jednim upisom, kao kod rendera: ni paralelni zahtjevi ne prave drugi plaćeni posao.
+  const r = await env.DB.prepare(
+    `INSERT INTO films (id, lead_id, render_id, model, prompt, status, cost_usd, created_at)
+     SELECT ?,?,?,?,?,'pending',?,? WHERE
+       (SELECT COUNT(*) FROM films WHERE lead_id = ? AND status != 'error') < ? AND
+       (SELECT COUNT(*) FROM films WHERE lead_id = ?) < ? AND
+       NOT EXISTS (SELECT 1 FROM films WHERE lead_id = ? AND status = 'pending') AND
+       NOT EXISTS (SELECT 1 FROM films WHERE render_id = ? AND status = 'ok')`
+  ).bind(id, leadId, render.id, FILM_API, prompt, FILM_EST_USD, now, leadId, FILMS_PER_LEAD, leadId, FILMS_PER_LEAD + 2, leadId, render.id).run();
+  if (r.meta.changes !== 1) {
+    const mine = await env.DB.prepare("SELECT * FROM films WHERE render_id = ? AND status != 'error' ORDER BY created_at DESC").bind(render.id).first();
+    return mine ? { film: filmJson(mine), status: 200 } : { error: 'Video limit reached. Our team will follow up with you.', status: 429 };
+  }
+  try {
+    const img = await env.MEDIA.get(render.image_key);
+    const job = await startFilm(env, new Uint8Array(await img.arrayBuffer()), img.httpMetadata?.contentType || 'image/png', prompt, id);
+    await env.DB.prepare('UPDATE films SET job_id = ? WHERE id = ?').bind(job.id, id).run();
+    return { film: { id, status: 'pending', created: now }, status: 201 };
+  } catch (err) {
+    console.error('film failed', err.message);
+    await env.DB.prepare("UPDATE films SET status = 'error', error = ?, cost_usd = 0 WHERE id = ?").bind(String(err.message).slice(0, 500), id).run();
+    return { error: 'We could not start your video this time.', status: 502, ...(env.DEV_MODE === '1' ? { dev: { error: err.message } } : {}) };
+  }
+}
+
+async function filmStatus(request, env, leadId, filmId) {
+  const token = request.headers.get('x-lead-token');
+  const lead = await env.DB.prepare('SELECT token FROM leads WHERE id = ?').bind(leadId).first();
+  if (!lead || !token || !safeEqual(token, lead.token)) return json({ error: 'Not allowed.' }, 403);
+  const film = await env.DB.prepare('SELECT * FROM films WHERE id = ? AND lead_id = ?').bind(filmId, leadId).first();
+  if (!film) return json({ error: 'Not found' }, 404);
+  return json({ film: filmJson(await settleFilm(env, film)) });
+}
+
+// Pita Piku za posao na čekanju; gotov video prebaci u R2. Vraća film u novom stanju (ili istom dok traje).
+async function settleFilm(env, film) {
+  if (film.status !== 'pending' || !film.job_id) return film;
+  let job;
+  try { job = await pikaJob(env, film.job_id); } catch (err) { console.error('film status', err.message); return film; }
+  const fail = async (reason, cost) => {
+    await env.DB.prepare("UPDATE films SET status = 'error', error = ?, cost_usd = ? WHERE id = ?").bind(String(reason).slice(0, 500), cost, film.id).run();
+    return { ...film, status: 'error' };
+  };
+  if (job.status === 'failed') return fail(`${job.error?.code || ''} ${job.error?.message || ''}`.trim(), (await jobCharge(env, job)) || 0);
+  if (job.status !== 'completed') return Date.now() - film.created_at > STALE_FILM_MS ? fail('timed out', film.cost_usd) : film;
+  const file = jobFile(job);
+  const res = file && (await fetch(file.url));
+  if (!res?.ok) return film; // sljedeća provjera pokušava ponovo
+  const key = `renders/${film.lead_id}/film-${rid(8)}.mp4`;
+  await env.MEDIA.put(key, await res.arrayBuffer(), { httpMetadata: { contentType: 'video/mp4' } });
+  const cost = (await jobCharge(env, job)) ?? film.cost_usd;
+  await env.DB.prepare("UPDATE films SET status = 'ok', video_key = ?, ms = ?, cost_usd = ? WHERE id = ? AND status = 'pending'").bind(key, Date.now() - film.created_at, cost, film.id).run();
+  return { ...film, status: 'ok', video_key: key };
+}
+
 // Mjesečni AI budžet po klijentu (zlataru): $50, ili CLIENT_MONTHLY_BUDGET_USD u Cloudflare Variables.
 // Ne zaustavlja rendere: admin dobije obavještenje kad klijent pređe granicu, klijent vidi potrošnju u portalu.
 // Mjesec je kalendarski po UTC-u; broje se renderi i try-on upita tog klijenta (probni renderi iz buildera ne).
 const monthlyBudget = (env) => { const n = Number(env.CLIENT_MONTHLY_BUDGET_USD); return Number.isFinite(n) && n > 0 ? n : 50; };
 const monthStart = (t = Date.now(), add = 0) => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + add, 1); };
 async function clientMonthCost(env, clientId) {
-  const r = await env.DB.prepare('SELECT COALESCE(SUM(r.cost_usd), 0) AS cost FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND r.created_at >= ?')
-    .bind(clientId, monthStart()).first();
-  return r?.cost || 0;
+  const sum = (table) => env.DB.prepare(`SELECT COALESCE(SUM(r.cost_usd), 0) AS cost FROM ${table} r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND r.created_at >= ?`).bind(clientId, monthStart()).first();
+  const [renders, films] = await Promise.all([sum('renders'), sum('films')]);
+  return (renders?.cost || 0) + (films?.cost || 0);
 }
 // Poslije svakog plaćenog rendera: prešao granicu ovog mjeseca -> jedno obavještenje po klijentu i mjesecu.
 async function monthlyBudgetCheck(env, formId) {
@@ -393,11 +554,11 @@ async function createTryOn(request, env, leadId, ctx) {
     const base = await r2Image(env, pick.image_key);
     const prompt = buildTryOnPrompt(answers);
     try {
-      const out = await runModel(env, model, prompt, [selfie, base], null, model.provider === 'openai' ? 'auto' : '1024x1024');
+      const out = await runModel(env, model, prompt, [selfie, base], null, model.mask ? 'auto' : '1024x1024');
       const key = `refs/${leadId}-tryon-${rid(8)}.${out.mime.split('/')[1] || 'png'}`;
       await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
       await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ?, model = ? WHERE id = ?')
-        .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
+        .bind('ok', key, usedPrompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
       await monthlyBudgetCheck(env, lead.form_id).catch((e) => console.error('monthly budget check', e.message));
       return json({ url: await signMedia(env, key), base: pick.n, remaining: TRYONS_PER_LEAD - (tries.filter((r) => r.status === 'ok').length + 1) });
     } catch (err) {
@@ -419,9 +580,13 @@ async function leadStatus(request, env, leadId) {
   const rows = (await env.DB.prepare("SELECT id, n, image_key, kind, status, base_render_id FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL ORDER BY created_at").bind(leadId).all()).results;
   const design = rows.filter((r) => r.kind !== 'tryon');
   const tries = rows.filter((r) => r.kind === 'tryon');
+  const films = (await env.DB.prepare('SELECT * FROM films WHERE lead_id = ? ORDER BY created_at').bind(leadId).all()).results;
   return json({
     answers: JSON.parse(lead.answers),
-    renders: design.map((r) => ({ url: `/media/${r.image_key}` })),
+    renders: design.map((r) => {
+      const film = films.filter((f) => f.render_id === r.id).pop();
+      return { url: `/media/${r.image_key}`, n: r.n, ...(film ? { film: filmJson(film) } : {}) };
+    }),
     tryons: await Promise.all(tries.map(async (r) => ({ url: await signMedia(env, r.image_key), base: design.find((d) => d.id === r.base_render_id)?.n ?? null }))),
     maxRenders: form?.maxRenders || 4,
     tryLeft: Math.max(0, TRYONS_PER_LEAD - tries.length),
@@ -465,7 +630,7 @@ async function renderInputs(env, request, form, answers, { ref = null, tweak = '
     if (img) { images.push(img); refs.push('style'); }
   }
   if (ref) { images.push(ref); refs.push('customer'); }
-  return { images, prompt: buildPrompt(form, answers, { refs, style }) };
+  return { images, prompt: buildPrompt(form, answers, { refs, style, cinematic: pikaOn(env) }) };
 }
 
 async function r2Image(env, key) {
@@ -491,6 +656,12 @@ function maskFrom(v) {
 // Poziv modela + trošak iz potrošnje tokena (cijene u MODELS).
 async function runModel(env, model, prompt, images, mask = null, size = '1024x1024') {
   const t0 = Date.now();
+  if (model.provider === 'pika') {
+    const out = await pikaImage(env, model, prompt, images.map((x) => ({ bytes: fromB64(x.b64), mime: x.mime })), mask, size);
+    const inT = out.usage.input_tokens || 0;
+    const outT = out.usage.image_output_tokens || 0;
+    return { b64: toB64(out.buf), mime: out.mime, ms: Date.now() - t0, inT, outT, cost: out.cost ?? (inT * model.inPerM + outT * model.outPerM) / 1e6 };
+  }
   let used = model;
   let out;
   if (model.provider !== 'openai') out = await gemini(env, model.id, prompt, images);
@@ -532,10 +703,12 @@ async function testRender(request, env, ctx) {
     base = await r2Image(env, key);
     if (!base) return json({ error: 'Test render not found.' }, 404);
   }
-  const model = MODELS[tweak ? tweakModel(env) : answers.type === 'grillz' ? grillzModel(env) : firstModel(env)];
   const maskFile = fd.get('mask');
-  const mask = base && model.provider === 'openai' && maskFile && typeof maskFile === 'object' ? maskFrom(new Uint8Array(await maskFile.arrayBuffer())) : null;
-  if (base && model.provider === 'openai' && maskFile && typeof maskFile === 'object' && !mask) return json({ error: 'The marked area could not be read.' }, 400);
+  const marked = base && maskFile && typeof maskFile === 'object';
+  const picked = MODELS[tweak ? tweakModel(env) : answers.type === 'grillz' ? grillzModel(env) : firstModel(env)];
+  const model = marked ? maskModel(env, picked) : picked;
+  const mask = marked && model.mask ? maskFrom(new Uint8Array(await maskFile.arrayBuffer())) : null;
+  if (marked && model.mask && typeof maskFile === 'object' && !mask) return json({ error: 'The marked area could not be read.' }, 400);
   const refFile = fd.get('reference');
   let ref = null;
   if (!tweak && refFile && typeof refFile === 'object' && refFile.size) {
@@ -1182,6 +1355,12 @@ async function portalApi(request, env, p, secure) {
           WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND r.status = 'ok' AND r.image_key IS NOT NULL ORDER BY r.created_at`).bind(client.id, before, oldest).all()).results
       : [];
     const counts = Object.fromEntries((await env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? GROUP BY COALESCE(l.status, 'new')`).bind(client.id).all()).results.map((r) => [r.s, r.n]));
+    // Video komada (dugme kupca ili pozadinski): gotovi idu uz upit; nekoliko na čekanju se ovdje dovrši.
+    let films = pageLeads.length
+      ? (await env.DB.prepare(`SELECT fl.* FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
+          WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND fl.status IN ('ok', 'pending') ORDER BY fl.created_at`).bind(client.id, before, oldest).all()).results
+      : [];
+    if (pikaOn(env)) films = await Promise.all(films.map((fl, k) => (fl.status === 'pending' && k < 4 ? settleFilm(env, fl) : fl)));
     return json({
       more, next: more ? oldest : null, counts,
       leads: pageLeads.map((l) => {
@@ -1198,6 +1377,7 @@ async function portalApi(request, env, p, secure) {
             ...renders.filter((r) => r.lead_id === l.id && r.kind === 'tryon').map((r) => ({ label: 'On their smile', key: r.image_key })),
           ],
           renders: renders.filter((r) => r.lead_id === l.id && r.kind !== 'tryon').map((r) => ({ url: `/media/${r.image_key}`, tweak: r.tweak })),
+          films: films.filter((fl) => fl.lead_id === l.id && fl.status !== 'error').map((fl) => (fl.video_key ? { url: `/media/${fl.video_key}` } : { pending: true })),
         };
       }),
     });
@@ -1419,11 +1599,22 @@ async function media(request, env, key) {
     const lead = sess && (await env.DB.prepare('SELECT f.client_id FROM leads l LEFT JOIN forms f ON f.id = l.form_id WHERE l.id = ?').bind(leadId).first());
     if (!lead || lead.client_id !== sess.client_id) return json({ error: 'Not allowed.' }, 403);
   }
-  const obj = await env.MEDIA.get(key);
+  // Safari pušta video samo ako server daje dijelove fajla (Range).
+  const video = key.endsWith('.mp4');
+  const part = video && request.headers.has('range');
+  const obj = await env.MEDIA.get(key, part ? { range: request.headers } : undefined);
   if (!obj) return json({ error: 'Not found' }, 404);
   const headers = { 'content-type': obj.httpMetadata?.contentType || 'application/octet-stream', 'x-content-type-options': 'nosniff', etag: obj.httpEtag };
+  if (video) headers['accept-ranges'] = 'bytes';
   // Ključevi se ne mijenjaju (nova slika = nov ključ), pa se javne slike keširaju dugo; privatne kratko i samo u browseru.
   headers['cache-control'] = priv ? 'private, max-age=600' : 'public, max-age=31536000, immutable';
+  if (part && obj.range) {
+    const offset = obj.range.suffix != null ? obj.size - obj.range.suffix : obj.range.offset ?? 0;
+    const length = obj.range.suffix ?? obj.range.length ?? obj.size - offset;
+    headers['content-range'] = `bytes ${offset}-${offset + length - 1}/${obj.size}`;
+    headers['content-length'] = String(length);
+    return new Response(request.method === 'HEAD' ? null : obj.body, { status: 206, headers });
+  }
   return new Response(request.method === 'HEAD' ? null : obj.body, { headers });
 }
 
@@ -1448,6 +1639,11 @@ function validateAnswers(form, a) {
   }
   applyPresetTeeth(form, a, styleOf(form, a));
   const stepOf = new Map((form.steps || []).flatMap((st) => st.fields.map((f) => [f.id, st])));
+  // Skriveno pitanje briše odgovor, a to može sakriti sljedeće (i u drugom koraku): u krug dok se ne smiri.
+  for (let round = 0, gone = true; gone && round < 5; round++) {
+    gone = false;
+    for (const f of on.values()) if (f.id !== 'type' && a[f.id] != null && !visible(f, a, form)) { delete a[f.id]; delete a[`${f.id}__more`]; gone = true; }
+  }
   for (const f of on.values()) {
     if (f.type === 'upload') continue;
     if (!visible(f, a, form)) { delete a[f.id]; delete a[`${f.id}__more`]; continue; }
@@ -1475,12 +1671,7 @@ function validateAnswers(form, a) {
 
 function visible(field, a, form) {
   if (!offeredFor(field, a)) return false;
-  const c = field.showIf;
-  if (!c) return true;
-  const v = a[c.field];
-  if (c.in) return c.in.includes(v);
-  if (c.notIn) return v != null && !c.notIn.includes(v);
-  return true;
+  return conditionsMet(field, a);
 }
 
 const clean = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);

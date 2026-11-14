@@ -38,6 +38,19 @@ createServer((req, res) => {
       res.end(JSON.stringify({ results: [{ flagged: body.includes('FLAGME') }] }));
       return;
     }
+    // Brojanje zuba: MOCK_CAPS="9,6;8,6" vraća redom te brojeve (zadnji se ponavlja); bez njega greška (provjera se preskače).
+    if (req.url === '/v1/responses') {
+      const list = (process.env.MOCK_CAPS || '').split(';').filter(Boolean);
+      const caps = list[Math.min(log.filter((x) => x.path === '/v1/responses').length, list.length - 1)];
+      const j = JSON.parse(buf.toString() || '{}');
+      log.push({ path: req.url, model: j.model, images: JSON.stringify(j).split('input_image').length - 1, caps: caps || null });
+      writeFileSync(out, JSON.stringify(log, null, 2));
+      if (!caps) { res.writeHead(400, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: { message: 'mock: MOCK_CAPS not set' } })); return; }
+      const [top, bottom] = caps.split(',').map(Number);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ top, bottom }) }] }], usage: { input_tokens: 900, output_tokens: 120 } }));
+      return;
+    }
     if (req.url === '/v1/images/edits') {
       const p = parts(buf, req.headers['content-type'] || '');
       const mask = p.find((x) => x.name === 'mask');

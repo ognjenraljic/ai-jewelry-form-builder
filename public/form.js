@@ -1,8 +1,9 @@
 import { SMILE_TEETH, SMILE_DEFS } from './teeth-art.js';
 import { applyPresetTeeth } from './grillz-selection.js';
-import { stepNeedsAnswer, fieldRequired } from './step-rules.js';
+import { stepNeedsAnswer, fieldRequired, conditionsMet } from './step-rules.js';
 import { phoneHtml, phoneValid, mountPhone } from './phone.js';
 import { artCategory, detailArt, metalFamily } from './option-art.js';
+import { letteringOf, letteringCss } from './lettering.js';
 
 // Widget forme: crta korake iz konfiguracije, šalje lead, traži render i doradu.
 const formId = location.pathname.split('/')[2] || 'demo';
@@ -50,6 +51,8 @@ const S = {
   adv: null, // tajmer za automatski prelaz na sljedeći korak
   focusKey: '', // šta vratiti u fokus poslije ponovnog crtanja
   fresh: false, // nova slika: animacija pojavljivanja samo tada
+  photo: false, // film je gotov, ali kupac gleda sliku
+  sound: false, // zvuk filma (browser dozvoljava autoplay samo bez zvuka)
   tryOk: false, // pristanak za fotografiju (proba na osmijehu)
   ts: '', // Turnstile token
 };
@@ -162,16 +165,24 @@ function applyDefaults() {
 const steps = () => [...S.cfg.steps.filter((st) => st.enabled !== false && st.fields.some(visible)), { id: '_contact', label: 'Details' }, { id: '_result', label: 'Preview' }];
 const cur = () => steps()[S.i];
 
+// Odgovori na pitanja koja su se sakrila (i u drugim koracima) se brišu, u krug dok se ništa ne promijeni:
+// "How iced?" = None skriva Stones, a to onda skriva Clarity.
+function pruneHidden() {
+  for (let round = 0; round < 5; round++) {
+    let gone = false;
+    for (const st of S.cfg.steps) for (const f of st.fields) {
+      if (f.id === 'type' || S.a[f.id] == null || visible(f)) continue;
+      delete S.a[f.id]; delete S.a[`${f.id}__more`]; gone = true;
+    }
+    if (!gone) return;
+  }
+}
+
 function visible(f) {
   if (f.enabled === false) return false;
   // Pitanje koje zlatar za ovaj komad ne nudi (perPiece: []) se preskače.
   if (Array.isArray(f.perPiece?.[S.a.type]) && !f.perPiece[S.a.type].length) return false;
-  const c = f.showIf;
-  if (!c) return true;
-  const v = S.a[c.field];
-  if (c.in) return c.in.includes(v);
-  if (c.notIn) return v != null && !c.notIn.includes(v);
-  return true;
+  return conditionsMet(f, S.a);
 }
 
 // Stil slika forme: Studio Light uzima istu sliku iz /library-light/ (iste putanje). Makro kadrovi ostaju.
@@ -413,7 +424,7 @@ function fieldView(f) {
 function followupView(f) {
   const key = `${f.id}__more`;
   if (f.followup === 'file') return uploadView({ id: key, hint: '' }, '<span class="label">Add a photo (optional)</span>');
-  return `<label class="field more"><span class="label">Add details (optional)</span><input class="input" data-text="${esc(key)}" maxlength="500" value="${esc(S.a[key] || '')}" /></label>`;
+  return `<label class="field more"><span class="label">${f.lettering ? 'Describe the font you want (optional)' : 'Add details (optional)'}</span><input class="input" data-text="${esc(key)}" maxlength="500" value="${esc(S.a[key] || '')}" /></label>`;
 }
 
 function uploadView(f, label) {
@@ -434,6 +445,7 @@ function choiceView(f, label, v) {
       .map((o) => `<button type="button" class="card ${pic(o) ? 'pic' : ''} ${v === o.value ? 'on' : ''}" role="radio" aria-checked="${v === o.value}" data-pick="${esc(f.id)}" data-val="${esc(o.value)}">${pic(o) ? `<img src="${esc(pic(o))}" alt="" loading="lazy" />` : icon(o.icon)}<span>${esc(o.label)}</span></button>`)
       .join('')}</div></div>`;
   }
+  if (f.type === 'chips' && f.lettering) return letteringView(f, label, v);
   if (f.type === 'chips' || f.type === 'yesno') {
     const opts = optionsOf(f);
     return `<div class="field">${label}<div class="chips ${f.big ? 'big' : ''} ${opts.some(pic) ? 'pics' : ''}" role="radiogroup" aria-labelledby="${f.label ? `lbl-${esc(f.id)}` : 'step-title'}">${opts
@@ -454,6 +466,21 @@ function choiceView(f, label, v) {
   if (f.type === 'upload') return uploadView(f, label);
   if (f.type === 'teeth') return teethView(f, label, v);
   return '';
+}
+
+// ---------- Stil slova (natpis, gravura) ----------
+// Svaki stil pokazuje kupčev natpis tim fontom (ili "Your Name" dok ga nema), jedna lista bez kategorija.
+const letterSample = () => String(S.a.inscription || '').trim().slice(0, 24) || 'Your Name';
+function letteringView(f, label, v) {
+  if (!document.getElementById('jl-lettering')) document.head.insertAdjacentHTML('beforeend', `<style id="jl-lettering">${letteringCss()}</style>`);
+  const opts = optionsOf(f);
+  const tile = (o) => {
+    const l = letteringOf(o.value);
+    return `<button type="button" class="chip font-tile ${v === o.value ? 'on' : ''}" role="radio" aria-checked="${v === o.value}" data-pick="${esc(f.id)}" data-val="${esc(o.value)}">${l ? `<span class="font-sample" data-fontprev style="font-family:'JL ${l.file}'">${esc(letterSample())}</span>` : ''}<small>${esc(o.label)}</small></button>`;
+  };
+  const fonts = opts.filter((o) => letteringOf(o.value));
+  const rest = opts.filter((o) => !letteringOf(o.value));
+  return `<div class="field">${label}<div role="radiogroup" aria-labelledby="${f.label ? `lbl-${esc(f.id)}` : 'step-title'}"><div class="fonts">${fonts.map(tile).join('')}</div>${rest.length ? `<div class="chips fonts-rest">${rest.map(tile).join('')}</div>` : ''}</div></div>`;
 }
 
 // ---------- Izbor zuba (grillz) ----------
@@ -544,7 +571,7 @@ function resultView() {
   const stage = S.busy
     ? forgeView()
     : shown
-      ? `<img class="${S.fresh ? 'fresh' : ''}" src="${esc(shown.url)}" alt="AI preview of your custom piece" />${marking ? '<canvas class="maskc" data-mask aria-label="Paint over the area to change"></canvas>' : ''}`
+      ? `<img class="${S.fresh ? 'fresh' : ''}" src="${esc(shown.url)}" alt="AI preview of your custom piece" />${filmPlays(shown) ? filmVideo(shown) : ''}${marking ? '<canvas class="maskc" data-mask aria-label="Paint over the area to change"></canvas>' : ''}`
       : '';
   const strip = S.renders.length > 1
     ? `<div class="strip">${S.renders.map((x, k) => `<button class="${k === S.shown ? 'on' : ''}" data-show="${k}" aria-label="Preview ${k + 1}"><img src="${esc(x.url)}" alt="" /></button>`).join('')}</div>`
@@ -578,6 +605,7 @@ function resultView() {
       <h1>${head[1]}</h1>
       <p class="sub">${head[2]}</p>
       ${failed ? '' : `<div class="stage">${stage || (S.productsPreview ? `<div class="forge"><div class="forge-inner">${icon('gem').replace('<svg', '<svg class="gem"')}<div class="forge-msg">AI preview</div></div></div>` : '')}</div>`}
+      <div data-filmslot>${filmBar()}</div>
       ${strip}
       ${!S.busy && (S.renders.length || S.productsPreview) ? picksView() : ''}
       ${S.error ? `<p class="error">${esc(S.error)}</p>${!S.renders.length && !S.busy ? '<div class="foot"><button class="btn gold" data-act="retry">Try again</button></div>' : ''}` : ''}
@@ -591,13 +619,105 @@ function resultView() {
     </section>`;
 }
 
+// ---------- Film komada ----------
+// Prvi kadar filma je sama slika, pa se video pojavi preko nje bez skoka, a zadnji kadar je isti
+// kao prvi, pa se vrti u krug. Traka je samo CSS: ne crta se ponovo stranica dok kupac kuca doradu.
+const filmPlays = (r) => !!r?.film?.url && !S.photo && !S.mask.on && !S.busy;
+const filmVideo = (r) => `<video class="film" src="${esc(r.film.url)}" muted playsinline preload="auto" aria-label="Highlight video of your custom piece"></video>`;
+
+function filmBar() {
+  const r = S.renders[S.shown];
+  if (!S.cfg.film || S.test || !S.lead || S.busy || !r || S.mask.on) return '';
+  const f = r.film;
+  if (f?.url) {
+    return `<div class="filmbar">
+        <button type="button" class="chip ${S.photo ? '' : 'on'}" data-act="film-show" aria-pressed="${!S.photo}">Video</button>
+        <button type="button" class="chip ${S.photo ? 'on' : ''}" data-act="photo-show" aria-pressed="${S.photo}">Photo</button>
+        ${S.photo ? '' : `<button type="button" class="chip" data-act="film-sound" aria-pressed="${S.sound}">Sound ${S.sound ? 'on' : 'off'}</button>`}
+      </div>`;
+  }
+  if (f?.status === 'pending') {
+    const sec = Math.max(0, (Date.now() - (f.created || Date.now())) / 1000);
+    return `<div class="filmwait" role="status"><p>Making your highlight video</p><span class="film-line" aria-hidden="true"><i style="animation-delay:-${sec.toFixed(1)}s"></i></span><small>A few minutes. You can keep looking around, it will appear here.</small></div>`;
+  }
+  const used = S.renders.filter((x) => x.film && x.film.status !== 'error').length;
+  if (used >= 2) return '';
+  return `<div class="filmbar">${f?.status === 'error' ? '<span class="fine">We could not finish the video.</span>' : ''}<button type="button" class="chip" data-act="film">${f?.status === 'error' ? 'Try again' : 'Generate a highlight video of your piece'}</button></div>`;
+}
+
+function wireFilm(v) {
+  v.muted = !S.sound;
+  if (reduceMotion()) { v.controls = true; return; }
+  v.loop = true; // zadnji kadar je isti kao prvi, pa krug nema šav
+  v.play().catch(() => {});
+}
+
+// Osvježi samo film, bez ponovnog crtanja cijele stranice (kupac možda kuca doradu).
+function filmPaint() {
+  const slot = app.querySelector('[data-filmslot]');
+  if (!slot) return;
+  slot.innerHTML = filmBar();
+  slot.querySelectorAll('[data-act]').forEach(filmAct);
+  const stage = app.querySelector('.stage');
+  const shown = S.renders[S.shown];
+  const v = stage?.querySelector('video.film');
+  if (filmPlays(shown) && !v) { stage.insertAdjacentHTML('beforeend', filmVideo(shown)); wireFilm(stage.querySelector('video.film')); }
+  else if (v && !filmPlays(shown)) v.remove();
+  else if (v) v.muted = !S.sound;
+}
+
+function filmAct(b) {
+  b.addEventListener('click', () => {
+    const act = b.dataset.act;
+    if (act === 'film') startFilm(S.shown);
+    if (act === 'film-show') S.photo = false;
+    if (act === 'photo-show') S.photo = true;
+    if (act === 'film-sound') S.sound = !S.sound;
+    filmPaint();
+  });
+}
+
+let filmTimer;
+async function startFilm(k) {
+  const r = S.renders[k];
+  if (!r || !S.lead || !S.cfg.film || S.test) return;
+  r.film = { status: 'pending', created: Date.now() };
+  S.photo = false;
+  filmPaint();
+  try {
+    const res = await fetch(`/api/leads/${S.lead.leadId}/films`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: S.lead.token, n: r.n ?? k + 1 }),
+    });
+    const data = await res.json();
+    r.film = res.ok ? data.film : { status: 'error' };
+  } catch { r.film = { status: 'error' }; }
+  filmPaint();
+  pollFilm();
+}
+
+function pollFilm() {
+  clearTimeout(filmTimer);
+  const r = S.renders.find((x) => x.film?.status === 'pending' && x.film.id);
+  if (!r) return;
+  filmTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/leads/${S.lead.leadId}/films/${r.film.id}`, { headers: { 'x-lead-token': S.lead.token } });
+      if (res.ok) r.film = (await res.json()).film;
+    } catch {}
+    filmPaint();
+    pollFilm();
+  }, 5000);
+}
+
 // Sve što je kupac izabrao, redom kojim je birao: slika izbora, boja ili ikonica uz pitanje i odgovor.
 function picked() {
   return S.cfg.steps.filter((st) => st.enabled !== false).flatMap((st) => st.fields.filter(visible).map((f) => {
     const v = S.a[f.id];
     if (!v) return null;
     const name = f.label || st.label || st.title;
-    if (f.type === 'teeth') { const n = teethSet(v).size; return { f, name, value: `${n} ${n === 1 ? 'tooth' : 'teeth'}`, icon: 'grillz' }; }
+    if (f.type === 'teeth') { const t = [...teethSet(v)]; const top = t.filter((x) => x[0] === 'T').length; const bot = t.length - top; return { f, name, value: [top ? `${top} top` : '', bot ? `${bot} bottom` : ''].filter(Boolean).join(' + ') || `${t.length} teeth`, icon: 'grillz' }; }
     if (f.type === 'text' || f.type === 'textarea') return { f, name, value: v, icon: 'note' };
     if (f.type === 'upload') return null;
     const o = optionsOf(f).find((x) => x.value === v);
@@ -723,7 +843,7 @@ function bind() {
       const changed = S.a[b.dataset.pick] !== b.dataset.val;
       S.a[b.dataset.pick] = b.dataset.val;
       // Skrivena polja čistimo da ne ostanu u odgovorima
-      for (const f of cur().fields) if (!visible(f)) delete S.a[f.id];
+      pruneHidden();
       // Promjena tipa poništava stil (opcije stila zavise od tipa)
       if (changed) for (const st of S.cfg.steps) for (const f of st.fields) if (f.optionsFrom?.field === b.dataset.pick) delete S.a[f.id];
       // Novi komad: odgovori koje taj komad ne nudi (metal, budžet...) se brišu.
@@ -750,6 +870,7 @@ function bind() {
   app.querySelectorAll('[data-text]').forEach((el) =>
     el.addEventListener('input', () => {
       S.a[el.dataset.text] = el.value;
+      if (el.dataset.text === 'inscription') app.querySelectorAll('[data-fontprev]').forEach((x) => { x.textContent = letterSample(); });
       const c = app.querySelector(`[data-count="${el.dataset.text}"]`);
       if (c) c.textContent = `${el.value.length}/${el.maxLength}`;
     })
@@ -807,13 +928,16 @@ function bind() {
   }
   app.querySelectorAll('[data-show]').forEach((b) => b.addEventListener('click', () => { S.shown = +b.dataset.show; S.mask.strokes = []; render(); }));
   app.querySelectorAll('[data-brush]').forEach((b) => b.addEventListener('click', () => { S.mask.size = b.dataset.brush; render(); }));
+  const filmEl = app.querySelector('video.film');
+  if (filmEl) wireFilm(filmEl);
+  app.querySelectorAll('[data-filmslot] [data-act]').forEach(filmAct);
   app.querySelector('[data-tryon]')?.addEventListener('change', (e) => doTryOn(e.target.files[0]));
   app.querySelector('[data-tryok]')?.addEventListener('change', (e) => { S.tryOk = e.target.checked; render(); });
   if (S.cfg.turnstile && app.querySelector('#ts')) mountTurnstile();
   bindMask();
   app.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => go(+b.dataset.goto - S.i)));
 
-  app.querySelectorAll('[data-act]').forEach((b) =>
+  app.querySelectorAll('[data-act]:not([data-filmslot] *)').forEach((b) =>
     b.addEventListener('click', () => {
       const act = b.dataset.act;
       if (act === 'back') go(-1);
@@ -922,6 +1046,7 @@ async function restoreLead() {
     S.tryons = d.tryons;
     S.tryLeft = d.tryLeft;
     S.i = steps().length - 1;
+    pollFilm();
   } catch { ss.del(LEAD_KEY); }
 }
 
@@ -978,9 +1103,10 @@ async function makeRender(tweak = '', mask = null) {
     S.dev = data.dev || null;
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
     await forgeFinish(data.url);
-    S.renders.push({ url: data.url, key: data.key });
+    S.renders.push({ url: data.url, key: data.key, n: data.n });
     S.fresh = true;
     S.shown = S.renders.length - 1;
+    S.photo = false;
     S.mask = { on: false, strokes: [], size: S.mask.size };
     S.tweakDraft = '';
     if (S.test) S.testInfo = data;
@@ -1037,8 +1163,24 @@ function bindMask() {
     S.mask.strokes.push(cur);
     draw();
   });
-  cv.addEventListener('pointermove', (e) => { if (!cur) return; cur.pts.push(pt(e)); draw(); });
-  const end = () => { if (!cur) return; cur = null; const c = app.querySelector('[data-act="mask-clear"]'); if (c) c.hidden = false; };
+  // Četkica umjesto krstića: krug tačne veličine poteza prati pokazivač (i prst dok slika).
+  const ring = document.createElement('span');
+  ring.className = 'brush-ring';
+  ring.hidden = true;
+  cv.after(ring);
+  const follow = (e) => {
+    const r = cv.getBoundingClientRect();
+    const d = 2 * BRUSH[S.mask.size] * (r.width / 1024);
+    ring.style.width = ring.style.height = `${d}px`;
+    ring.style.left = `${e.clientX - r.left}px`;
+    ring.style.top = `${e.clientY - r.top}px`;
+    ring.hidden = false;
+  };
+  cv.addEventListener('pointerenter', follow);
+  cv.addEventListener('pointerleave', () => { if (!cur) ring.hidden = true; });
+  cv.addEventListener('pointerdown', follow);
+  cv.addEventListener('pointermove', (e) => { follow(e); if (!cur) return; cur.pts.push(pt(e)); draw(); });
+  const end = (e) => { if (e?.pointerType === 'touch') ring.hidden = true; if (!cur) return; cur = null; const c = app.querySelector('[data-act="mask-clear"]'); if (c) c.hidden = false; };
   cv.addEventListener('pointerup', end);
   cv.addEventListener('pointercancel', end);
 }

@@ -230,6 +230,13 @@ textarea.in { resize: vertical; line-height: 1.5; }
 .status-sel.s-won { border-color: #9be38a; color: #9be38a; }
 .status-sel.s-lost { color: var(--ink-faint); }
 .status-sel.s-quoted, .status-sel.s-contacted { border-color: var(--warn); }
+.status-sel:disabled { cursor: not-allowed; opacity: 0.55; }
+.films { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.films figure { margin: 0; }
+.films video { display: block; width: 160px; height: 160px; object-fit: cover; border-radius: 12px; border: 1px solid var(--line); background: #000; }
+.films figcaption { margin-top: 4px; font-size: 12px; color: var(--ink-soft); }
+.films figcaption a { color: inherit; }
+.film-wait { margin: 0; font-size: 13px; color: var(--ink-soft); }
 .lead-note { display: block; margin-top: 12px; }
 .lead-note .in { min-height: 38px; font-size: 13px; resize: vertical; }
 .lead-note .in.saved { border-color: var(--accent); }

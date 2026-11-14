@@ -14,6 +14,7 @@
   box-shadow: 0 18px 50px -12px rgba(0, 0, 0, 0.55), inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
   color: var(--ink, #eef6f5); font-size: 13px; animation: gsel-in 0.14s ease-out; }
 .gsel-menu.up { animation-name: gsel-up; }
+dialog .gsel-menu { background: color-mix(in srgb, var(--surface, #121b1e) 97%, transparent); border-color: color-mix(in srgb, var(--ink, #eef6f5) 22%, transparent); }
 @keyframes gsel-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @keyframes gsel-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .gsel-opt { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 9px; cursor: pointer; line-height: 1.35; user-select: none; }
@@ -60,6 +61,13 @@
     m.style.top = `${up ? r.top - gap - h : r.bottom + gap}px`;
     const w = m.offsetWidth;
     m.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
+    // Stakleni <dialog> (backdrop-filter, transform) pravi svoj okvir za position: fixed, pa lista završi
+    // pomjerena za položaj dijaloga (u builderu ispod vidljivog dijela). Izmjeri gdje je stvarno i vrati je.
+    const got = m.getBoundingClientRect();
+    const dy = got.top - parseFloat(m.style.top);
+    const dx = got.left - parseFloat(m.style.left);
+    if (Math.abs(dy) > 0.5) m.style.top = `${parseFloat(m.style.top) - dy}px`;
+    if (Math.abs(dx) > 0.5) m.style.left = `${parseFloat(m.style.left) - dx}px`;
   }
 
 // Lista ide ispod polja: ako dolje nema mjesta, pomjeri stranicu (ili panel u kojem je polje) tek toliko da stane.

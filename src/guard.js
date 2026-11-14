@@ -99,15 +99,17 @@ export async function spendBlock(env, formId) {
   if (env.RENDERS_PAUSED === '1') return 'paused';
   const since = dayStart();
   const { daily, perForm } = budgets(env);
-  const [all, tests, form] = await env.DB.batch([
+  const [all, tests, form, films, formFilms] = await env.DB.batch([
     env.DB.prepare("SELECT COALESCE(SUM(cost_usd), 0) AS c, SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS p FROM renders WHERE created_at > ?").bind(since),
     env.DB.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS c FROM test_renders WHERE created_at > ?').bind(since),
     env.DB.prepare("SELECT COALESCE(SUM(r.cost_usd), 0) AS c, SUM(CASE WHEN r.status = 'pending' THEN 1 ELSE 0 END) AS p FROM renders r JOIN leads l ON l.id = r.lead_id WHERE r.created_at > ? AND l.form_id = ?").bind(since, formId),
+    env.DB.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS c FROM films WHERE created_at > ?').bind(since),
+    env.DB.prepare('SELECT COALESCE(SUM(r.cost_usd), 0) AS c FROM films r JOIN leads l ON l.id = r.lead_id WHERE r.created_at > ? AND l.form_id = ?').bind(since, formId),
   ]);
   const a = all.results[0];
   const f = form.results[0];
-  if (a.c + tests.results[0].c + (a.p || 0) * EST_RENDER_USD >= daily) return 'daily';
-  if (f.c + (f.p || 0) * EST_RENDER_USD >= perForm) return 'form';
+  if (a.c + tests.results[0].c + films.results[0].c + (a.p || 0) * EST_RENDER_USD >= daily) return 'daily';
+  if (f.c + formFilms.results[0].c + (f.p || 0) * EST_RENDER_USD >= perForm) return 'form';
   return null;
 }
 export const SPEND_MESSAGE = 'Previews are paused for now. Your request is saved and our team will follow up with you soon.';
@@ -167,7 +169,7 @@ const csp = (frameAncestors, { turnstile = false } = {}) => [
   "default-src 'self'",
   "img-src 'self' data: blob:",
   `style-src 'self' 'unsafe-inline' ${FONTS}`,
-  'font-src https://fonts.gstatic.com',
+  "font-src 'self' https://fonts.gstatic.com",
   `script-src 'self' ${CFI}${turnstile ? ` ${TS}` : ''}`,
   `frame-src 'self'${turnstile ? ` ${TS}` : ''}`,
   "connect-src 'self' https://cloudflareinsights.com",

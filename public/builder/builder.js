@@ -97,10 +97,20 @@ function showIfProblems() {
   const seen = new Set();
   const bad = [];
   for (const st of B.draft.steps) for (const f of st.fields) {
-    if (f.showIf && !seen.has(f.showIf.field)) bad.push(f.label || f.id);
+    if ([f.showIf, ...(f.andIf || [])].some((c) => c && !seen.has(c.field))) bad.push(f.label || f.id);
     seen.add(f.id);
   }
   return bad;
+}
+
+// Uslovi prikaza u builderu: 0 = showIf, 1.. = andIf. Način: in (je jedno od), notIn (odgovoreno, ali ne to), not (sakrij kad je to).
+const COND_MODES = [['in', 'is one of'], ['notIn', 'is answered, but not with'], ['not', 'is not one of (or was skipped)']];
+const condMode = (c) => COND_MODES.map(([m]) => m).find((m) => Array.isArray(c?.[m])) || 'in';
+const condAt = (f, k) => (k ? f.andIf?.[k - 1] : f.showIf);
+function setCond(f, k, c) {
+  if (!k) { f.showIf = c; return; }
+  f.andIf = [...(f.andIf || [])];
+  f.andIf[k - 1] = c;
 }
 const allFieldIds = () => new Set(B.draft.steps.flatMap((s) => s.fields.map((f) => f.id)));
 const dirty = () => B.draft && JSON.stringify(B.draft) !== B.saved;
@@ -841,6 +851,7 @@ function brandView() {
       ${inp('background', 'Render background', { ph: 'deep charcoal black', hint: 'Backdrop of the AI renders.' })}
     </div>
     <label class="f"><span>Picture style</span><select class="sel" data-bind="imageStyle" data-rerender><option value="dark" ${d.imageStyle === 'light' ? '' : 'selected'}>Studio Dark</option><option value="light" ${d.imageStyle === 'light' ? 'selected' : ''}>Studio Light</option></select><p class="hint">Pictures on every choice in the form: dark studio backdrop or soft ivory backdrop.</p></label>
+    <label class="f"><span>Highlight video of the piece</span><select class="sel" data-bind="highlightVideo" data-rerender><option value="" ${d.highlightVideo ? '' : 'selected'}>Off</option><option value="button" ${d.highlightVideo === 'button' ? 'selected' : ''}>Customer button: "Generate a highlight video of your piece"</option><option value="backend" ${d.highlightVideo === 'backend' ? 'selected' : ''}>Only for the jeweler: made after the first render, shown in the portal</option></select><p class="hint">A short turning video of the first render (or any version the customer picks), about 10 s. Each video is an extra AI cost (about $0.20) and needs the video key on the server. Up to 2 per lead.</p></label>
     <label class="f"><span>Client</span><select class="sel" data-bind="clientId" data-rerender>${d.clientId ? '' : '<option value="">No client</option>'}${clientOpts}</select></label>
     <h3>Theme</h3>
     <div class="presets">${presets}</div>
@@ -1081,6 +1092,8 @@ function tidyDraft() {
     if (!Object.keys(f.perPiece).length || !CHOICE.includes(f.type)) delete f.perPiece;
   }
   for (const x of B.draft.products || []) if (x.pieces) x.pieces = x.pieces.filter((v) => pieces.has(v));
+  // Nedovršeni dodatni uslovi (dodat red, a pitanje nije izabrano) se ne čuvaju.
+  for (const st of B.draft.steps) for (const f of st.fields) if (f.andIf) { f.andIf = f.andIf.filter((c) => c?.field); if (!f.andIf.length || !f.showIf) delete f.andIf; }
   for (const s of B.draft.steps) if (s.optionalFor) { s.optionalFor = s.optionalFor.filter((v) => pieces.has(v)); if (!s.optionalFor.length) delete s.optionalFor; }
 }
 
@@ -1121,16 +1134,18 @@ function fieldEditor(i, j, f) {
   const follow = CHOICE.includes(f.type)
     ? `<label class="f"><span>Follow-up after a choice</span><select class="sel" data-bind="${p}.followup" data-rerender><option value="">None</option><option value="text" ${f.followup === 'text' ? 'selected' : ''}>"Add details" text box</option><option value="file" ${f.followup === 'file' ? 'selected' : ''}>"Add a photo" upload</option></select></label>`
     : '';
-  // Uslov prikaza: samo polja sa izborom koja su prije ovog
+  // Uslovi prikaza: samo polja sa izborom koja su prije ovog. Prvi je showIf (često komad), ostali su andIf i svi moraju važiti.
   const before = B.draft.steps.slice(0, i + 1).flatMap((s, si) => s.fields.filter((x, fj) => (si < i || fj < j) && CHOICE.includes(x.type) && x.options));
-  const c = f.showIf;
-  const condSel = `<option value="">Always</option>` + before.map((x) => `<option value="${esc(x.id)}" ${c?.field === x.id ? 'selected' : ''}>When "${esc(x.label || x.id)}"…</option>`).join('');
-  let condVals = '';
-  if (c) {
-    const src = before.find((x) => x.id === c.field);
-    const list = c.in || c.notIn || [];
-    condVals = `<div class="cond-vals">${(src?.options || []).map((o) => `<label class="check"><input type="checkbox" data-cond-val="${p}" value="${esc(o.value)}" ${list.includes(o.value) ? 'checked' : ''} /> ${esc(o.label)}</label>`).join('')}</div>`;
-  }
+  const conds = [f.showIf, ...(f.andIf || [])];
+  const condRow = (c, k) => {
+    const sel = (k ? `<option value="" ${c ? '' : 'selected'}>Pick a question…</option>` : `<option value="">Always</option>`) + before.map((x) => `<option value="${esc(x.id)}" ${c?.field === x.id ? 'selected' : ''}>${k ? 'And when' : 'When'} "${esc(x.label || (x.id === 'type' ? 'Piece' : x.id))}"…</option>`).join('');
+    const mode = c ? condMode(c) : 'in';
+    const src = c && before.find((x) => x.id === c.field);
+    const list = c ? c[mode] || [] : [];
+    const vals = c ? `<div class="cond-vals">${(src?.options || []).map((o) => `<label class="check"><input type="checkbox" data-cond-val="${p}" data-ci="${k}" value="${esc(o.value)}" ${list.includes(o.value) ? 'checked' : ''} /> ${esc(o.label)}</label>`).join('')}</div>` : '';
+    return `<div class="cond"><select class="sel" data-cond-field="${p}" data-ci="${k}">${sel}</select>${c ? `<select class="sel" data-cond-mode="${p}" data-ci="${k}">${COND_MODES.map(([m, l]) => `<option value="${m}" ${mode === m ? 'selected' : ''}>${l}</option>`).join('')}</select>` : ''}${k ? `<button class="icon-btn danger" data-act="del-cond" data-path="${p}" data-ci="${k}" title="Remove this condition">✕</button>` : ''}</div>${vals}`;
+  };
+  const condView = `<div class="conds"><span class="hint">Show this question</span>${conds.map((c, k) => condRow(c, k)).join('')}${f.showIf && before.length && (f.andIf || []).length < 6 ? `<button class="btn small" data-act="add-cond" data-path="${p}">+ Add condition</button>` : ''}</div>`;
   return `
     <div class="field ${f.enabled === false ? 'is-off' : ''}" data-si="${i}" data-fid="${esc(f.id)}">
       <div class="card-head"><div class="grow"><b>${esc(f.label || f.id)}</b></div>
@@ -1148,8 +1163,7 @@ function fieldEditor(i, j, f) {
       ${inp(`${p}.subtitle`, 'Subtitle (optional)')}
       ${extra}
       ${follow}
-      <div class="cond"><select class="sel" data-cond-field="${p}">${condSel}</select>${c ? `<select class="sel" data-cond-mode="${p}"><option value="in" ${c.in ? 'selected' : ''}>is one of</option><option value="notIn" ${c.notIn ? 'selected' : ''}>is not one of</option></select>` : ''}</div>
-      ${condVals}
+      ${condView}
     </div>`;
 }
 
@@ -1277,19 +1291,25 @@ app.addEventListener('change', async (e) => {
     await save();
   } else if (el.dataset.condField) {
     const f = getP(el.dataset.condField);
-    if (!el.value) delete f.showIf; else f.showIf = { field: el.value, in: [] };
+    const k = +el.dataset.ci || 0;
+    if (!el.value && !k) { delete f.showIf; delete f.andIf; }
+    else if (!el.value) { f.andIf = (f.andIf || []).filter((_, x) => x !== k - 1); if (!f.andIf.length) delete f.andIf; }
+    else setCond(f, k, { field: el.value, in: [] });
     changed(true);
   } else if (el.dataset.condMode) {
     const f = getP(el.dataset.condMode);
-    const list = f.showIf.in || f.showIf.notIn || [];
-    f.showIf = { field: f.showIf.field, [el.value]: list };
+    const k = +el.dataset.ci || 0;
+    const c = condAt(f, k);
+    setCond(f, k, { field: c.field, [el.value]: c[condMode(c)] || [] });
     changed(true);
   } else if (el.dataset.condVal) {
     const f = getP(el.dataset.condVal);
-    const k = f.showIf.in ? 'in' : 'notIn';
-    const set = new Set(f.showIf[k]);
+    const k = +el.dataset.ci || 0;
+    const c = condAt(f, k);
+    const m = condMode(c);
+    const set = new Set(c[m]);
     if (el.checked) set.add(el.value); else set.delete(el.value);
-    f.showIf[k] = [...set];
+    setCond(f, k, { field: c.field, [m]: [...set] });
     changed();
   } else if (el.dataset.pp) {
     // Opcije pitanja za jedan komad: sve štiklirano = bez ograničenja, ništa = pitanje se za taj komad preskače.
@@ -1363,6 +1383,12 @@ app.addEventListener('click', async (e) => {
   if (act === 'edit-step') openEditor(i, null, true);
   if (act === 'editor-tab') { B.editor = { ...B.editor, si: i, fid: el.dataset.fid }; renderEditor(); previewTo(i, el.dataset.fid); }
   if (act === 'editor-close') document.getElementById('field-editor').close();
+  if (act === 'add-cond' || act === 'del-cond') {
+    const f = getP(el.dataset.path);
+    if (act === 'add-cond') f.andIf = [...(f.andIf || []), null];
+    else { f.andIf = (f.andIf || []).filter((_, k) => k !== +el.dataset.ci - 1); if (!f.andIf.length) delete f.andIf; }
+    changed(true);
+  }
   if (act === 'add-piece-question') {
     const pv = el.dataset.v;
     const o = typeLoc().field.options.find((x) => x.value === pv);

@@ -5,6 +5,8 @@
 import LIBRARY from './library.json' with { type: 'json' };
 import { PRESET_TEETH, presetTeeth } from '../public/grillz-selection.js';
 import { parseTeeth } from './teeth.js';
+import { CONDITION_MODES } from '../public/step-rules.js';
+import { letteringField } from '../public/lettering.js';
 import { styleArt, styleImage, withArt } from '../public/option-art.js';
 
 // Početni stilovi po tipu iz src/library.json. Slika ide i u karticu i modelu kao referenca oblika.
@@ -60,6 +62,11 @@ const PIECES = [
   opt('grillz', 'Grillz', { icon: 'grillz' }), opt('bracelet', 'Bracelet', { icon: 'bracelet' }), opt('earrings', 'Earrings', { icon: 'earrings' }),
   opt('watch', 'Watch', { icon: 'watch' }),
 ];
+// Metali koji nemaju karate: kod njih se pitanje Karat ne prikazuje (Districtova napomena 14.11: "dental gold has no karats").
+export const NO_KARAT_METALS = ['platinum', 'stainless-steel', 'dental-gold', 'silver', 'sterling-silver', 'titanium', 'tungsten'];
+const NO_KARAT_LABEL = /platinum|steel|dental|silver|titanium|tungsten/i;
+// Grillz rez (diamond cut, rose cut...) i kamenje se ne kombinuju: rez se nudi samo kad grillz nije ledeni (Districtova napomena 14.11).
+export const CUT_NOT_ICED = { field: 'coverage', not: ['accents', 'half', 'full'] };
 const METALS = [
   opt('yellow-gold', 'Yellow Gold', { swatch: '#e2b04a' }), opt('white-gold', 'White Gold', { swatch: '#e6e6e3' }),
   opt('rose-gold', 'Rose Gold', { swatch: '#d99a86' }), opt('platinum', 'Platinum', { swatch: '#c9ccd1' }),
@@ -82,7 +89,7 @@ const styleStep = (title = 'Choose a style') => ({
 });
 const metalFields = (metals = METALS) => [
   { id: 'metal', type: 'chips', label: 'Metal', required: true, ...B, options: metals },
-  { id: 'karat', type: 'chips', label: 'Karat', required: true, ...B, showIf: { field: 'metal', notIn: ['platinum'] }, options: ['10K', '14K', '18K', '925 Silver'].map((v) => opt(v, v)) },
+  { id: 'karat', type: 'chips', label: 'Karat', required: true, ...B, showIf: { field: 'metal', notIn: NO_KARAT_METALS }, options: ['10K', '14K', '18K', '925 Silver'].map((v) => opt(v, v)) },
 ];
 const stoneFields = () => [
   { id: 'stones', type: 'chips', label: 'Stones', required: true, ...B, options: [opt('none', 'No stones'), opt('moissanite', 'Moissanite'), opt('lab', 'Lab-grown diamonds'), opt('natural', 'Natural diamonds')] },
@@ -101,7 +108,7 @@ const budgetStep = () => ({
 const visionStep = ({ inscriptionLabel = 'Name or text on the piece (optional)', placeholder = 'e.g. Script name pendant with a small crown over the first letter, iced out, about 2 inches tall', inscription = true } = {}) => ({
   id: 'vision', label: 'Vision', title: 'Describe your vision', subtitle: 'Names, shapes, symbols, anything. The more detail, the better your preview.',
   fields: [
-    ...(inscription ? [{ id: 'inscription', type: 'text', label: inscriptionLabel, placeholder: 'e.g. Blake, J&M, 404', max: 24, ...B }] : []),
+    ...(inscription ? [{ id: 'inscription', type: 'text', label: inscriptionLabel, placeholder: 'e.g. Blake, J&M, 404', max: 24, ...B }, letteringField(B)] : []),
     { id: 'vision', type: 'textarea', label: 'Your idea', placeholder, max: 600, ...B },
     { id: 'reference', type: 'upload', label: 'Inspiration photo (optional)', hint: 'A screenshot or photo of something close to what you want.', ...B },
   ],
@@ -158,7 +165,7 @@ export const TEMPLATES = {
             ...metalFields(METALS.filter((m) => m.value !== 'platinum')),
             ...stoneFields(),
             {
-              id: 'grill_cut', type: 'chips', label: 'Cut', required: false, ...B,
+              id: 'grill_cut', type: 'chips', label: 'Cut', required: false, ...B, showIf: { field: 'type', in: ['grillz'] }, andIf: [{ ...CUT_NOT_ICED }],
               options: [
                 opt('solid', 'Solid'),
                 opt('open-face', 'Open face', { note: 'open face grill: only the outline of each tooth is covered, the center of each tooth is open' }),
@@ -305,6 +312,7 @@ export function validateFormDef(f, id) {
   if (f.clientId != null && !SLUG.test(f.clientId)) err('Client: invalid ID');
   if (f.template != null && !TEMPLATES[f.template]) err('Unknown template');
   bool(f.tryOn, 'Try-on on the customer photo');
+  if (f.highlightVideo != null && !['button', 'backend'].includes(f.highlightVideo)) err('Highlight video: button or backend');
   // Sajtovi na kojima se forma smije ugraditi (prazno = svuda). Samo https adrese, bez putanje.
   if (f.allowedOrigins != null) {
     if (!Array.isArray(f.allowedOrigins) || f.allowedOrigins.length > 10) err('Allowed sites: up to 10');
@@ -337,7 +345,8 @@ export function validateFormDef(f, id) {
       if (!KEY.test(fl.id || '') || fieldIds.has(fl.id) || fl.id.endsWith('__more')) err(`Question "${fl.id}": ID must be unique`);
       fieldIds.add(fl.id);
       if (!FIELD_TYPES.includes(fl.type)) err(`Question ${fl.id}: unknown type`);
-      for (const b of ['required', 'enabled', 'builtin', 'ai', 'big']) bool(fl[b], `Question ${fl.id} ${b}`);
+      for (const b of ['required', 'enabled', 'builtin', 'ai', 'big', 'lettering']) bool(fl[b], `Question ${fl.id} ${b}`);
+      if (fl.lettering && fl.type !== 'chips') err(`Question ${fl.id}: lettering styles must be a choice (chips)`);
       str(fl.label, 120, `Question ${fl.id}`);
       str(fl.subtitle, 200, `Subtitle of ${fl.id}`);
       str(fl.placeholder, 160, `Placeholder of ${fl.id}`);
@@ -372,10 +381,9 @@ export function validateFormDef(f, id) {
       } else if (fl.perPiece != null) {
         err(`Question ${fl.id}: options per piece only work on choice questions`);
       }
-      if (fl.showIf) {
-        const c = fl.showIf;
-        if (!KEY.test(c.field || '') || !(Array.isArray(c.in) || Array.isArray(c.notIn))) err(`Question ${fl.id}: invalid display condition`);
-      }
+      const condOk = (c) => c && typeof c === 'object' && KEY.test(c.field || '') && c.field !== fl.id && CONDITION_MODES.filter((m) => Array.isArray(c[m])).length === 1;
+      if (fl.showIf && !condOk(fl.showIf)) err(`Question ${fl.id}: invalid display condition`);
+      if (fl.andIf != null && (!Array.isArray(fl.andIf) || fl.andIf.length > 6 || !fl.andIf.every(condOk))) err(`Question ${fl.id}: invalid extra condition`);
     }
   }
   const typeField = f.steps.flatMap((s) => s.fields).find((x) => x.id === 'type');
@@ -576,6 +584,9 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
     } else if (!noLists) {
       for (const f of design.fields) if (['metal', 'karat'].includes(f.id)) f.enabled = false;
     }
+    // Svoj metal bez karata (Dental Gold, Stainless Steel...) takođe preskače Karat.
+    const kf = field('karat');
+    if (kf) kf.showIf = { field: 'metal', notIn: [...new Set([...NO_KARAT_METALS, ...field('metal').options.filter((o) => NO_KARAT_LABEL.test(o.label)).map((o) => o.value)])] };
   }
   // Karati: samo kad ih je zlatar birao po komadu (stariji onboarding ih nema, pa ostaju svi).
   if (field('karat') && pieces.some((p) => Array.isArray(p.karats))) {
@@ -631,7 +642,8 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
         .map((c) => { const label = String(c.label).trim().slice(0, 60); return opt(uniqOf(slugOf(label), taken), label, { ...(sp.ai === false ? {} : { note: `${sp.label}: ${label}` }), ...ownImage(c) }); });
       const opts = [...sp.options.filter((o) => picked.includes(o.value)), ...own];
       if (!opts.length) continue;
-      fields.push({ id: uniqOf(`${value}_${sp.id}`.replace(/-/g, '_').slice(0, 40), fieldIds), type: sp.type || 'chips', label: sp.label, required: false, ...(sp.ai === false ? { ai: false } : {}), options: structuredClone(opts), showIf });
+      const coverageOn = sp.id === 'grill_cut' && field('coverage') && field('coverage').enabled !== false;
+      fields.push({ id: uniqOf(`${value}_${sp.id}`.replace(/-/g, '_').slice(0, 40), fieldIds), type: sp.type || 'chips', label: sp.label, required: false, ...(sp.ai === false ? { ai: false } : {}), options: structuredClone(opts), showIf, ...(coverageOn ? { andIf: [{ ...CUT_NOT_ICED }] } : {}) });
     }
     for (const q of (Array.isArray(p.questions) ? p.questions : []).slice(0, 6)) {
       const label = String(q?.label || '').trim().slice(0, 120);
