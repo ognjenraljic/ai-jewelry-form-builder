@@ -27,6 +27,7 @@ const NAV = {
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
 };
 // Zvonce: obavještenja (poslat onboarding, zahtjev za demo), broj neviđenih na dugmetu.
 const bell = () => `<button class="nav-add bell" data-act="notifs" title="Notifications" aria-label="Notifications">${nav('bell')}${B.notifs?.unseen ? `<b>${B.notifs.unseen > 9 ? '9+' : B.notifs.unseen}</b>` : ''}</button>`;
@@ -958,7 +959,8 @@ const optionImage = (f, o) => optionArt(f.id === 'type' ? 'type' : artField(f), 
 // Svaki komad za sebe, korak po korak: šta nudi (perPiece), šta je obavezno, i pitanja samo za njega. Edit otvara popup.
 function fieldRow(s, si, f, pv) {
   const name = esc(fieldName(f, s));
-  const edit = `<button class="btn small" data-act="edit-field" data-i="${si}" data-fid="${esc(f.id)}">Edit</button>`;
+  // Uređivanje je svuda ista ikonica olovke u gornjem desnom uglu (Ognjen 14.11).
+  const edit = `<button class="icon-btn edit-ic" data-act="edit-field" data-i="${si}" data-fid="${esc(f.id)}" title="Edit question" aria-label="Edit ${name}">${nav('edit')}</button>`;
   const flags = `${f.required ? '<span class="pill">Required</span>' : ''}${f.enabled === false ? '<span class="pill">Off</span>' : ''}`;
   if (!CHOICE.includes(f.type) || !f.options?.length) {
     return `<div class="pp-q fstep-row ${f.enabled === false ? 'is-off' : ''}" data-si="${si}" data-fid="${esc(f.id)}"><span class="grow"><b>${name}</b><small>${esc(FIELD_TYPES.find(([v]) => v === f.type)?.[1] || f.type)}</small></span>${flags}${edit}</div>`;
@@ -995,21 +997,21 @@ function stepsView(o) {
         <div class="fstep-head">
           <span class="num">${si + 1}</span>
           <span class="grow"><b>${esc(s.label || s.title)}</b>${s.label && s.title ? `<small>${esc(s.title)}</small>` : ''}</span>
-          ${isType ? '' : `<label class="check req" title="Customers must complete this step for ${esc(o.label)} before they can continue."><input type="checkbox" data-step-required="${si}" data-piece="${esc(pv)}" ${stepRequiredFor(s, pv) ? 'checked' : ''} /> Required step</label>`}
+          ${isType ? '' : `<label class="check req" title="Customers must complete this step for ${esc(o.label)} before they can continue."><input type="checkbox" data-step-required="${si}" data-piece="${esc(pv)}" ${stepRequiredFor(s, pv) ? 'checked' : ''} /> Required</label>`}
           ${canToggle ? toggle(`steps.${si}.enabled`, 'Show', { invert: true, title: isType ? 'With one piece the step can be hidden; the piece is picked automatically.' : '' }) : ''}
           <span class="nowrap">
             <button class="icon-btn" title="Move step up" data-act="move" data-path="steps" data-i="${si}" data-d="-1">↑</button>
             <button class="icon-btn" title="Move step down" data-act="move" data-path="steps" data-i="${si}" data-d="1">↓</button>
             ${canDelete ? `<button class="icon-btn danger" title="Remove step" data-act="del" data-path="steps" data-i="${si}" data-confirm="Remove this step and its questions?">✕</button>` : ''}
+            <button class="icon-btn edit-ic" title="Edit step" aria-label="Edit step ${esc(s.label || s.title)}" data-act="edit-step" data-i="${si}">${nav('edit')}</button>
           </span>
-          <button class="btn small" data-act="edit-step" data-i="${si}">Edit step</button>
         </div>
         ${shown.map((f) => fieldRow(s, si, f, pv)).join('')}
       </section>`;
   }).join('');
   return `
     <h3>Form steps for ${esc(o.label)}</h3>
-    <p class="hint" style="margin:-6px 0 12px">Every step customers see for ${esc(o.label.toLowerCase())}. Tick what this piece offers; untick everything and the question is skipped for it. Edit opens the options, questions and images. Required step means customers cannot continue without it.</p>
+    <p class="hint" style="margin:-6px 0 12px">Every step customers see for ${esc(o.label.toLowerCase())}. Tick what this piece offers; untick everything and the question is skipped for it. The pencil opens the options, questions and images. Required means customers cannot continue without it.</p>
     ${rows}
     <div class="pick-row" style="margin-top:12px"><button class="btn small" data-act="add-piece-question" data-v="${esc(pv)}">+ Add question for ${esc(o.label)}</button><button class="btn small" data-act="add-step">+ Add step</button></div>`;
 }
