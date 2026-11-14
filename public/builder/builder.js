@@ -105,7 +105,17 @@ function showIfProblems() {
 }
 
 // Uslovi prikaza u builderu: 0 = showIf, 1.. = andIf. Način: in (je jedno od), notIn (odgovoreno, ali ne to), not (sakrij kad je to).
-const COND_MODES = [['in', 'is one of'], ['notIn', 'is answered, but not with'], ['not', 'is not one of (or was skipped)']];
+const COND_MODES = [['in', 'is one of the ticked answers'], ['notIn', 'is answered, but not with a ticked one'], ['not', 'is not a ticked answer (or not asked)']];
+// Objašnjenje uslova u staklenom oblačiću (upitnik pored "Show this question").
+const COND_HELP = `
+  <b>Show this question only when…</b>
+  <p>Pick an earlier question, choose how to compare, then tick its answers.</p>
+  <dl>
+    <dt>is one of the ticked answers</dt><dd>Shown only when the customer picked one of the ticked answers. Hidden until then.<small>Example: Clarity when Stones is Lab-grown or Natural diamonds.</small></dd>
+    <dt>is answered, but not with a ticked one</dt><dd>Shown once that question is answered with anything that is not ticked. Hidden while it is unanswered.<small>Example: Karat when Metal is chosen, but not Platinum or Dental Gold.</small></dd>
+    <dt>is not a ticked answer (or not asked)</dt><dd>Hidden only when a ticked answer is picked. Also shown when that question was skipped or never asked for this piece.<small>Example: Cut, unless How iced? is Accents, Half or Fully iced.</small></dd>
+  </dl>
+  <p><b>+ Add condition</b> adds another rule. All rules must be true for the question to show. When a question hides, its answer is cleared.</p>`;
 const condMode = (c) => COND_MODES.map(([m]) => m).find((m) => Array.isArray(c?.[m])) || 'in';
 const condAt = (f, k) => (k ? f.andIf?.[k - 1] : f.showIf);
 function setCond(f, k, c) {
@@ -1147,7 +1157,7 @@ function fieldEditor(i, j, f) {
     const vals = c ? `<div class="cond-vals">${(src?.options || []).map((o) => `<label class="check"><input type="checkbox" data-cond-val="${p}" data-ci="${k}" value="${esc(o.value)}" ${list.includes(o.value) ? 'checked' : ''} /> ${esc(o.label)}</label>`).join('')}</div>` : '';
     return `<div class="cond"><select class="sel" data-cond-field="${p}" data-ci="${k}">${sel}</select>${c ? `<select class="sel" data-cond-mode="${p}" data-ci="${k}">${COND_MODES.map(([m, l]) => `<option value="${m}" ${mode === m ? 'selected' : ''}>${l}</option>`).join('')}</select>` : ''}${k ? `<button class="icon-btn danger" data-act="del-cond" data-path="${p}" data-ci="${k}" title="Remove this condition">✕</button>` : ''}</div>${vals}`;
   };
-  const condView = `<div class="conds"><span class="hint">Show this question</span>${conds.map((c, k) => condRow(c, k)).join('')}${f.showIf && before.length && (f.andIf || []).length < 6 ? `<button class="btn small" data-act="add-cond" data-path="${p}">+ Add condition</button>` : ''}</div>`;
+  const condView = `<div class="conds"><span class="hint cond-title">Show this question <span class="help" tabindex="0" role="button" aria-label="How display conditions work">?<span class="help-pop" role="tooltip">${COND_HELP}</span></span></span>${conds.map((c, k) => condRow(c, k)).join('')}${f.showIf && before.length && (f.andIf || []).length < 6 ? `<button class="btn small" data-act="add-cond" data-path="${p}">+ Add condition</button>` : ''}</div>`;
   return `
     <div class="field ${f.enabled === false ? 'is-off' : ''}" data-si="${i}" data-fid="${esc(f.id)}">
       <div class="card-head"><div class="grow"><b>${esc(f.label || f.id)}</b></div>
@@ -1373,6 +1383,27 @@ app.addEventListener('keydown', (e) => {
     options[next]?.focus();
   }
 });
+
+// Oblačić pomoći: fixed u odnosu na ekran (ne siječe ga skrol popupa), iznad upitnika, ili ispod kad gore nema mjesta.
+const placeHelp = (e) => {
+  const h = e.target.closest?.('.help');
+  if (!h) return;
+  const pop = h.querySelector('.help-pop');
+  const r = h.getBoundingClientRect();
+  const ph = pop.offsetHeight;
+  const pw = pop.offsetWidth;
+  const up = r.top - ph - 10 >= 8 || r.bottom + ph + 10 > innerHeight - 8;
+  const top = up ? Math.max(8, r.top - ph - 10) : r.bottom + 10;
+  const left = Math.max(8, Math.min(r.left - 12, innerWidth - pw - 8));
+  pop.style.top = `${top}px`;
+  pop.style.left = `${left}px`;
+  // Stakleni <dialog> pomjera koordinate za position: fixed (isto kao kod padajućih menija).
+  const got = pop.getBoundingClientRect();
+  pop.style.top = `${top - (got.top - top)}px`;
+  pop.style.left = `${left - (got.left - left)}px`;
+};
+document.addEventListener('mouseover', placeHelp);
+document.addEventListener('focusin', placeHelp);
 
 app.addEventListener('click', async (e) => {
   const el = e.target.closest('[data-act]');
