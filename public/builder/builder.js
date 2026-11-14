@@ -116,6 +116,75 @@ const COND_HELP = `
     <dt>is not a ticked answer (or not asked)</dt><dd>Hidden only when a ticked answer is picked. Also shown when that question was skipped or never asked for this piece.<small>Example: Cut, unless How iced? is Accents, Half or Fully iced.</small></dd>
   </dl>
   <p><b>+ Add condition</b> adds another rule. All rules must be true for the question to show. When a question hides, its answer is cleared.</p>`;
+// Upitnik sa staklenim oblačićem: kako nešto radi i gdje se vidi. Svuda isti (naslovi, polja, popup).
+const help = (html, name = 'How this works') => `<span class="help" tabindex="0" role="button" aria-label="${esc(name)}">?<span class="help-pop" role="tooltip">${html}</span></span>`;
+const H = {
+  hub: `<b>All projects</b><p>A project is one client (jeweler) with all of their forms.</p><dl>
+    <dt>Leads, renders, AI cost</dt><dd>Per form: customers who finished it, AI previews made, and what they cost. The client never sees the cost per form.</dd>
+    <dt>This month $X / $50</dt><dd>The client's AI use this calendar month. Passing it never stops renders; you get one bell notification.</dd>
+    <dt>Client portal</dt><dd>Opens their portal exactly as they see it, read-only, for one hour. Every view is logged. The copy icon copies their own link.</dd>
+    <dt>Archive</dt><dd>Hides the form or project and stops new leads. Nothing is deleted; Restore brings it back.</dd></dl>`,
+  client: `<b>Client</b><p>Details of the jeweler this form belongs to. Saved with <b>Save client</b>, separately from the form.</p><dl>
+    <dt>Logo</dt><dd>Used for new forms of this client. Each form keeps its own logo under Brand.</dd>
+    <dt>Notes</dt><dd>Internal, only in the builder. The client never sees them.</dd></dl>`,
+  portal: `<b>Client portal</b><p>The client opens it with their link, no password: their leads with renders, photos, notes and status, their forms with embed code, and this month's AI usage.</p><dl>
+    <dt>Replace or turn off link</dt><dd>A new link stops the old one at once. Turn it off if the link reached the wrong person.</dd>
+    <dt>Client portal button</dt><dd>Your admin view of the same page, read-only (status and notes stay theirs), one hour, logged.</dd></dl>`,
+  forms: `<b>Forms</b><p>Every form of this client. <b>Edit</b> opens it here, <b>Copy embed</b> copies the code for their website. Leads of all these forms show up in the same portal.</p>`,
+  brand: `<b>Brand &amp; look</b><p>How this form looks and behaves for customers. Everything here applies only to this form and goes live when you press <b>Save</b>. The preview on the right shows it right away.</p>`,
+  internalName: `<b>Internal name</b><p>Only for you and the client: builder lists, portal and leads. Customers never see it.</p>`,
+  storeName: `<b>Store name</b><p>Shown at the top of the form when there is no logo, and in the line under photo uploads ("Shared only with …"). The consent text under Texts is written separately.</p>`,
+  logo: `<b>Logo in the form header</b><p>Shown centered at the top of every step. Transparent PNG or SVG-like logos look best on both dark and light themes.</p>`,
+  maxRenders: `<b>Previews per customer</b><p>How many AI pictures one customer can make: the first render plus refinements ("make the letters bigger", painting one area). Every preview is an AI cost, so 3 to 5 is usual.</p>`,
+  background: `<b>Render background</b><p>Sent to the AI as the backdrop of every render, e.g. <i>deep charcoal black</i> or <i>soft ivory</i>. Customers see it only in the generated pictures.</p>`,
+  imageStyle: `<b>Picture style</b><p>The small pictures on the choices in the form (metals, stones, styles). <b>Studio Dark</b> suits dark websites, <b>Studio Light</b> light ones. The AI renders are not affected.</p>`,
+  video: `<b>Highlight video</b><dl>
+    <dt>Customer button</dt><dd>Under the AI preview the customer sees "Generate a highlight video of your piece": a slow 10 s turn of that version. It appears in place of the picture in a few minutes.</dd>
+    <dt>Only for the jeweler</dt><dd>The video is made after the first render without the customer seeing anything. It shows in the portal lead with Download, for social media or a follow-up message.</dd></dl>
+    <p>About $0.20 per video, up to 2 per lead, counted in the budgets. Works only when the video key (PIKA_API_KEY) is set on the server.</p>`,
+  clientField: `<b>Client</b><p>Whose portal the leads of this form go to. Moving a form to another client also moves its existing leads; you will be asked first.</p>`,
+  theme: `<b>Theme</b><p>Colors of the customer form. Pick a preset, then adjust single colors. If text gets hard to read, a warning shows the contrast; aim for at least 4.5:1, especially for phones.</p>`,
+  pieces: `<b>Pieces &amp; styles</b><p>The first question of the form: what the customer wants to make. Click a piece to edit everything for it in one place: its card, its styles, and every step and question it asks, with the options it offers.</p><p>Order of the cards here is the order in the form. Removing a piece removes its own questions too.</p>`,
+  pieceName: `<b>Name shown to customers</b><p>The label on the piece card in the first step and in the lead details.</p>`,
+  cardImage: `<b>Card image</b><p>The picture on the piece card in the first step. Built-in pieces have one already; your own photo replaces it.</p>`,
+  subject: `<b>How the AI should describe this piece</b><p>The opening of every prompt, e.g. <i>a custom western belt buckle, oval, front view</i>. Built-in pieces already have a tested description, so leave it empty for them. New pieces need it.</p>`,
+  tryOn: `<b>See them on your smile</b><p>After a grillz render the customer can upload a smiling photo and see themselves wearing the design. Up to 2 per lead. Photos stay private and are deleted after 30 days.</p>`,
+  styles: `<b>Styles</b><p>The second step: customers pick the shape closest to their idea. The style picture is also sent to the AI as a shape reference, so photos of the jeweler's own pieces give the most faithful renders.</p><dl>
+    <dt>Shape for the AI</dt><dd>Optional words about the construction (e.g. thick interlocking oval links). Helps when the picture alone is not clear.</dd>
+    <dt>Something else</dt><dd>Added at the end: the customer describes their own style in words.</dd></dl>`,
+  steps: `<b>Form steps</b><p>Every step and question customers see for this piece, in order.</p><dl>
+    <dt>Ticked options</dt><dd>What this piece offers. Untick everything and the question is skipped for it.</dd>
+    <dt>Required</dt><dd>Customers must answer at least one question of the step before they continue.</dd>
+    <dt>Show</dt><dd>Turns the whole step on or off for every piece.</dd>
+    <dt>Pencil</dt><dd>Opens the step or question: options with pictures, AI notes, follow-ups and display conditions.</dd>
+    <dt>Only for this piece</dt><dd>Questions added under "+ Add question for…" appear only when this piece is chosen.</dd></dl>`,
+  stepSettings: `<b>Step settings</b><dl>
+    <dt>Go to the next step right after a choice</dt><dd>For steps with one quick choice (piece, style, budget). Off when customers should be able to read and add details first.</dd>
+    <dt>Title and subtitle</dt><dd>The heading customers see on this step.</dd>
+    <dt>Progress label</dt><dd>The short name in the progress bar and in the preview step list.</dd></dl>`,
+  options: `<b>Options</b><dl>
+    <dt>Picture</dt><dd>Shown on the choice in the form. Without your own picture a matching one from the library is used (pale until you pick another).</dd>
+    <dt>Color dot</dt><dd>Optional swatch for chips such as metals.</dd>
+    <dt>AI note</dt><dd>Sent to the AI only when this option is chosen, e.g. <i>open face: only the outline of each tooth is covered</i>. Customers never see it.</dd></dl>`,
+  followup: `<b>Follow-up after a choice</b><p>After the customer picks any option, an extra field appears under the question: an <b>"Add details"</b> text box (sent to the AI with the answer) or an <b>"Add a photo"</b> upload (goes to the jeweler with the lead).</p>`,
+  products: `<b>Shop products</b><p>Products from the jeweler's online shop, shown under the customer's AI preview with photo, price and a link to the shop. Products for the piece the customer designed come first; up to 6 show.</p><dl>
+    <dt>Recommend with</dt><dd>Tick pieces to show a product only with them. Nothing ticked: shown with every piece.</dd></dl>`,
+  texts: `<b>Texts</b><p>Words customers read in the last two steps. Everything else (questions, options) is edited under Pieces &amp; styles.</p>`,
+  contact: `<b>Contact step</b><p>The step before the render, where the customer leaves name, email and phone. The lead is saved here, even if the render fails later.</p><dl>
+    <dt>Consent text</dt><dd>Next to the required checkbox. Name the jeweler and how they may contact the customer (email, phone, text).</dd>
+    <dt>Button</dt><dd>Starts the render, e.g. "Reveal my design".</dd></dl>`,
+  preview: `<b>Preview</b><p>The final step with the AI picture.</p><dl>
+    <dt>Messages while rendering</dt><dd>Shown one after another during the 20 to 40 seconds the render takes.</dd>
+    <dt>Message under the render</dt><dd>What happens next, e.g. "Our team will reach out within 24 hours with a quote."</dd>
+    <dt>Disclaimer</dt><dd>Small print under the picture: it is an AI concept, the real piece is handmade.</dd></dl>`,
+  embed: `<b>Embed</b><p>How to put this form on the jeweler's website. The live form always shows the last <b>saved</b> version, so there is no need to paste the code again after changes.</p>`,
+  snippet: `<b>Recommended snippet</b><p>Grows with the form, so there is no inner scrollbar, and opens popups correctly. Use it wherever the website builder accepts a script.</p>`,
+  iframe: `<b>Plain iframe</b><p>For builders that block scripts (Wix and some strict themes). Fixed height of 900 px; adjust the height in the code if needed.</p>`,
+  link: `<b>Direct link</b><p>The form on its own page: for Instagram bio, emails, text messages and QR codes.</p>`,
+  origins: `<b>Where it may appear</b><p>Only these websites can show the form inside their pages. Others see an empty frame, so nobody can copy the code and spend the client's previews. The direct link keeps working everywhere.</p>`,
+  history: `<b>History</b><p>Every Save keeps the previous version, the last 50. <b>Load</b> puts an old version into the editor and the preview; nothing changes for customers until you press <b>Save</b>. Fixes we apply on the server also leave a version here.</p>`,
+  json: `<b>JSON</b><p>The whole form as data, for bulk edits or copying settings between forms. <b>Apply</b> loads it into the editor; it is checked when you Save, and a mistake is shown instead of being saved.</p>`,
+};
 const condMode = (c) => COND_MODES.map(([m]) => m).find((m) => Array.isArray(c?.[m])) || 'in';
 const condAt = (f, k) => (k ? f.andIf?.[k - 1] : f.showIf);
 function setCond(f, k, c) {
@@ -225,7 +294,7 @@ function renderHub() {
         ${B.id ? `<button class="btn primary save" data-act="back-editor">Back to editor${dirty() || clientDirty() ? ' (unsaved)' : ''}</button>` : ''}
       </header>
       <main class="hub-main">
-        <h2>All projects</h2>
+        <h2>All projects ${help(H.hub)}</h2>
         <p class="lead">Every project (client) and their forms. AI cost per form is visible only here and in the admin; the client sees only this month's usage against their ${usd(B.overview.month?.limit || 50)} monthly allowance.</p>
         <div class="hub-stats">
           <div><span>Projects</span><b>${activeClients().length}</b></div>
@@ -703,14 +772,14 @@ function applyLimits(root) {
     if (max) el.maxLength = max;
   });
 }
-const inp = (path, label, { kind = 'text', hint = '', ph = '', type = 'text' } = {}) => {
+const inp = (path, label, { kind = 'text', hint = '', ph = '', type = 'text', tip = '' } = {}) => {
   const v = getP(path);
-  return `<label class="f"><span>${esc(label)}</span><input class="in" type="${type}" data-bind="${path}" data-kind="${kind}" value="${esc(v ?? '')}" placeholder="${esc(ph)}" />${hint ? `<p class="hint">${esc(hint)}</p>` : ''}</label>`;
+  return `<label class="f"><span>${esc(label)}${tip ? ` ${help(tip, label)}` : ''}</span><input class="in" type="${type}" data-bind="${path}" data-kind="${kind}" value="${esc(v ?? '')}" placeholder="${esc(ph)}" />${hint ? `<p class="hint">${esc(hint)}</p>` : ''}</label>`;
 };
-const area = (path, label, { kind = 'text', hint = '', ph = '' } = {}) => {
+const area = (path, label, { kind = 'text', hint = '', ph = '', tip = '' } = {}) => {
   const v = getP(path);
   const val = kind === 'lines' ? (v || []).join('\n') : v ?? '';
-  return `<label class="f"><span>${esc(label)}</span><textarea class="ta" data-bind="${path}" data-kind="${kind}" placeholder="${esc(ph)}">${esc(val)}</textarea>${hint ? `<p class="hint">${esc(hint)}</p>` : ''}</label>`;
+  return `<label class="f"><span>${esc(label)}${tip ? ` ${help(tip, label)}` : ''}</span><textarea class="ta" data-bind="${path}" data-kind="${kind}" placeholder="${esc(ph)}">${esc(val)}</textarea>${hint ? `<p class="hint">${esc(hint)}</p>` : ''}</label>`;
 };
 const toggle = (path, label, { invert = false, title = '' } = {}) => {
   const v = getP(path);
@@ -832,17 +901,17 @@ function clientView() {
       </div>
     </div>`).join('');
   return `
-    <h2>${esc(B.client.name)}</h2>
+    <h2>${esc(B.client.name)} ${help(H.client)}</h2>
     <p class="lead">Client details and all of their forms. The logo is used for new forms.</p>
     <div class="row">${inp('client.name', 'Client name')}${inp('client.website', 'Website', { ph: 'northstarjewelers.com' })}</div>
     <div class="f"><span>Logo</span><div class="pick-row">${imgPick('client.logo', { scope: 'clients', size: 'logo', empty: 'Upload logo' })}</div><p class="hint">PNG, JPG or WebP. Shown in the form header instead of the store name.</p></div>
     ${area('client.notes', 'Notes (internal)')}
     <div class="pick-row"><button class="btn small ${clientDirty() ? 'primary' : ''}" data-act="save-client" ${clientDirty() ? '' : 'disabled'}>Save client</button></div>
-    <h3>Client portal</h3>
+    <h3>Client portal ${help(H.portal)}</h3>
     <p class="hint" style="margin-bottom:10px">${B.overview.links[B.client.id] ? `Portal link active since ${esc(day(B.overview.links[B.client.id].createdAt))}.` : 'No portal link yet.'} With the link the client sees their leads, renders and forms on their own, without AI costs.</p>
     <p class="hint">Client portal opens it exactly as they see it, for one hour, and every view is logged. The icon copies their permanent link.</p>
     <div class="pick-row">${clientPortal(B.client.id, 'btn small')}<button class="btn small ghost" data-act="portal-link" data-cid="${esc(B.client.id)}">Replace or turn off link</button></div>
-    <h3>Forms (${clientForms(B.client.id).length})</h3>
+    <h3>Forms (${clientForms(B.client.id).length}) ${help(H.forms)}</h3>
     ${forms || '<p class="hint">No forms yet.</p>'}
     <button class="btn small" data-act="new-form">+ New form for ${esc(B.client.name)}</button>`;
 }
@@ -853,18 +922,18 @@ function brandView() {
   const presets = Object.entries(PRESETS).map(([n, t]) => `<button class="preset" data-act="preset" data-p="${n}"><i style="background:linear-gradient(135deg, ${t.accent} 50%, ${t.bg} 50%)"></i>${n}</button>`).join('');
   const clientOpts = B.clients.map((c) => `<option value="${esc(c.id)}" ${c.id === d.clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
   return `
-    <h2>Brand &amp; look</h2>
+    <h2>Brand &amp; look ${help(H.brand)}</h2>
     <p class="lead">${esc(tplLabel(d.template))} form. How it looks and behaves.</p>
-    <div class="row">${inp('name', 'Internal name')}${inp('brand.name', 'Store name (shown in the form)')}</div>
-    <div class="f"><span>Logo in the form header</span><div class="pick-row">${imgPick('brand.logo', { size: 'logo', empty: 'Upload logo' })}${B.client?.logo && B.client.logo !== d.brand.logo ? `<button class="btn small" data-act="use-client-logo">Use client logo</button>` : ''}</div></div>
+    <div class="row">${inp('name', 'Internal name', { tip: H.internalName })}${inp('brand.name', 'Store name (shown in the form)', { tip: H.storeName })}</div>
+    <div class="f"><span>Logo in the form header ${help(H.logo)}</span><div class="pick-row">${imgPick('brand.logo', { size: 'logo', empty: 'Upload logo' })}${B.client?.logo && B.client.logo !== d.brand.logo ? `<button class="btn small" data-act="use-client-logo">Use client logo</button>` : ''}</div></div>
     <div class="row">
-      ${inp('maxRenders', 'Previews per customer', { kind: 'number', type: 'number', hint: 'First render plus refinements, 1 to 10.' })}
-      ${inp('background', 'Render background', { ph: 'deep charcoal black', hint: 'Backdrop of the AI renders.' })}
+      ${inp('maxRenders', 'Previews per customer', { kind: 'number', type: 'number', hint: 'First render plus refinements, 1 to 10.', tip: H.maxRenders })}
+      ${inp('background', 'Render background', { ph: 'deep charcoal black', hint: 'Backdrop of the AI renders.', tip: H.background })}
     </div>
-    <label class="f"><span>Picture style</span><select class="sel" data-bind="imageStyle" data-rerender><option value="dark" ${d.imageStyle === 'light' ? '' : 'selected'}>Studio Dark</option><option value="light" ${d.imageStyle === 'light' ? 'selected' : ''}>Studio Light</option></select><p class="hint">Pictures on every choice in the form: dark studio backdrop or soft ivory backdrop.</p></label>
-    <label class="f"><span>Highlight video of the piece</span><select class="sel" data-bind="highlightVideo" data-rerender><option value="" ${d.highlightVideo ? '' : 'selected'}>Off</option><option value="button" ${d.highlightVideo === 'button' ? 'selected' : ''}>Customer button: "Generate a highlight video of your piece"</option><option value="backend" ${d.highlightVideo === 'backend' ? 'selected' : ''}>Only for the jeweler: made after the first render, shown in the portal</option></select><p class="hint">A short turning video of the first render (or any version the customer picks), about 10 s. Each video is an extra AI cost (about $0.20) and needs the video key on the server. Up to 2 per lead.</p></label>
-    <label class="f"><span>Client</span><select class="sel" data-bind="clientId" data-rerender>${d.clientId ? '' : '<option value="">No client</option>'}${clientOpts}</select></label>
-    <h3>Theme</h3>
+    <label class="f"><span>Picture style ${help(H.imageStyle)}</span><select class="sel" data-bind="imageStyle" data-rerender><option value="dark" ${d.imageStyle === 'light' ? '' : 'selected'}>Studio Dark</option><option value="light" ${d.imageStyle === 'light' ? 'selected' : ''}>Studio Light</option></select><p class="hint">Pictures on every choice in the form: dark studio backdrop or soft ivory backdrop.</p></label>
+    <label class="f"><span>Highlight video of the piece ${help(H.video)}</span><select class="sel" data-bind="highlightVideo" data-rerender><option value="" ${d.highlightVideo ? '' : 'selected'}>Off</option><option value="button" ${d.highlightVideo === 'button' ? 'selected' : ''}>Customer button: "Generate a highlight video of your piece"</option><option value="backend" ${d.highlightVideo === 'backend' ? 'selected' : ''}>Only for the jeweler: made after the first render, shown in the portal</option></select><p class="hint">A short turning video of the first render (or any version the customer picks), about 10 s. Each video is an extra AI cost (about $0.20) and needs the video key on the server. Up to 2 per lead.</p></label>
+    <label class="f"><span>Client ${help(H.clientField)}</span><select class="sel" data-bind="clientId" data-rerender>${d.clientId ? '' : '<option value="">No client</option>'}${clientOpts}</select></label>
+    <h3>Theme ${help(H.theme)}</h3>
     <div class="presets">${presets}</div>
     ${contrastNote(d.theme || {})}
     <div class="colors">${colors}</div>`;
@@ -937,12 +1006,12 @@ function piecesView() {
       </div>`).join('');
     editor = `
       <div class="card sel" style="margin-top:16px">
-        ${art ? inp(`${op}.label`, 'Name shown to customers') : `<div class="row">${inp(`${op}.label`, 'Name shown to customers')}${iconPicker(`${op}.icon`, o.icon)}</div>`}
-        <div class="f"><span>${art ? 'Card image' : 'Card image (optional, replaces the icon)'}</span><div class="pick-row">${cardImagePick(`${op}.image`, art, optionArt('type', { ...o, image: '', noImage: false }))}</div></div>
-        ${area(`${op}.subject`, 'How the AI should describe this piece', { ph: 'e.g. a custom western belt buckle, oval, front view', hint: 'Optional for built-in pieces (pendant, chain, ring, grillz, bracelet, earrings, watch). Needed for new ones.' })}
+        ${art ? inp(`${op}.label`, 'Name shown to customers', { tip: H.pieceName }) : `<div class="row">${inp(`${op}.label`, 'Name shown to customers', { tip: H.pieceName })}${iconPicker(`${op}.icon`, o.icon)}</div>`}
+        <div class="f"><span>${art ? 'Card image' : 'Card image (optional, replaces the icon)'} ${help(H.cardImage)}</span><div class="pick-row">${cardImagePick(`${op}.image`, art, optionArt('type', { ...o, image: '', noImage: false }))}</div></div>
+        ${area(`${op}.subject`, 'How the AI should describe this piece', { ph: 'e.g. a custom western belt buckle, oval, front view', hint: 'Optional for built-in pieces (pendant, chain, ring, grillz, bracelet, earrings, watch). Needed for new ones.', tip: H.subject })}
       </div>
-      ${o.value === 'grillz' ? `<div class="toggles" style="margin:14px 0 4px">${toggle('tryOn', 'Offer "See them on your smile" after the render (customer uploads a smiling photo)', { invert: true, title: 'The AI shows the customer wearing the grillz. The photo stays private.' })}</div>` : ''}
-      <h3>Styles for ${esc(o.label)}</h3>
+      ${o.value === 'grillz' ? `<div class="toggles" style="margin:14px 0 4px">${toggle('tryOn', 'Offer "See them on your smile" after the render (customer uploads a smiling photo)', { invert: true, title: 'The AI shows the customer wearing the grillz. The photo stays private.' })} ${help(H.tryOn)}</div>` : ''}
+      <h3>Styles for ${esc(o.label)} ${help(H.styles)}</h3>
       <p class="hint" style="margin:-6px 0 12px">Customers pick one of these. The picture also guides the AI's shape, so photos of the jeweler's own pieces work best. "Something else" is added automatically.</p>
       <div class="styles">${cards}</div>
       <button class="btn small" style="margin-top:12px" data-act="add-style">+ Add style</button>
@@ -951,7 +1020,7 @@ function piecesView() {
   }
   const single = opts.length === 1 ? `<p class="note">One piece only, so the piece step is ${loc.step.enabled === false ? 'hidden and the piece is picked automatically' : 'shown'}. Turn it on or off under Form steps below.</p>` : '';
   return `
-    <h2>Pieces &amp; styles</h2>
+    <h2>Pieces &amp; styles ${help(H.pieces)}</h2>
     <p class="lead">Everything for one piece in one place: its styles, every step and question customers see, and the options they choose from.</p>
     ${single}
     <div class="pieces">${list}</div>
@@ -1020,7 +1089,7 @@ function stepsView(o) {
       </section>`;
   }).join('');
   return `
-    <h3>Form steps for ${esc(o.label)}</h3>
+    <h3>Form steps for ${esc(o.label)} ${help(H.steps)}</h3>
     <p class="hint" style="margin:-6px 0 12px">Every step customers see for ${esc(o.label.toLowerCase())}. Tick what this piece offers; untick everything and the question is skipped for it. The pencil opens the options, questions and images. Required means customers cannot continue without it.</p>
     ${rows}
     <div class="pick-row" style="margin-top:12px"><button class="btn small" data-act="add-piece-question" data-v="${esc(pv)}">+ Add question for ${esc(o.label)}</button><button class="btn small" data-act="add-step">+ Add step</button></div>`;
@@ -1053,7 +1122,7 @@ function renderEditor() {
     <nav class="fe-tabs" aria-label="Questions">${tabs.map((t) => `<button class="fe-tab ${t.f === f ? 'on' : ''} ${t.s.enabled === false || t.f.enabled === false ? 'off' : ''}" data-act="editor-tab" data-i="${t.si}" data-fid="${esc(t.f.id)}" ${t.f === f ? 'aria-current="true"' : ''}>${esc(fieldName(t.f, t.s))}</button>`).join('')}</nav>
     <div class="fe-body">
       <details class="fe-step" ${B.editor.stepOpen ? 'open' : ''}>
-        <summary>Step settings <small>${esc(s.title || '')}</small></summary>
+        <summary>Step settings ${help(H.stepSettings)} <small>${esc(s.title || '')}</small></summary>
         <div class="toggles">${toggle(`steps.${si}.autoAdvance`, 'Go to the next step right after a choice')}</div>
         <div class="row">${inp(`steps.${si}.title`, 'Title')}${inp(`steps.${si}.label`, 'Progress label')}</div>
         ${inp(`steps.${si}.subtitle`, 'Subtitle')}
@@ -1087,7 +1156,7 @@ function productsView() {
       </div>`;
   }).join('');
   return `
-    <h2>Shop products</h2>
+    <h2>Shop products ${help(H.products)}</h2>
     <p class="lead">Products from the jeweler's online shop, shown under the customer's AI preview with the price and a link. Products tied to the customer's piece come first; up to 6 are shown.</p>
     ${inp('result.productsTitle', 'Title above the products', { ph: 'Recommended from our shop' })}
     ${cards || '<p class="note">No products yet. The section stays hidden until you add one.</p>'}
@@ -1141,10 +1210,10 @@ function fieldEditor(i, j, f) {
         </div>
         <input class="in note-in" data-bind="${p}.options.${k}.note" value="${esc(o.note || '')}" placeholder="AI note when chosen (optional), e.g. open face: only the outline of each tooth is covered" />
       </div>`).join('');
-    extra = `<p class="hint" style="margin:0">Options · the image is shown to customers, the AI note goes to the AI</p><div class="opts">${rows}</div><button class="btn small" data-act="add-option" data-path="${p}">+ Add option</button>`;
+    extra = `<p class="hint" style="margin:0">Options ${help(H.options)} · the image is shown to customers, the AI note goes to the AI</p><div class="opts">${rows}</div><button class="btn small" data-act="add-option" data-path="${p}">+ Add option</button>`;
   }
   const follow = CHOICE.includes(f.type)
-    ? `<label class="f"><span>Follow-up after a choice</span><select class="sel" data-bind="${p}.followup" data-rerender><option value="">None</option><option value="text" ${f.followup === 'text' ? 'selected' : ''}>"Add details" text box</option><option value="file" ${f.followup === 'file' ? 'selected' : ''}>"Add a photo" upload</option></select></label>`
+    ? `<label class="f"><span>Follow-up after a choice ${help(H.followup)}</span><select class="sel" data-bind="${p}.followup" data-rerender><option value="">None</option><option value="text" ${f.followup === 'text' ? 'selected' : ''}>"Add details" text box</option><option value="file" ${f.followup === 'file' ? 'selected' : ''}>"Add a photo" upload</option></select></label>`
     : '';
   // Uslovi prikaza: samo polja sa izborom koja su prije ovog. Prvi je showIf (često komad), ostali su andIf i svi moraju važiti.
   const before = B.draft.steps.slice(0, i + 1).flatMap((s, si) => s.fields.filter((x, fj) => (si < i || fj < j) && CHOICE.includes(x.type) && x.options));
@@ -1157,7 +1226,7 @@ function fieldEditor(i, j, f) {
     const vals = c ? `<div class="cond-vals">${(src?.options || []).map((o) => `<label class="check"><input type="checkbox" data-cond-val="${p}" data-ci="${k}" value="${esc(o.value)}" ${list.includes(o.value) ? 'checked' : ''} /> ${esc(o.label)}</label>`).join('')}</div>` : '';
     return `<div class="cond"><select class="sel" data-cond-field="${p}" data-ci="${k}">${sel}</select>${c ? `<select class="sel" data-cond-mode="${p}" data-ci="${k}">${COND_MODES.map(([m, l]) => `<option value="${m}" ${mode === m ? 'selected' : ''}>${l}</option>`).join('')}</select>` : ''}${k ? `<button class="icon-btn danger" data-act="del-cond" data-path="${p}" data-ci="${k}" title="Remove this condition">✕</button>` : ''}</div>${vals}`;
   };
-  const condView = `<div class="conds"><span class="hint cond-title">Show this question <span class="help" tabindex="0" role="button" aria-label="How display conditions work">?<span class="help-pop" role="tooltip">${COND_HELP}</span></span></span>${conds.map((c, k) => condRow(c, k)).join('')}${f.showIf && before.length && (f.andIf || []).length < 6 ? `<button class="btn small" data-act="add-cond" data-path="${p}">+ Add condition</button>` : ''}</div>`;
+  const condView = `<div class="conds"><span class="hint cond-title">Show this question ${help(COND_HELP, 'How display conditions work')}</span>${conds.map((c, k) => condRow(c, k)).join('')}${f.showIf && before.length && (f.andIf || []).length < 6 ? `<button class="btn small" data-act="add-cond" data-path="${p}">+ Add condition</button>` : ''}</div>`;
   return `
     <div class="field ${f.enabled === false ? 'is-off' : ''}" data-si="${i}" data-fid="${esc(f.id)}">
       <div class="card-head"><div class="grow"><b>${esc(f.label || f.id)}</b></div>
@@ -1181,14 +1250,14 @@ function fieldEditor(i, j, f) {
 
 function textsView() {
   return `
-    <h2>Texts</h2>
+    <h2>Texts ${help(H.texts)}</h2>
     <p class="lead">Contact step and the final preview.</p>
-    <h3>Contact step</h3>
+    <h3>Contact step ${help(H.contact)}</h3>
     ${inp('contact.title', 'Title')}
     ${inp('contact.subtitle', 'Subtitle')}
     ${area('contact.consent', 'Consent text', { hint: 'Shown next to the required checkbox. Name the jeweler and the ways they may contact the customer.' })}
     ${inp('contact.button', 'Button')}
-    <h3>Preview</h3>
+    <h3>Preview ${help(H.preview)}</h3>
     ${area('result.loading', 'Messages while rendering (one per line)', { kind: 'lines' })}
     ${inp('result.done', 'Message under the render')}
     ${area('result.disclaimer', 'Disclaimer under the render')}`;
@@ -1199,17 +1268,17 @@ function embedView() {
   const iframe = `<iframe src="${o}/f/${B.id}" style="width:100%;height:900px;border:0" loading="lazy" allow="fullscreen" title="Design your piece"></iframe>`;
   const others = B.client ? clientForms(B.client.id).filter((f) => f.id !== B.id) : [];
   return `
-    <h2>Embed</h2>
+    <h2>Embed ${help(H.embed)}</h2>
     <p class="lead">Paste this where the form should appear. The live form always uses the last <b>saved</b> version.</p>
     ${dirty() ? '<p class="note">You have unsaved changes. Save first so the embedded form shows them.</p>' : ''}
-    <h3>Recommended snippet</h3>
+    <h3>Recommended snippet ${help(H.snippet)}</h3>
     <pre class="code">${esc(snippetFor(B.id))}</pre><button class="btn small" data-act="copy-text" data-text="${esc(snippetFor(B.id))}">Copy snippet</button>
-    <h3>Plain iframe (Wix and strict builders)</h3>
+    <h3>Plain iframe (Wix and strict builders) ${help(H.iframe)}</h3>
     <pre class="code">${esc(iframe)}</pre><button class="btn small" data-act="copy-text" data-text="${esc(iframe)}">Copy iframe</button>
-    <h3>Direct link</h3>
+    <h3>Direct link ${help(H.link)}</h3>
     <pre class="code">${esc(`${o}/f/${B.id}`)}</pre><button class="btn small" data-act="copy-text" data-text="${esc(`${o}/f/${B.id}`)}">Copy link</button>
     ${others.length ? `<h3>Other forms of ${esc(B.client.name)}</h3>${others.map((f) => `<div class="card"><div class="card-head"><div class="grow"><b>${esc(f.name)}</b><p class="hint" style="margin:2px 0 0">${esc(tplLabel(f.template))}</p></div><button class="btn small" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button></div></div>`).join('')}` : ''}
-    <h3>Where it may appear</h3>
+    <h3>Where it may appear ${help(H.origins)}</h3>
     <p class="hint">Websites allowed to show this form, one per line (e.g. https://yourstore.com). Empty = any website. Other sites will see a blank frame, so nobody can put this form on their page and spend the client's previews.</p>
     <textarea class="ta" data-origins rows="3" placeholder="https://yourstore.com">${esc((B.draft.allowedOrigins || []).join('\n'))}</textarea>
     <h3>Where to paste</h3>
@@ -1230,14 +1299,14 @@ function historyView() {
         <button class="btn small" data-act="load-version" data-vid="${esc(x.id)}">Load</button></div>
     </div>`).join('');
   return `
-    <h2>History</h2>
+    <h2>History ${help(H.history)}</h2>
     <p class="lead">Every Save keeps the previous version (last 50). Load one to see it in the preview, then Save to make it live again. Nothing changes until you Save.</p>
     ${rows || '<p class="hint">No earlier versions yet. They appear after the next Save.</p>'}`;
 }
 
 function jsonView() {
   return `
-    <h2>JSON</h2>
+    <h2>JSON ${help(H.json)}</h2>
     <p class="lead">The full form definition, for bulk edits. Apply, then Save.</p>
     <textarea class="json" id="json" spellcheck="false">${esc(JSON.stringify(B.draft, null, 2))}</textarea>
     <p class="err-text" id="json-err"></p>
@@ -1403,6 +1472,8 @@ const placeHelp = (e) => {
   pop.style.left = `${left - (got.left - left)}px`;
 };
 document.addEventListener('mouseover', placeHelp);
+// Klik na upitnik ne otvara sekciju (summary) i ne fokusira polje (label).
+document.addEventListener('click', (e) => { if (e.target.closest?.('.help')) e.preventDefault(); }, true);
 document.addEventListener('focusin', placeHelp);
 
 app.addEventListener('click', async (e) => {
