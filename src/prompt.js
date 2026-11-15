@@ -9,7 +9,7 @@ const SUBJECT = {
   grillz: 'a custom set of dental grillz (teeth jewelry), front view, displayed on its own without a mouth or face',
   bracelet: 'a custom bracelet laid in one relaxed oval, a single continuous closed loop joined at the clasp, never doubled or stacked, link and clasp detail visible',
   earrings: 'a matching pair of custom earrings, front view, side by side',
-  watch: 'a custom iced-out luxury wristwatch, dial facing the camera, strap or bracelet visible, no real brand names or logos on the dial',
+  watch: 'a custom luxury wristwatch (how much it is iced follows the stone choices below), dial facing the camera, strap or bracelet visible, no real brand names or logos on the dial',
 };
 
 const METAL = {
@@ -28,8 +28,8 @@ const STONES = {
 
 const COVERAGE = {
   accents: 'set as tasteful accents on key details only',
-  half: 'pave-set across roughly half of the visible surface',
-  full: 'fully iced out with dense pave covering the entire visible surface',
+  half: 'pave-set across roughly half of the visible outer surface',
+  full: 'fully iced out with dense pave covering the entire visible outer surface',
 };
 
 const CLARITY = {
@@ -38,6 +38,20 @@ const CLARITY = {
   VVS: 'exceptionally clear stones with strong fire and sparkle',
   Flawless: 'flawless, perfectly clear stones with intense fire and sparkle',
 };
+
+// Kamenje ide samo spolja: model je okivao i unutrašnjost prstena (Ognjen 15.11). Dio koji dodiruje kožu je uvijek gladak metal.
+const INNER = {
+  ring: 'the inside of the band (the part that touches the finger) is always smooth polished metal, never set with stones',
+  bracelet: 'the inner side of the bracelet that touches the wrist is smooth polished metal, never set with stones',
+  grillz: 'the back of each cap that touches the tooth is plain metal; stones only on the front faces',
+  pendant: 'the back of the pendant is plain polished metal; stones only on the front',
+  earrings: 'the backs and posts are plain metal; stones only on the front',
+  watch: 'the case back and the inner side of the band are plain metal; stones only on the bezel, dial, case sides and outer links',
+  chain: 'stones only on the outer face of the links; the side that lies against the skin is plain metal',
+};
+const stonesOutside = (type) => `Stones are set only on the outer, visible surfaces: ${INNER[type] || 'any surface that touches the skin is smooth polished metal, never set with stones'}.`;
+// "How iced?" = None (zlatar ga postavi kao prvo pitanje o kamenju): bez kamenja na metalu, čak i kad stil inače ima led.
+const NOT_ICED = (type) => `Not iced: no pave, no accent stones and no diamonds on the metal surfaces, even if the style is usually iced; clean polished metal${type === 'ring' ? '. A center stone is set only if one is specified in these instructions' : ''}.`;
 
 const clean = (s, max) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
 
@@ -137,8 +151,14 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
     subject = `exactly ${g.top + g.bottom} individual dental jewelry caps ONLY: ${g.top} upper-tooth caps and ${g.bottom} lower-tooth caps, front view, displayed on their own without a mouth or face`;
   }
   // Opcija koju je zlatar dodao (npr. "Black gold") nema ugrađen opis, pa ide njen natpis.
-  const metal = METAL[a.metal] || (optLabel('metal') ? `polished ${optLabel('metal')}` : 'polished gold');
-  const karat = a.metal !== 'platinum' && a.karat ? ` (${a.karat === '925 Silver' ? 'sterling silver look' : a.karat})` : '';
+  let metal = METAL[a.metal] || (optLabel('metal') ? `polished ${optLabel('metal')}` : 'polished gold');
+  let karat = a.metal !== 'platinum' && a.karat ? ` (${a.karat})` : '';
+  // "925 Silver" u pitanju Karat znači da je komad od srebra; boja zlata je onda samo pozlata (inače "zlato + srebro" zbunjuje model).
+  if (/925|silver/i.test(a.karat || '')) {
+    const tone = { 'yellow-gold': 'yellow gold', 'rose-gold': 'rose gold', 'two-tone': 'two-tone yellow and white' }[a.metal];
+    metal = tone ? `925 sterling silver with a ${tone} plated finish` : 'polished 925 sterling silver';
+    karat = '';
+  }
 
   lines.push(`Create a photorealistic high-end jewelry product photograph of ${subject}.`);
   // Kod grillza stil govori samo broj zuba; tačan izbor zuba ga zamjenjuje.
@@ -162,12 +182,18 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
     if (g.count) lines.push(g.rows === 'both' ? `Exactly ${g.count} teeth covered in each row.` : `Exactly ${g.count} teeth covered, no more.`);
   }
 
-  if (a.stones && a.stones !== 'none') {
+  const notIced = a.coverage === 'none' || /^(none|no|not iced|no icing|no ice)$/i.test(optLabel('coverage'));
+  if (notIced) {
+    lines.push(NOT_ICED(a.type));
+  } else if (a.stones && a.stones !== 'none') {
     const clarity = CLARITY[a.clarity] ? `, ${CLARITY[a.clarity]}` : optLabel('clarity') ? `, ${optLabel('clarity')} clarity` : '';
     const coverage = COVERAGE[a.coverage] || (optLabel('coverage') ? `set as ${optLabel('coverage')}` : fieldOf('coverage') ? COVERAGE.accents : 'set where it suits the design');
     lines.push(`Stones: ${STONES[a.stones] || optLabel('stones') || 'diamonds'}${clarity}, ${coverage}.`);
+    lines.push(stonesOutside(a.type));
   } else if (a.stones === 'none') {
     lines.push('No stones: clean polished metal only.');
+  } else if (COVERAGE[a.coverage] || optLabel('coverage')) {
+    lines.push(`Stones: diamonds, ${COVERAGE[a.coverage] || `set as ${optLabel('coverage')}`}.`, stonesOutside(a.type));
   }
 
   const text = clean(a.inscription, 24);

@@ -24,6 +24,7 @@ Onboarding color and theme choices apply only to the customer form preview. **Yo
 - **Lettering style** (`font` question, `lettering: true`): 10 fonts in one list, each showing the customer's own text, plus Per request with a "describe the font" box. Fonts are OFL, served from `/fonts/lettering/`, list in `public/lettering.js`; the AI gets a description of the letter shapes next to the inscription.
 - **Highlight video** (Brand & look → Highlight video): Off, a customer button "Generate a highlight video of your piece", or only for the jeweler (made after the first render, shown with Download in the portal lead). Needs `PIKA_API_KEY` on the Worker; about $0.20 per 10 s video, up to 2 per lead, counted in the daily and monthly budgets. Check: `scripts/film-check.mjs` (see its header).
 - **Tooth count check**: after a grillz first render a cheap vision model (`COUNT_MODEL`, default `gpt-5-mini`) counts the caps per row; if they differ from the customer's selection the render is made once more with a correction. `TEETH_CHECK=0` turns it off; a failed count never blocks the render. Local: `MOCK_CAPS="7,0;6,0" node scripts/mock-openai.mjs 8899`.
+- **Stones only outside, Not iced**: whenever stones are chosen the prompt keeps skin-side surfaces plain (inside of a ring band, back of a pendant, inner side of a bracelet, back of grillz caps). How iced? = None says "Not iced" outright, even for styles that are usually iced. "925 Silver" in Karat makes the metal 925 sterling silver (a gold color becomes plating).
 - **No environment reflections**: every render and refinement prompt forbids reflected windows, doors, rooms and softboxes in the metal (`NO_ENV_REFLECTIONS` in `src/prompt.js`).
 - **Grillz try-on**: after a grillz render the customer can upload a smiling photo and see themselves wearing the design (2 per lead, photos stay private: customer via their lead token, the jeweler and admin). Turn it off per form in Pieces & styles.
 - **Style library** (`public/library/`): reference images per style, sent to the model with the prompt so the shape comes out right.
@@ -156,6 +157,7 @@ If Gemini answers "User location is not supported", add a placement region to `w
 ```bash
 node scripts/templates-check.mjs     # every template passes validation
 node scripts/prompt-check.mjs        # prompt building (notes, hidden questions, tooth picker)
+node scripts/prompt-coverage-check.mjs [form.json]  # every choice of every piece reaches the AI prompt (templates, or a form saved from /api/forms/<id>)
 node scripts/platform-check.mjs      # clients, forms, uploads (server must run)
 node scripts/viewas-check.mjs        # client portal sessions (server must run)
 node scripts/multi-onboarding-check.mjs # one onboarding per form, phone field, offered answers (server must run)
