@@ -50,7 +50,9 @@ const INNER = {
   watch: 'the case back and the inner side of the band are plain metal; stones only on the bezel, dial, case sides and outer links',
   chain: 'stones only on the outer face of the links; the side that lies against the skin is plain metal',
 };
-const stonesOutside = (type) => `Stones are set only on the outer, visible surfaces: ${INNER[type] || 'any surface that touches the skin is smooth polished metal, never set with stones'}.`;
+// Opšte pravilo za svaki render i svaku doradu, i kad kupac led traži samo opisom ili doradom ("make it more iced"):
+// iznutra (prsten, sat, narukvica, poleđina) nikad nema leda (Ognjen 16.11: "i to kao pravilo").
+export const INSIDE_RULE = (type) => `Rule for any icing, pave or stones on this piece, now or in any change: ${INNER[type] || 'any surface that touches the skin stays smooth polished metal'}. Never ice or set stones on the inside or the back.`;
 // "How iced?" = None (zlatar ga postavi kao prvo pitanje o kamenju): bez kamenja na metalu, čak i kad stil inače ima led.
 const NOT_ICED = (type) => `Not iced: no pave, no accent stones and no diamonds on the metal surfaces, even if the style is usually iced; clean polished metal${type === 'ring' ? '. A center stone is set only if one is specified in these instructions' : ''}.`;
 
@@ -224,12 +226,13 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
     const clarity = CLARITY[a.clarity] ? `, ${CLARITY[a.clarity]}` : optLabel('clarity') ? `, ${optLabel('clarity')} clarity` : '';
     const coverage = COVERAGE[a.coverage] || (optLabel('coverage') ? `set as ${optLabel('coverage')}` : fieldOf('coverage') ? COVERAGE.accents : 'set where it suits the design');
     lines.push(`Stones: ${STONES[a.stones] || optLabel('stones') || 'diamonds'}${clarity}, ${coverage}.`);
-    lines.push(stonesOutside(a.type));
   } else if (a.stones === 'none') {
     lines.push('No stones: clean polished metal only.');
   } else if (COVERAGE[a.coverage] || optLabel('coverage')) {
-    lines.push(`Stones: diamonds, ${COVERAGE[a.coverage] || `set as ${optLabel('coverage')}`}.`, stonesOutside(a.type));
+    lines.push(`Stones: diamonds, ${COVERAGE[a.coverage] || `set as ${optLabel('coverage')}`}.`);
   }
+
+  if (!notIced) lines.push(INSIDE_RULE(a.type));
 
   const text = clean(a.inscription, 24);
   // Stil slova (pitanje sa lettering: true): opis oblika slova ide uz sam natpis, ne među ostale napomene.
@@ -310,7 +313,7 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
   return lines.join('\n');
 }
 
-export function buildTweakPrompt(tweak, { masked = false } = {}) {
+export function buildTweakPrompt(tweak, { masked = false, type = '' } = {}) {
   return [
     'Edit the attached jewelry product photograph.',
     `The required edit is the customer's request: "${clean(tweak, 300)}"`,
@@ -323,6 +326,7 @@ export function buildTweakPrompt(tweak, { masked = false } = {}) {
     'If the customer requests a hole, opening or cutout, actually remove the metal and stones in that shape and show the background through the opening; do not merely draw a shape on the surface.',
     'Keep the same camera angle, lighting, background and placement. The requested edit must be visible; do not return an unchanged copy of the input.',
     'Keep it photorealistic. No people, no hands, no watermark, no brand logos.',
+    INSIDE_RULE(type),
     NO_ENV_REFLECTIONS,
   ].join('\n');
 }

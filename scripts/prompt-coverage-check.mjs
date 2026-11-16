@@ -48,4 +48,13 @@ for (const form of forms) {
 // Pravila koja moraju stajati u promptu.
 const ring = buildPrompt(fromTemplate('custom-enquiry', { id: 'x', brand: 'B' }), { type: 'ring', metal: 'yellow-gold', karat: '14K', stones: 'natural', coverage: 'full' });
 if (!/inside of the band .* never set with stones/.test(ring)) { fails++; console.log('FAIL ring: inside of the band is not kept plain'); } else console.log('OK   ring: stones only on the outside');
+// Pravilo važi i kad kupac led traži samo opisom ili doradom (16.11): svaki render i svaka dorada ga nose.
+{
+  const { buildTweakPrompt } = await import('../src/prompt.js');
+  const plain = buildPrompt(fromTemplate('ring', { id: 'inside-check', brand: 'Check' }), { type: 'ring', style: 'other', metal: 'yellow-gold', vision: 'fully iced out ring' });
+  const tweak = buildTweakPrompt('make it fully iced', { type: 'watch' });
+  for (const [name, p, re] of [['ring by description', plain, /inside of the band .* never set with stones/], ['watch refinement', tweak, /case back and the inner side of the band are plain metal/]]) {
+    if (!re.test(p) || !/Never ice or set stones on the inside/.test(p)) { fails++; console.log(`FAIL ${name}: no inside rule`); } else console.log(`OK   ${name}: never iced inside`);
+  }
+}
 if (fails) process.exit(1);

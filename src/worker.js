@@ -676,7 +676,7 @@ async function nightly(env) {
 
 // Ulaz za model: prvi render (slika stila iz biblioteke ili buildera, pa slika kupca) ili dorada (baza + izmjena).
 async function renderInputs(env, request, form, answers, { ref = null, tweak = '', base = null, masked = false } = {}) {
-  if (tweak && base) return { images: [base], prompt: buildTweakPrompt(tweak, { masked }) };
+  if (tweak && base) return { images: [base], prompt: buildTweakPrompt(tweak, { masked, type: answers.type }) };
   const images = [];
   const refs = [];
   const style = styleOf(form, answers);
