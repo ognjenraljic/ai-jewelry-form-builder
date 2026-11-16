@@ -46,8 +46,9 @@ function withKey(env, key, geminiFallback) {
 const maskModel = (env, model) => (pikaImages(env) ? MODELS.pikagpt : model);
 const firstModel = (env) => (pikaImages(env) ? 'pikapro' : withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro'));
 const tweakModel = (env) => (pikaImages(env) ? 'pikaflash' : withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash'));
-// Precision edits and sparse grillz need stronger count/shape adherence than everyday image generation.
-const grillzModel = (env) => withKey(env, MODELS[env.GRILLZ_MODEL] ? env.GRILLZ_MODEL : 'gptsun', 'pro');
+// Grillz: isti brzi model kao ostali komadi (2.6 Flare, ~10 s umjesto 40-70 s na 2.5 Sunburstu). Broj zuba drži mapa zuba
+// kao referenca uz prompt (Ognjen 16.11: slika odmah, bez brojanja). GRILLZ_MODEL (npr. gptsun) vraća sporiji, tačniji model.
+const grillzModel = (env) => (MODELS[env.GRILLZ_MODEL] ? withKey(env, env.GRILLZ_MODEL, 'pro') : firstModel(env));
 const tryOnModel = (env) => {
   const model = MODELS[withKey(env, MODELS[env.TRYON_MODEL] ? env.TRYON_MODEL : 'gptsun', 'pro')];
   return { ...model, quality: /^gpt-image-2\.[56]-/.test(model.id) ? 'xhigh' : model.quality };

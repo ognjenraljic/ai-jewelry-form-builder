@@ -136,25 +136,25 @@ const CINEMATIC_STYLE =
   'faint warm haze and a gentle glow around the brightest highlights, shallow depth of field, razor sharp macro detail on the piece. ' +
   'Square composition, the piece fills about 60% of the frame and sits in the center, with dark empty space around it. No people, no hands, no props, no text beyond what is specified, no watermark, no brand logos or trademarks. ' + NO_ENV_REFLECTIONS;
 
-// Nakit se okrene tačno jednom oko svoje ose i vrati na početni ugao: prvi i zadnji kadar su isti, pa se film vrti u krug.
-// Privjesak i minđuše vise, pa se vrte oko tačke na kojoj vise, a ne na postolju.
+// Video prvog kadra (Pika H3 Flex). Ranije pun okret od 360°: model je morao izmisliti stranu koja se na slici ne vidi i
+// dodavao detalje (Ognjen 16.11). Sada se komad samo blago njiše i vraća, pa se vidi samo ono što je na slici; pomjera se svjetlo.
+// Prvi i zadnji kadar su isti, pa se video vrti u krug. Privjesak i minđuše vise, pa se njišu oko tačke na kojoj vise.
 const HANGING = new Set(['pendant', 'earrings']);
 
 export function buildFilmPrompt(piece, type = '') {
   const name = clean(piece, 60).toLowerCase() || 'piece';
-  const turn = 'one complete smooth 360-degree turn at a slow constant speed, ending at precisely the starting angle';
+  const move = HANGING.has(type)
+    ? type === 'earrings'
+      ? 'Both earrings sway very gently on their hooks, turning only slightly left and right (no more than 15 degrees) and settling back exactly where they started. The hooks stay still.'
+      : `The ${name} sways very gently on its chain, turning only slightly left and right (no more than 15 degrees) and settling back exactly where it started. The chain stays still.`
+    : `The ${name} turns very slowly a little to the left, then a little to the right (no more than 15 degrees each way), and returns precisely to its starting angle. It never turns around: only the side visible in the first frame is ever seen.`;
   return [
-    'Luxury jewelry commercial, one continuous seamless shot that begins and ends on exactly the same frame.',
-    HANGING.has(type)
-      ? type === 'earrings'
-        ? `Both earrings hang in place and slowly spin together, each around its own vertical axis, ${turn}. The hooks stay still.`
-        : `The ${name} hangs in place and slowly spins around its own vertical axis, ${turn}. The chain stays still.`
-      : `The ${name} slowly rotates around its own vertical axis on a hidden turntable, ${turn}.`,
-    'The camera stays almost still, with only a very slight slow drift.',
-    'The jewelry keeps its exact design while it turns: same shape, same stones, same metal, same lettering, no morphing, no extra parts.',
-    'The narrow warm beam of light stays fixed, so highlights glide across the polished metal and the stones flash with rainbow fire and tiny star glints as they turn into the light.',
-    'Thin haze drifts slowly through the beam on a pure black background, with a soft reflection in black mirror glass below.',
-    'Calm, slow, elegant, anamorphic film look. Soft low ambient tone with a delicate shimmer, no beat, no sudden sounds. No cuts, no added text, no hands, no people.',
+    'Luxury jewelry commercial: one continuous seamless shot that starts and ends on exactly the same frame as the input image.',
+    move,
+    'Keep the piece EXACTLY as it is in the input image, frame after frame: the same shape and proportions, the same number of teeth, caps, links, stones and letters, the same engraving or cut pattern, the same lettering, the same metal color and finish.',
+    'Do not add, remove or change any detail: no new stones, no new engravings or patterns, no new text, no extra parts, no morphing, no melting, no redesign.',
+    'Only the light moves: a soft highlight glides slowly across the polished metal and the stones sparkle with small glints as they catch it.',
+    'Keep the same background, framing and lighting setup as the input image. The camera stays still. Calm, slow and elegant. No cuts, no added text, no hands, no people.',
   ].join(' ');
 }
 

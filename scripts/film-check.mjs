@@ -62,7 +62,8 @@ check(a.data.film?.id && a.data.film.id === b.data.film?.id, 'dva istovremena kl
 check((await video()).length === before + 1, 'plaćen je samo jedan posao');
 const job = (await video()).pop();
 check(job.path.includes('pika/pika-h3-flex/image-to-video') && job.body.duration === 10 && job.body.resolution === '768p' && job.body.last_frame_image === job.body.image && job.body.rewrite === false, 'H3 Flex, 10 s, 768p, zadnji kadar = prvi');
-check(job.body.prompt.includes('The ring slowly rotates') && job.body.prompt.includes('360-degree'), 'prompt okreće komad jednom u krug');
+check(job.body.prompt.includes('The ring turns very slowly a little') && job.body.prompt.includes('never turns around') && !job.body.prompt.includes('360'), 'prompt samo blago njiše komad (bez okreta od 360°, da ne izmišlja zadnju stranu)');
+check(job.body.prompt.includes('Do not add, remove or change any detail'), 'prompt čuva svaki detalj slike');
 
 const id = a.data.film.id;
 check((await send(`${api}/films/${id}`)).status === 403, 'stanje filma traži token');
