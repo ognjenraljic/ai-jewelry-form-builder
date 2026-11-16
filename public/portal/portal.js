@@ -1,5 +1,5 @@
 import { createLeadStore } from './leads.js';
-import { estimate, middleGround, parseBudget, LEVELS, PIECES, key as pkey, money } from '/pricing.js';
+import { estimate, middleGround, parseBudget, LEVELS, PIECES, SUGGESTED_PRICING, key as pkey, money } from '/pricing.js';
 import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
 import { SUGGESTED, suggestOptions } from '/option-suggestions.js';
@@ -132,11 +132,12 @@ function pricingView() {
   const stones = uniq(specs.flatMap((s) => (s.stones || []).filter((o) => o.value !== 'none').map((o) => o.label)));
   const cuts = uniq(specs.flatMap((s) => (s.cut || []).map((o) => o.label)));
   const pieces = uniq(specs.flatMap((s) => (s.type || []).map((o) => o.value))).filter((x) => PIECES.includes(x));
-  const ro = readOnly() ? 'disabled' : '';
+  const ro = '';
   const inp = (path, v, ph = '') => `<input class="in pin" type="number" min="0" step="0.01" inputmode="decimal" data-price="${esc(path)}" value="${v ?? ''}" placeholder="${esc(ph)}" ${ro} />`;
   const per = (pc) => (pc === 'grillz' ? 'per tooth' : 'per piece');
   return `<section class="pricing">
-    <p class="note">Your prices for the estimate next to every lead. Only you see them. Metal prices change, so update the gold price when it moves. ${readOnly() ? '<b>Admin view is read-only.</b>' : ''}</p>
+    <p class="note">Your prices for the estimate next to every lead. Only you see them. Change any price at any time; metal prices move, so update the gold price when it does.</p>
+    <div class="pfill"><button type="button" class="btn small" data-act="fill-pricing">Fill suggested prices</button><span class="hint">Fills only empty fields with starting prices (gold $124/g on Nov 16, 2026, stones and labor per tooth). Then press Save.</span></div>
     <div class="pgrid2">
       <div class="pcard2"><h3>Gold and markup</h3>
         <label class="prow"><span>Pure gold (24K) price per gram, $</span>${inp('goldSpot', pr.goldSpot)}</label>
@@ -148,7 +149,7 @@ function pricingView() {
         ${[...stones, 'Default (no stone type chosen)'].map((st) => { const k = /^default/i.test(st) ? 'default' : pkey(st); return `<span>${esc(st)}</span>${LEVELS.map((v) => inp(`stones.${k}.${v}`, pr.stones?.[k]?.[v])).join('')}`; }).join('')}</div></div>
       ${cuts.length ? `<div class="pcard2"><h3>Cut, extra $ per tooth</h3>${cuts.map((c) => `<label class="prow"><span>${esc(c)}</span>${inp(`cuts.${pkey(c)}`, pr.cuts?.[pkey(c)])}</label>`).join('')}</div>` : ''}
     </div>
-    ${readOnly() ? '' : '<div class="pfoot"><button class="btn gold" data-act="save-pricing">Save prices</button><span class="psaved" role="status"></span></div>'}
+    <div class="pfoot"><button class="btn gold" data-act="save-pricing">Save prices</button><span class="psaved" role="status"></span></div>
   </section>`;
 }
 function readPricing() {
@@ -417,6 +418,14 @@ app.addEventListener('click', async (e) => {
   if (t.dataset.shift) { P.shift = Math.max(0, P.shift + Number(t.dataset.shift)); if (await loadLeads()) render(); }
   if (t.dataset.day) { P.day = P.day === t.dataset.day ? '' : t.dataset.day; if (await loadLeads()) render(); }
   if (t.dataset.act === 'all-days') { P.day = ''; if (await loadLeads()) render(); }
+  if (t.dataset.act === 'fill-pricing') {
+    for (const el of app.querySelectorAll('[data-price]')) {
+      if (el.value !== '') continue;
+      const v = el.dataset.price.split('.').reduce((o, k) => (o == null ? undefined : o[k]), SUGGESTED_PRICING);
+      if (typeof v === 'number') el.value = v;
+    }
+    const note = app.querySelector('.psaved'); if (note) note.textContent = 'Suggested prices filled in, not saved yet.';
+  }
   if (t.dataset.act === 'save-pricing') {
     const note = app.querySelector('.psaved');
     try { const r = await api('/api/portal/pricing', { method: 'PUT', body: JSON.stringify({ pricing: readPricing() }), json: true }); P.me.pricing = r.pricing; if (note) note.textContent = 'Saved'; }

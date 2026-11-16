@@ -1541,8 +1541,8 @@ async function portalApi(request, env, p, secure) {
     });
   }
   // Tabela cijena za kalkulator (zlatar je sam unosi; cijena metala se stalno mijenja). Admin pregled ne mijenja.
+  // Cijene smije mijenjati i admin u pregledu klijenta (Ognjen ih postavlja zlataru), za razliku od statusa i bilješki.
   if (p === '/api/portal/pricing' && request.method === 'PUT') {
-    if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
     const b = await request.json().catch(() => ({}));
     const pricing = cleanPricing(b.pricing);
     const d = JSON.parse(client.data || '{}');

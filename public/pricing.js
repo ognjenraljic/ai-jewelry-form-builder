@@ -3,6 +3,22 @@
 // Računa ISKLJUČIVO iz tabele cijena koju zlatar sam unese (cijena metala se stalno mijenja); bez tabele nema broja.
 // Ključevi tabele su natpisi izbora malim slovima (isti kroz sve forme), pokrivenost je accents / half / full.
 
+// Početne cijene (16.11.2026) dok zlatar ne upiše svoje: metal po današnjoj berzi (zlato $124/g čisto, platina $47/g,
+// srebro $1,5/g), a rad i kamenje po zubu podešeni da pogode dvije prave Districtove ponude:
+// 16 zuba 10K potpuno okovano moissanitom ~ $15.000 i 20 zuba 10K natural akcenti ~ $13.000. Zlatar mijenja sve.
+export const SUGGESTED_PRICING = {
+  goldSpot: 124, markup: 30,
+  metals: { platinum: 50, silver: 2, 'sterling silver': 2, 'dental gold': 45 },
+  grams: { grillz: 2, pendant: 12, ring: 6, chain: 25, bracelet: 20, earrings: 4 },
+  labor: { grillz: 100, pendant: 250, ring: 200, chain: 150, bracelet: 150, earrings: 120 },
+  stones: {
+    moissanite: { accents: 120, half: 300, full: 520 },
+    'lab-grown diamonds': { accents: 200, half: 500, full: 900 },
+    'natural diamonds': { accents: 300, half: 750, full: 1400 },
+    default: { accents: 200, half: 500, full: 900 },
+  },
+  cuts: { polished: 0, solid: 0, 'open face': 15, 'diamond cut': 25, 'rose cut': 35, 'nugget cut': 25, 'perm cut': 15, 'weed cut': 30, 'pineapple cut': 30, 'starburst cut': 30, 'diamond cut n dust': 35 },
+};
 export const PURITY = { '10k': 10 / 24, '14k': 14 / 24, '18k': 18 / 24, '22k': 22 / 24, '24k': 1 };
 export const LEVELS = ['accents', 'half', 'full'];
 export const PIECES = ['grillz', 'pendant', 'chain', 'ring', 'bracelet', 'earrings', 'watch'];
