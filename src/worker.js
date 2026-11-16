@@ -6,7 +6,8 @@ import { applyPresetTeeth } from '../public/grillz-selection.js';
 import { stepNeedsAnswer, fieldRequired, conditionsMet } from '../public/step-rules.js';
 import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
-import { artList, styleList } from '../public/option-art.js';
+import { artList, styleList, metalFamily } from '../public/option-art.js';
+import { teethMapImage } from './teethmap.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, FILM_API, FILM_EST_USD } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
@@ -171,7 +172,9 @@ async function getForm(env, id) {
   if (!form) return json({ error: 'This form is not available.' }, 404);
   const out = publicForm(form);
   if (turnstileOn(env)) out.turnstile = env.TURNSTILE_SITE_KEY;
-  if (filmMode(env, form) === 'button') out.film = true;
+  const fm = filmMode(env, form);
+  if (fm === 'button') out.film = true;
+  else if (fm === 'auto') out.film = 'auto';
   if (env.DEV_MODE === '1') {
     const auto = { key: 'auto', label: `Auto (${MODELS[firstModel(env)].label} pa ${MODELS[tweakModel(env)].label})` };
     out.dev = { models: [auto, ...Object.entries(MODELS).map(([k, v]) => ({ key: k, label: v.label }))], defaultModel: 'auto' };
@@ -323,7 +326,7 @@ async function createRender(request, env, leadId, ctx) {
       await monthlyBudgetCheck(env, lead.form_id).catch((e) => console.error('monthly budget check', e.message));
       // Provjeru zuba pokreće forma odmah poslije prikaza (POST /api/leads/<id>/check): waitUntil živi samo ~30 s poslije
       // odgovora, a ispravljen render traje duže. Video samo za zlatara: kod provjere kreće poslije nje (od tačne slike).
-      if (!checking && !isTweak && n === 1 && filmMode(env, form) === 'backend') ctx?.waitUntil?.(startLeadFilm(env, lead, form, n).catch((e) => console.error('backend film', e.message)));
+      if (!checking && !isTweak && n === 1 && autoFilm(env, form)) ctx?.waitUntil?.(startLeadFilm(env, lead, form, n).catch((e) => console.error('auto film', e.message)));
       return json({
         url: `/media/${key}`, n, remaining: form.maxRenders - n, ...(checking ? { checking: true } : {}),
         ...(env.DEV_MODE === '1' ? { dev: { model: out.modelUsed && out.modelUsed !== model.id ? `${model.label} -> ${out.modelUsed}` : model.label, ms: out.ms, inTokens: out.inT, outTokens: out.outT, costUsd: out.cost, prompt } } : {}),
@@ -367,7 +370,7 @@ async function teethCheckRoute(request, env, leadId, ctx) {
     const { images } = await renderInputs(env, request, form, answers, { ref, tweak: '', base: null, masked: false });
     const modelKey = Object.keys(MODELS).find((k) => MODELS[k].id === row.model) || grillzModel(env);
     await checkTeeth(env, { leadId, renderId: row.id, n: row.n, model: MODELS[modelKey], prompt: row.prompt, images, out, plan });
-    if (row.n === 1 && filmMode(env, form) === 'backend') await startLeadFilm(env, lead, form, row.n).catch((e) => console.error('backend film', e.message));
+    if (row.n === 1 && autoFilm(env, form)) await startLeadFilm(env, lead, form, row.n).catch((e) => console.error('auto film', e.message));
   })();
   ctx?.waitUntil?.(work.catch(() => {}));
   await work.catch((e) => console.error('teeth check route', e.message));
@@ -407,7 +410,8 @@ async function checkTeeth(env, { leadId, renderId, n, model, prompt, images, out
 // Jeftin model sa vidom broji kape po redu. Ako poziv ne uspije, render ide dalje bez provjere (nikad ne ruši render).
 // TEETH_CHECK=0 gasi provjeru; COUNT_MODEL bira model (podrazumijevano gpt-5-mini).
 const COUNT_PRICE = { in: 0.25, out: 2 }; // $ po milion tokena, gpt-5-mini
-const teethCheckOn = (env) => env.TEETH_CHECK !== '0' && !!env.OPENAI_API_KEY;
+// Brojanje zuba poslije rendera je isključeno (Ognjen 16.11: broj mora pogoditi prompt sa mapom zuba); TEETH_CHECK=1 ga vraća.
+const teethCheckOn = (env) => env.TEETH_CHECK === '1' && !!env.OPENAI_API_KEY;
 async function countCaps(env, out) {
   if (!teethCheckOn(env) || !out?.b64) return null;
   const api = env.DEV_MODE === '1' && env.OPENAI_BASE ? env.OPENAI_BASE : 'https://api.openai.com';
@@ -451,7 +455,10 @@ const filmJson = (f) => ({ id: f.id, status: f.status, created: f.created_at, ..
 
 // Video komada po formi (form.highlightVideo): 'button' = kupac klikne "Generate a highlight video",
 // 'backend' = pravi se sam poslije prvog rendera i vidi ga samo zlatar u portalu, bez = isključeno. Uvijek traži PIKA_API_KEY.
-const filmMode = (env, form) => (pikaOn(env) && ['button', 'backend'].includes(form?.highlightVideo) ? form.highlightVideo : null);
+// 'auto' = kreće sam čim je prva slika gotova, kupac ga vidi u prozorčiću ispod slike (Ognjen 16.11).
+const filmMode = (env, form) => (pikaOn(env) && ['button', 'backend', 'auto'].includes(form?.highlightVideo) ? form.highlightVideo : null);
+// Film koji kreće sam poslije prvog rendera (bez klika): zlatarev pozadinski i kupčev automatski.
+const autoFilm = (env, form) => ['backend', 'auto'].includes(filmMode(env, form));
 
 async function createFilm(request, env, leadId) {
   if (!pikaOn(env)) return json({ error: 'Not available.' }, 404);
@@ -459,7 +466,7 @@ async function createFilm(request, env, leadId) {
   const lead = await env.DB.prepare('SELECT * FROM leads WHERE id = ?').bind(leadId).first();
   if (!lead || !body.token || !safeEqual(body.token, lead.token)) return json({ error: 'Not allowed.' }, 403);
   const form = await loadForm(env, lead.form_id);
-  if (filmMode(env, form) !== 'button') return json({ error: 'Not available.' }, 404);
+  if (!['button', 'auto'].includes(filmMode(env, form))) return json({ error: 'Not available.' }, 404);
   const out = await startLeadFilm(env, lead, form, body.n);
   return json(out.film ? { film: out.film } : { error: out.error, ...(out.paused ? { paused: true } : {}), ...(out.dev ? { dev: out.dev } : {}) }, out.status);
 }
@@ -682,6 +689,12 @@ async function renderInputs(env, request, form, answers, { ref = null, tweak = '
       if (res.ok) img = { mime: 'image/webp', b64: toB64(await res.arrayBuffer()) };
     }
     if (img) { images.push(img); refs.push('style'); }
+  }
+  // Grillz sa tačno izabranim zubima: mapa zuba (ravan crtež, izabrani zubi u boji metala) kao referenca rasporeda.
+  if (answers.type === 'grillz') {
+    const metalOpt = (form.steps || []).flatMap((st) => st.fields).find((f) => f.id === 'metal')?.options?.find((o) => o.value === answers.metal);
+    const map = await teethMapImage(answers.teeth, metalFamily(metalOpt?.label || answers.metal || '')).catch(() => null);
+    if (map) { images.push({ mime: map.mime, b64: map.b64 }); refs.push('teethmap'); }
   }
   if (ref) { images.push(ref); refs.push('customer'); }
   return { images, prompt: buildPrompt(form, answers, { refs, style, cinematic: pikaImages(env) }) };

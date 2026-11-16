@@ -281,6 +281,12 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
         `${n} shows the required SHAPE and construction for this style. Match its silhouette, proportions and number of elements closely. ` +
           'It is a plain neutral reference: ignore its metal color, its background and any letters on it, and apply the metal, stones and text described here instead.'
       );
+    } else if (kind === 'teethmap') {
+      lines.push(
+        `${n} is a TOOTH MAP: a flat schematic of the mouth seen from the front, upper row on top and lower row below. It is a layout guide only, not a photo: never copy its flat shapes, colors, outlines or black background. ` +
+          `Each FILLED tooth shape is exactly one tooth that gets a cap (${g?.top || 0} filled in the top row, ${g?.bottom || 0} filled in the bottom row). Each empty outlined shape is a bare position that gets no metal at all. ` +
+          'Place the caps exactly on the filled positions, in the same order and spacing, with the same relative widths (narrower lower teeth), and nothing on the outlined positions.'
+      );
     } else if (kind === 'customer') {
       lines.push(
         `${n} is the customer's own inspiration photo. Use it for the details and character of the design, adapted to the materials above. ` +

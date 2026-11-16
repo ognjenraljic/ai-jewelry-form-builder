@@ -316,7 +316,7 @@ export function validateFormDef(f, id) {
   if (f.clientId != null && !SLUG.test(f.clientId)) err('Client: invalid ID');
   if (f.template != null && !TEMPLATES[f.template]) err('Unknown template');
   bool(f.tryOn, 'Try-on on the customer photo');
-  if (f.highlightVideo != null && !['button', 'backend'].includes(f.highlightVideo)) err('Highlight video: button or backend');
+  if (f.highlightVideo != null && !['button', 'backend', 'auto'].includes(f.highlightVideo)) err('Highlight video: auto, button or backend');
   // Sajtovi na kojima se forma smije ugraditi (prazno = svuda). Samo https adrese, bez putanje.
   if (f.allowedOrigins != null) {
     if (!Array.isArray(f.allowedOrigins) || f.allowedOrigins.length > 10) err('Allowed sites: up to 10');

@@ -51,7 +51,7 @@ const S = {
   adv: null, // tajmer za automatski prelaz na sljedeći korak
   focusKey: '', // šta vratiti u fokus poslije ponovnog crtanja
   fresh: false, // nova slika: animacija pojavljivanja samo tada
-  photo: false, // film je gotov, ali kupac gleda sliku
+  watch: false, // kupac je otvorio video iz prozorčića (inače gleda sliku)
   sound: false, // zvuk filma (browser dozvoljava autoplay samo bez zvuka)
   tryOk: false, // pristanak za fotografiju (proba na osmijehu)
   ts: '', // Turnstile token
@@ -644,7 +644,7 @@ function resultView() {
 // ---------- Film komada ----------
 // Prvi kadar filma je sama slika, pa se video pojavi preko nje bez skoka, a zadnji kadar je isti
 // kao prvi, pa se vrti u krug. Traka je samo CSS: ne crta se ponovo stranica dok kupac kuca doradu.
-const filmPlays = (r) => !!r?.film?.url && !S.photo && !S.mask.on && !S.busy;
+const filmPlays = (r) => !!r?.film?.url && S.watch && !S.mask.on && !S.busy;
 const filmVideo = (r) => `<video class="film" src="${esc(r.film.url)}" muted playsinline preload="auto" aria-label="Highlight video of your custom piece"></video>`;
 
 function filmBar() {
@@ -654,22 +654,30 @@ function filmBar() {
   if (!S.cfg.film || S.test || !S.lead || S.busy || !r || S.mask.on) return '';
   return filmButtons(r);
 }
+// Prozorčić za video ispod slike (Ognjen 16.11): dok se pravi, sličica komada sa svjetlom koje prelazi preko nje,
+// prsten napretka oko play dugmeta i poruke koje se smjenjuju; kad je gotov, zlatno dugme "Watch". Klik pušta video preko slike.
+const FILM_TYPICAL_S = 150;
+const FILM_MSGS = ['Setting up the turntable', 'Lighting your piece', 'Catching every sparkle', 'Slow 360° turn in progress', 'Polishing the final frames'];
+const playIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>';
 function filmButtons(r) {
   const f = r.film;
+  const thumb = (cls, inner) => `<span class="ft-thumb ${cls}"><img src="${esc(r.url)}" alt="" />${inner}</span>`;
+  if (f?.url && S.watch) {
+    return `<div class="filmbar"><button type="button" class="chip" data-act="film-photo">Show photo</button><button type="button" class="chip" data-act="film-sound" aria-pressed="${S.sound}">Sound ${S.sound ? 'on' : 'off'}</button></div>`;
+  }
   if (f?.url) {
-    return `<div class="filmbar">
-        <button type="button" class="chip ${S.photo ? '' : 'on'}" data-act="film-show" aria-pressed="${!S.photo}">Video</button>
-        <button type="button" class="chip ${S.photo ? 'on' : ''}" data-act="photo-show" aria-pressed="${S.photo}">Photo</button>
-        ${S.photo ? '' : `<button type="button" class="chip" data-act="film-sound" aria-pressed="${S.sound}">Sound ${S.sound ? 'on' : 'off'}</button>`}
-      </div>`;
+    return `<button type="button" class="filmtile ready" data-act="film-watch">${thumb('', `<span class="ft-play">${playIcon}</span>`)}<span class="ft-text"><b>Your highlight video is ready</b><small>Tap to watch your piece turn in the light</small></span><span class="ft-go">Watch</span></button>`;
   }
   if (f?.status === 'pending') {
     const sec = Math.max(0, (Date.now() - (f.created || Date.now())) / 1000);
-    return `<div class="filmwait" role="status"><p>Making your highlight video</p><span class="film-line" aria-hidden="true"><i style="animation-delay:-${sec.toFixed(1)}s"></i></span><small>A few minutes. You can keep looking around, it will appear here.</small></div>`;
+    const left = Math.max(0, Math.round((FILM_TYPICAL_S - sec) / 60));
+    const msg = FILM_MSGS[Math.floor(sec / 7) % FILM_MSGS.length];
+    return `<div class="filmtile pending" role="status" style="--d:-${sec.toFixed(1)}s">${thumb('', `<span class="ft-ring"></span><span class="ft-play">${playIcon}</span>`)}<span class="ft-text"><b>Filming your piece</b><small><span class="ft-msg">${esc(msg)}</span> · ${sec < FILM_TYPICAL_S - 20 ? `about ${left || 1} min` : 'almost ready'}</small><span class="ft-bar"><i></i></span></span></div>`;
   }
   const used = S.renders.filter((x) => x.film && x.film.status !== 'error').length;
   if (used >= 2) return '';
-  return `<div class="filmbar">${f?.status === 'error' ? '<span class="fine">We could not finish the video.</span>' : ''}<button type="button" class="chip" data-act="film">${f?.status === 'error' ? 'Try again' : 'Generate a highlight video of your piece'}</button></div>`;
+  const err = f?.status === 'error';
+  return `<button type="button" class="filmtile idle" data-act="film">${thumb('', `<span class="ft-play">${playIcon}</span>`)}<span class="ft-text"><b>${err ? 'We could not finish the video' : 'Highlight video of this version'}</b><small>${err ? 'Tap to try again' : 'A slow 10 second turn of your piece'}</small></span><span class="ft-go">${err ? 'Try again' : 'Create'}</span></button>`;
 }
 
 function wireFilm(v) {
@@ -697,8 +705,8 @@ function filmAct(b) {
   b.addEventListener('click', () => {
     const act = b.dataset.act;
     if (act === 'film') startFilm(S.shown);
-    if (act === 'film-show') S.photo = false;
-    if (act === 'photo-show') S.photo = true;
+    if (act === 'film-watch') { S.watch = true; app.querySelector('.stage')?.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    if (act === 'film-photo') S.watch = false;
     if (act === 'film-sound') S.sound = !S.sound;
     filmPaint();
   });
@@ -709,7 +717,6 @@ async function startFilm(k) {
   const r = S.renders[k];
   if (!r || !S.lead || !S.cfg.film || S.test) return;
   r.film = { status: 'pending', created: Date.now() };
-  S.photo = false;
   filmPaint();
   try {
     const res = await fetch(`/api/leads/${S.lead.leadId}/films`, {
@@ -1147,7 +1154,7 @@ async function makeRender(tweak = '', mask = null) {
     S.renders.push({ url: data.url, key: data.key, n: data.n, ...(data.checking ? { checking: true } : {}) });
     S.fresh = true;
     S.shown = S.renders.length - 1;
-    S.photo = false;
+    S.watch = false;
     S.mask = { on: false, strokes: [], size: S.mask.size };
     S.tweakDraft = '';
     if (S.test) S.testInfo = data;
@@ -1161,6 +1168,25 @@ async function makeRender(tweak = '', mask = null) {
   }
   const last = S.renders.length - 1;
   if (S.renders[last]?.checking) runCheck(last);
+  else autoFilm(last);
+}
+
+// Način "auto": server sam pokrene video čim je prva slika gotova; forma pokaže prozorčić u izradi i sačeka da posao dobije broj.
+async function autoFilm(k) {
+  const r = S.renders[k];
+  if (S.cfg.film !== 'auto' || S.test || !S.lead || !r || r.n !== 1 || r.film) return;
+  r.film = { status: 'pending', created: Date.now() };
+  filmPaint();
+  for (let i = 0; i < 20; i++) {
+    await new Promise((ok) => setTimeout(ok, 3000));
+    try {
+      const res = await fetch(`/api/leads/${S.lead.leadId}`, { headers: { 'x-lead-token': S.lead.token } });
+      const film = res.ok ? (await res.json()).renders?.find((x) => x.n === r.n)?.film : null;
+      if (film?.id) { r.film = { ...film, created: r.film.created }; filmPaint(); pollFilm(); return; }
+    } catch {}
+  }
+  r.film = null; // nije krenuo (npr. budžet): ostaje dugme da kupac pokuša sam
+  filmPaint();
 }
 
 // Grillz: slika je odmah tu, a server u međuvremenu broji kape. Ako broj nije dobar, stiže ispravljena slika i tiho zamijeni prvu.
@@ -1188,6 +1214,7 @@ async function runCheck(k) {
   } catch {}
   r.checking = false;
   filmPaint();
+  autoFilm(k);
 }
 
 function doTweak() {

@@ -51,7 +51,7 @@ export function teethPlan(v) {
   const count = [t.top.length ? `top row ${t.top.length}` : '', t.bottom.length ? `bottom row ${t.bottom.length}` : ''].filter(Boolean).join(', ');
   // Donji sjekutići su uži od gornjih: model je donji red razvlačio na širinu gornjeg i dopunjavao ga do 8 (test 9.11).
   if (t.top.length && t.bottom.length) lines.push('Lower teeth are narrower than upper teeth, as in a real mouth: each lower incisor cap is about two thirds the width of an upper central incisor cap. Each row is only as wide as its own caps; never stretch the bottom row to the width of the top row or fill extra width with additional caps.');
-  lines.push(`Exactly ${total} ${total === 1 ? 'tooth is' : 'teeth are'} covered in total (${count}). Count the teeth one by one before finishing: no extra teeth on either side of any row, and every row has exactly its own number even if another row has more. This exact tooth selection takes priority over any reference image.`);
+  lines.push(`Exactly ${total} ${total === 1 ? 'tooth is' : 'teeth are'} covered in total (${count}). Count the teeth one by one before finishing: no extra teeth on either side of any row, and every row has exactly its own number even if another row has more. This exact tooth selection takes priority over any style photo or inspiration photo; the tooth map, when attached, shows the same selection.`);
   return { rows, top: t.top.length, bottom: t.bottom.length, lines };
 }
 
