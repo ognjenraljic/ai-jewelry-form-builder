@@ -619,8 +619,9 @@ async function createTryOn(request, env, leadId, ctx) {
       const out = await runModel(env, model, prompt, [selfie, base], null, model.mask ? 'auto' : '1024x1024');
       const key = `refs/${leadId}-tryon-${rid(8)}.${out.mime.split('/')[1] || 'png'}`;
       await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
+      // 14.11-16.11 ovdje je stajao nedefinisan usedPrompt: slika se napravila i naplatila, pa je upis pucao i kupac je dobijao grešku.
       await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ?, model = ? WHERE id = ?')
-        .bind('ok', key, usedPrompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
+        .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
       await monthlyBudgetCheck(env, lead.form_id).catch((e) => console.error('monthly budget check', e.message));
       return json({ url: await signMedia(env, key), base: pick.n, remaining: TRYONS_PER_LEAD - (tries.filter((r) => r.status === 'ok').length + 1) });
     } catch (err) {
