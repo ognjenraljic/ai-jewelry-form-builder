@@ -156,7 +156,7 @@ export function filmDescription(form, a) {
   const t = a.type === 'grillz' ? teethPlan(a.teeth) : null;
   if (t) parts.push(`${[t.top ? `${t.top} upper` : '', t.bottom ? `${t.bottom} lower` : ''].filter(Boolean).join(' and ')} tooth caps in ${metal}`);
   else parts.push(`a ${typeLabel} in ${metal}`);
-  const notIced = a.coverage === 'none' || /^(none|no|not iced|no icing|no ice)$/i.test(label(fieldOf('coverage')));
+  const notIced = a.metal === 'dental-gold' || /dental/i.test(label(fieldOf('metal'))) || a.coverage === 'none' || /^(none|no|not iced|no icing|no ice)$/i.test(label(fieldOf('coverage')));
   if (!notIced && (a.stones || a.coverage) && a.stones !== 'none') parts.push(`${label(fieldOf('coverage')) || 'set'} with ${STONES[a.stones] || label(fieldOf('stones')) || 'diamonds'}`);
   else parts.push('smooth polished metal');
   const cut = fields.find((f) => /(^|_)cut$/.test(f.id) && a[f.id] != null && a[f.id] !== '');
@@ -249,7 +249,9 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
     if (g.count) lines.push(g.rows === 'both' ? `Exactly ${g.count} teeth covered in each row.` : `Exactly ${g.count} teeth covered, no more.`);
   }
 
-  const notIced = a.coverage === 'none' || /^(none|no|not iced|no icing|no ice)$/i.test(optLabel('coverage'));
+  // Dental gold ne nosi kamenje (Ognjen 16.11), čak i ako je kupac led tražio opisom.
+  const noIceMetal = a.metal === 'dental-gold' || /dental/i.test(optLabel('metal'));
+  const notIced = noIceMetal || a.coverage === 'none' || /^(none|no|not iced|no icing|no ice)$/i.test(optLabel('coverage'));
   if (notIced) {
     lines.push(NOT_ICED(a.type));
   } else if (a.stones && a.stones !== 'none') {

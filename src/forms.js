@@ -69,6 +69,10 @@ const PIECES = [
 // Metali koji nemaju karate: kod njih se pitanje Karat ne prikazuje (Districtova napomena 14.11: "dental gold has no karats").
 export const NO_KARAT_METALS = ['platinum', 'stainless-steel', 'dental-gold', 'silver', 'sterling-silver', 'titanium', 'tungsten'];
 const NO_KARAT_LABEL = /platinum|steel|dental|silver|titanium|tungsten/i;
+// Metali na koje se ne stavlja kamenje (Ognjen 16.11: dental gold): How iced? i Stones se ne prikazuju, AI dobija "Not iced".
+export const NO_ICE_METALS = ['dental-gold'];
+export const NO_ICE_LABEL = /dental/i;
+export const noIceCondition = (metalOptions = []) => ({ field: 'metal', not: [...new Set([...NO_ICE_METALS, ...metalOptions.filter((o) => NO_ICE_LABEL.test(o.label || '')).map((o) => o.value)])] });
 // Grillz rez (diamond cut, rose cut...) i kamenje se ne kombinuju: rez se nudi samo kad grillz nije ledeni (Districtova napomena 14.11).
 export const CUT_NOT_ICED = { field: 'coverage', not: ['accents', 'half', 'full'] };
 const METALS = [
@@ -96,8 +100,8 @@ const metalFields = (metals = METALS) => [
   { id: 'karat', type: 'chips', label: 'Karat', required: true, ...B, showIf: { field: 'metal', notIn: NO_KARAT_METALS }, options: ['10K', '14K', '18K', '925 Silver'].map((v) => opt(v, v)) },
 ];
 const stoneFields = () => [
-  { id: 'stones', type: 'chips', label: 'Stones', required: true, ...B, options: [opt('none', 'No stones'), opt('moissanite', 'Moissanite'), opt('lab', 'Lab-grown diamonds'), opt('natural', 'Natural diamonds')] },
-  { id: 'coverage', type: 'chips', label: 'How iced?', required: true, ...B, showIf: { field: 'stones', notIn: ['none'] }, options: [opt('accents', 'Accents'), opt('half', 'Half iced'), opt('full', 'Fully iced')] },
+  { id: 'stones', type: 'chips', label: 'Stones', required: true, ...B, andIf: [noIceCondition()], options: [opt('none', 'No stones'), opt('moissanite', 'Moissanite'), opt('lab', 'Lab-grown diamonds'), opt('natural', 'Natural diamonds')] },
+  { id: 'coverage', type: 'chips', label: 'How iced?', required: true, ...B, showIf: { field: 'stones', notIn: ['none'] }, andIf: [noIceCondition()], options: [opt('accents', 'Accents'), opt('half', 'Half iced'), opt('full', 'Fully iced')] },
   { id: 'clarity', type: 'chips', label: 'Clarity', required: false, ...B, showIf: { field: 'stones', in: ['lab', 'natural'] }, options: ['SI', 'VS', 'VVS', 'Flawless'].map((v) => opt(v, v)) },
 ];
 // Crtež usta: kupac bira tačne zube (src/teeth.js). U opštoj formi samo kad je komad grillz.
@@ -595,6 +599,11 @@ export function formFromOnboarding(d, { id, clientId, brand, logo, img = (u) => 
     // Svoj metal bez karata (Dental Gold, Stainless Steel...) takođe preskače Karat.
     const kf = field('karat');
     if (kf) kf.showIf = { field: 'metal', notIn: [...new Set([...NO_KARAT_METALS, ...field('metal').options.filter((o) => NO_KARAT_LABEL.test(o.label)).map((o) => o.value)])] };
+    // Svoj metal na koji ne ide kamenje (Dental Gold): bez Stones i How iced?.
+    for (const id of ['stones', 'coverage']) {
+      const f = field(id);
+      if (f) f.andIf = [...(f.andIf || []).filter((c) => c.field !== 'metal'), noIceCondition(field('metal').options)];
+    }
   }
   // Karati: samo kad ih je zlatar birao po komadu (stariji onboarding ih nema, pa ostaju svi).
   if (field('karat') && pieces.some((p) => Array.isArray(p.karats))) {
