@@ -361,3 +361,7 @@ a.pcard:hover, a.pcard:focus-visible { border-color: var(--accent); transform: t
 .pick-txt small { font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pick-txt b { font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 @media (max-width: 420px) { .picks ul { grid-template-columns: 1fr 1fr; } }
+
+/* Provjera broja zuba poslije prikaza slike (16.11.2026) */
+.checknote { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 10px 0 0; text-align: center; }
+.checknote .jl-spinner { width: 13px; height: 13px; border-width: 1.5px; opacity: .7; }

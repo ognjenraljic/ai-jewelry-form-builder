@@ -649,7 +649,12 @@ const filmVideo = (r) => `<video class="film" src="${esc(r.film.url)}" muted pla
 
 function filmBar() {
   const r = S.renders[S.shown];
+  if (r && !S.busy && !S.test && r.checking) return '<p class="fine checknote" role="status"><span class="jl-spinner" aria-hidden="true"></span>Checking that the caps match the teeth you selected…</p>';
+  if (r && !S.busy && r.updated && !r.film) return `<p class="fine checknote" role="status">Updated to match the teeth you selected.</p>${S.cfg.film && !S.test && S.lead && !S.mask.on ? filmButtons(r) : ''}`;
   if (!S.cfg.film || S.test || !S.lead || S.busy || !r || S.mask.on) return '';
+  return filmButtons(r);
+}
+function filmButtons(r) {
   const f = r.film;
   if (f?.url) {
     return `<div class="filmbar">
@@ -1082,6 +1087,7 @@ async function restoreLead() {
     S.tryLeft = d.tryLeft;
     S.i = steps().length - 1;
     pollFilm();
+    S.renders.forEach((x, k) => { if (x.checking) runCheck(k); });
   } catch { ss.del(LEAD_KEY); }
 }
 
@@ -1138,7 +1144,7 @@ async function makeRender(tweak = '', mask = null) {
     S.dev = data.dev || null;
     if (!res.ok) throw new Error(data.error || 'Something went wrong.');
     await forgeFinish(data.url);
-    S.renders.push({ url: data.url, key: data.key, n: data.n });
+    S.renders.push({ url: data.url, key: data.key, n: data.n, ...(data.checking ? { checking: true } : {}) });
     S.fresh = true;
     S.shown = S.renders.length - 1;
     S.photo = false;
@@ -1153,6 +1159,35 @@ async function makeRender(tweak = '', mask = null) {
     S.busy = false;
     render();
   }
+  const last = S.renders.length - 1;
+  if (S.renders[last]?.checking) runCheck(last);
+}
+
+// Grillz: slika je odmah tu, a server u međuvremenu broji kape. Ako broj nije dobar, stiže ispravljena slika i tiho zamijeni prvu.
+async function runCheck(k) {
+  const r = S.renders[k];
+  if (!r || !S.lead || S.test) return;
+  r.checking = true;
+  filmPaint();
+  try {
+    const res = await fetch(`/api/leads/${S.lead.leadId}/check`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: S.lead.token, n: r.n ?? k + 1 }),
+    });
+    const d = await res.json();
+    if (res.ok && d.url && d.url !== r.url) {
+      r.url = d.url;
+      r.updated = true;
+      const swap = (img) => { if (img) img.src = d.url; };
+      if (S.shown === k && !S.busy) swap(app.querySelector('.stage > img'));
+      swap(app.querySelector(`[data-show="${k}"] img`));
+    }
+    // Provjera već radi (npr. drugi tab ili osvježena stranica): pitaj ponovo malo kasnije.
+    if (res.ok && d.checking) { setTimeout(() => runCheck(k), 8000); return; }
+  } catch {}
+  r.checking = false;
+  filmPaint();
 }
 
 function doTweak() {

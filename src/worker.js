@@ -123,6 +123,7 @@ async function route(request, env, ctx, url) {
   if (p.startsWith('/api/admin/forms') || /^\/api\/admin\/clients\/[a-z0-9-]+\/upload$/.test(p)) return adminForms(request, env, p);
   if (p === '/api/leads' && request.method === 'POST') return createLead(request, env);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/renders$/)) && request.method === 'POST') return createRender(request, env, m[1], ctx);
+  if ((m = p.match(/^\/api\/leads\/([\w-]+)\/check$/)) && request.method === 'POST') return teethCheckRoute(request, env, m[1], ctx);
   if (p === '/api/demo-requests' && request.method === 'POST') return createDemoRequest(request, env);
   if (p === '/api/admin/leads' && request.method === 'GET') return adminLeads(request, env, url);
   if ((m = p.match(/^\/api\/admin\/demo-requests\/([a-z0-9]+)\/handled$/)) && request.method === 'POST') return demoHandled(request, env, m[1]);
@@ -311,34 +312,21 @@ async function createRender(request, env, leadId, ctx) {
     const { images, prompt } = await renderInputs(env, request, form, answers, { ref, tweak: isTweak ? tweak : '', base, masked: !!(mask && base) });
     const t0 = Date.now();
     try {
-      let out = await runModel(env, model, prompt, images, base ? mask : null);
-      // Grillz: model zna dodati ili izgubiti zub. Brojimo kape na slici; kad se ne slažu sa izborom, jedan novi pokušaj sa ispravkom.
+      const out = await runModel(env, model, prompt, images, base ? mask : null);
+      // Grillz: model zna dodati ili izgubiti zub. Kupac ODMAH dobija prvu sliku; brojanje kapa i eventualni ispravljen
+      // render idu u pozadini (checkTeeth), a forma zamijeni sliku kad stigne (Ognjen 16.11: predugo se čekala slika).
       const plan = !isTweak ? teethPlan(answers.teeth) : null;
-      let usedPrompt = prompt;
-      if (plan) {
-        const seen = await countCaps(env, out);
-        if (seen && (seen.top !== plan.top || seen.bottom !== plan.bottom)) {
-          console.log('teeth mismatch', leadId, JSON.stringify({ want: [plan.top, plan.bottom], got: [seen.top, seen.bottom] }));
-          usedPrompt = `${prompt}\n${teethRetryLine(plan, seen)}`;
-          const again = await runModel(env, model, usedPrompt, images, null);
-          const check = await countCaps(env, again);
-          console.log('teeth retry', leadId, JSON.stringify({ want: [plan.top, plan.bottom], got: check ? [check.top, check.bottom] : null }));
-          again.cost += out.cost + (seen.cost || 0) + (check?.cost || 0);
-          again.ms += out.ms;
-          out = again;
-        } else if (seen) out.cost += seen.cost || 0;
-      }
-      const ext = out.mime.split('/')[1] || 'png';
-      const key = `renders/${leadId}/${n}-${rid(8)}.${ext}`;
-      await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
-      await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ?, model = ? WHERE id = ?')
-        .bind('ok', key, usedPrompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
+      const checking = !!plan && teethCheckOn(env);
+      const key = await saveRender(env, leadId, n, out);
+      await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ?, model = ?, checking = ? WHERE id = ?')
+        .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, checking ? 1 : null, renderId).run();
       await monthlyBudgetCheck(env, lead.form_id).catch((e) => console.error('monthly budget check', e.message));
-      // Video samo za zlatara: prvi render odmah ide na film, kupac ništa ne vidi; portal ga pokupi kad je gotov.
-      if (!isTweak && n === 1 && filmMode(env, form) === 'backend') ctx?.waitUntil?.(startLeadFilm(env, lead, form, n).catch((e) => console.error('backend film', e.message)));
+      // Provjeru zuba pokreće forma odmah poslije prikaza (POST /api/leads/<id>/check): waitUntil živi samo ~30 s poslije
+      // odgovora, a ispravljen render traje duže. Video samo za zlatara: kod provjere kreće poslije nje (od tačne slike).
+      if (!checking && !isTweak && n === 1 && filmMode(env, form) === 'backend') ctx?.waitUntil?.(startLeadFilm(env, lead, form, n).catch((e) => console.error('backend film', e.message)));
       return json({
-        url: `/media/${key}`, n, remaining: form.maxRenders - n,
-        ...(env.DEV_MODE === '1' ? { dev: { model: out.modelUsed && out.modelUsed !== model.id ? `${model.label} -> ${out.modelUsed}` : model.label, ms: out.ms, inTokens: out.inT, outTokens: out.outT, costUsd: out.cost, prompt: usedPrompt } } : {}),
+        url: `/media/${key}`, n, remaining: form.maxRenders - n, ...(checking ? { checking: true } : {}),
+        ...(env.DEV_MODE === '1' ? { dev: { model: out.modelUsed && out.modelUsed !== model.id ? `${model.label} -> ${out.modelUsed}` : model.label, ms: out.ms, inTokens: out.inT, outTokens: out.outT, costUsd: out.cost, prompt } } : {}),
       });
     } catch (err) {
       console.error('render failed', model.id, err.message);
@@ -350,12 +338,78 @@ async function createRender(request, env, leadId, ctx) {
   return job;
 }
 
+async function saveRender(env, leadId, n, out) {
+  const ext = out.mime.split('/')[1] || 'png';
+  const key = `renders/${leadId}/${n}-${rid(8)}.${ext}`;
+  await env.MEDIA.put(key, fromB64(out.b64), { httpMetadata: { contentType: out.mime } });
+  return key;
+}
+
+// Provjera zuba za render koji kupac već gleda. Zove je forma; jedan poziv po renderu (checking 1 -> 2 jednim upisom).
+const CHECK_STALE_MS = 6 * 60_000;
+async function teethCheckRoute(request, env, leadId, ctx) {
+  const body = await request.json().catch(() => ({}));
+  const lead = await env.DB.prepare('SELECT * FROM leads WHERE id = ?').bind(leadId).first();
+  if (!lead || !body.token || !safeEqual(body.token, lead.token)) return json({ error: 'Not allowed.' }, 403);
+  const row = await env.DB.prepare("SELECT id, n, image_key, model, prompt, checking, created_at FROM renders WHERE lead_id = ? AND n = ? AND kind IS NULL AND status = 'ok' AND image_key IS NOT NULL").bind(leadId, Number(body.n) || 0).first();
+  if (!row) return json({ error: 'Preview not found.' }, 404);
+  const now = Date.now();
+  if (row.checking === 2 && row.created_at < now - CHECK_STALE_MS) await env.DB.prepare('UPDATE renders SET checking = NULL WHERE id = ?').bind(row.id).run();
+  const claimed = row.checking === 1 && (await env.DB.prepare('UPDATE renders SET checking = 2 WHERE id = ? AND checking = 1').bind(row.id).run()).meta.changes === 1;
+  if (!claimed) return json({ url: `/media/${row.image_key}`, n: row.n, checking: row.checking === 2 && row.created_at >= now - CHECK_STALE_MS });
+  const work = (async () => {
+    const form = await loadForm(env, lead.form_id);
+    const answers = JSON.parse(lead.answers);
+    const plan = teethPlan(answers.teeth);
+    const out = plan ? await r2Image(env, row.image_key) : null;
+    if (!plan || !out) { await env.DB.prepare('UPDATE renders SET checking = NULL WHERE id = ?').bind(row.id).run(); return; }
+    const ref = lead.ref_key ? await r2Image(env, lead.ref_key) : null;
+    const { images } = await renderInputs(env, request, form, answers, { ref, tweak: '', base: null, masked: false });
+    const modelKey = Object.keys(MODELS).find((k) => MODELS[k].id === row.model) || grillzModel(env);
+    await checkTeeth(env, { leadId, renderId: row.id, n: row.n, model: MODELS[modelKey], prompt: row.prompt, images, out, plan });
+    if (row.n === 1 && filmMode(env, form) === 'backend') await startLeadFilm(env, lead, form, row.n).catch((e) => console.error('backend film', e.message));
+  })();
+  ctx?.waitUntil?.(work.catch(() => {}));
+  await work.catch((e) => console.error('teeth check route', e.message));
+  const fresh = await env.DB.prepare('SELECT image_key FROM renders WHERE id = ?').bind(row.id).first();
+  return json({ url: `/media/${fresh.image_key}`, n: row.n, changed: fresh.image_key !== row.image_key });
+}
+
+// Pozadinska provjera broja zuba poslije prvog grillz rendera. Kad se broj ne slaže: jedan ispravljen render koji zamijeni
+// sliku, osim ako je kupac u međuvremenu već tražio doradu (tada ostaje ono što gleda). Trošak se dopiše na isti render.
+async function checkTeeth(env, { leadId, renderId, n, model, prompt, images, out, plan }) {
+  let extra = 0;
+  try {
+    const seen = await countCaps(env, out);
+    extra += seen?.cost || 0;
+    if (seen && (seen.top !== plan.top || seen.bottom !== plan.bottom)) {
+      console.log('teeth mismatch', leadId, JSON.stringify({ want: [plan.top, plan.bottom], got: [seen.top, seen.bottom] }));
+      const fixPrompt = `${prompt}\n${teethRetryLine(plan, seen)}`;
+      const again = await runModel(env, model, fixPrompt, images, null);
+      const check = await countCaps(env, again);
+      console.log('teeth retry', leadId, JSON.stringify({ want: [plan.top, plan.bottom], got: check ? [check.top, check.bottom] : null }));
+      extra += again.cost + (check?.cost || 0);
+      const newer = await env.DB.prepare('SELECT 1 FROM renders WHERE lead_id = ? AND n > ? AND kind IS NULL').bind(leadId, n).first();
+      if (!newer) {
+        const key = await saveRender(env, leadId, n, again);
+        await env.DB.prepare('UPDATE renders SET image_key = ?, prompt = ?, ms = ms + ?, out_tokens = ?, model = ?, cost_usd = cost_usd + ?, checking = NULL WHERE id = ?')
+          .bind(key, fixPrompt, again.ms, again.outT, again.modelUsed || model.id, extra, renderId).run();
+        return;
+      }
+    }
+  } catch (err) {
+    console.error('teeth check failed', err.message);
+  }
+  await env.DB.prepare('UPDATE renders SET cost_usd = cost_usd + ?, checking = NULL WHERE id = ?').bind(extra, renderId).run().catch(() => {});
+}
+
 // ---------- Broj zuba (grillz) ----------
 // Jeftin model sa vidom broji kape po redu. Ako poziv ne uspije, render ide dalje bez provjere (nikad ne ruši render).
 // TEETH_CHECK=0 gasi provjeru; COUNT_MODEL bira model (podrazumijevano gpt-5-mini).
 const COUNT_PRICE = { in: 0.25, out: 2 }; // $ po milion tokena, gpt-5-mini
+const teethCheckOn = (env) => env.TEETH_CHECK !== '0' && !!env.OPENAI_API_KEY;
 async function countCaps(env, out) {
-  if (env.TEETH_CHECK === '0' || !env.OPENAI_API_KEY || !out?.b64) return null;
+  if (!teethCheckOn(env) || !out?.b64) return null;
   const api = env.DEV_MODE === '1' && env.OPENAI_BASE ? env.OPENAI_BASE : 'https://api.openai.com';
   try {
     const res = await fetch(`${api}/v1/responses`, {
@@ -577,7 +631,7 @@ async function leadStatus(request, env, leadId) {
   const token = request.headers.get('x-lead-token');
   if (!lead || !token || !safeEqual(token, lead.token)) return json({ error: 'Not allowed.' }, 403);
   const form = await loadForm(env, lead.form_id);
-  const rows = (await env.DB.prepare("SELECT id, n, image_key, kind, status, base_render_id FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL ORDER BY created_at").bind(leadId).all()).results;
+  const rows = (await env.DB.prepare("SELECT id, n, image_key, kind, status, base_render_id, checking, created_at FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL ORDER BY created_at").bind(leadId).all()).results;
   const design = rows.filter((r) => r.kind !== 'tryon');
   const tries = rows.filter((r) => r.kind === 'tryon');
   const films = (await env.DB.prepare('SELECT * FROM films WHERE lead_id = ? ORDER BY created_at').bind(leadId).all()).results;
@@ -585,7 +639,7 @@ async function leadStatus(request, env, leadId) {
     answers: JSON.parse(lead.answers),
     renders: design.map((r) => {
       const film = films.filter((f) => f.render_id === r.id).pop();
-      return { url: `/media/${r.image_key}`, n: r.n, ...(film ? { film: filmJson(film) } : {}) };
+      return { url: `/media/${r.image_key}`, n: r.n, ...(r.checking && r.created_at > Date.now() - CHECK_STALE_MS ? { checking: true } : {}), ...(film ? { film: filmJson(film) } : {}) };
     }),
     tryons: await Promise.all(tries.map(async (r) => ({ url: await signMedia(env, r.image_key), base: design.find((d) => d.id === r.base_render_id)?.n ?? null }))),
     maxRenders: form?.maxRenders || 4,
