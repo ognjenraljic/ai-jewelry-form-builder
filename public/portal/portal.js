@@ -11,8 +11,34 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const safe = (fn) => { try { return fn(); } catch { return null; } };
 
 const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
-const P = { me: null, leads: [], tab: 'leads', form: '', status: '', q: '', next: null, counts: {}, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
+const P = { me: null, leads: [], tab: 'leads', form: '', status: '', q: '', next: null, counts: {}, days: {}, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
 const day = (t) => new Date(t).toLocaleDateString('en-US', { dateStyle: 'medium' });
+// Dan upita u zoni pregledača (isto kao server sa ?tz=), da zlatar prati koliko mu dolazi dnevno.
+const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const keyDate = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
+const dayTitle = (k) => {
+  const today = dayKey(Date.now());
+  const yest = dayKey(Date.now() - 864e5);
+  const name = keyDate(k).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  return k === today ? `Today · ${name}` : k === yest ? `Yesterday · ${name}` : name;
+};
+// Broj po danu: sa servera dok nisu učitani svi upiti, inače iz liste (tada važe i filteri bez servera).
+function dayCounts(list) {
+  if (P.next) return Object.fromEntries(Object.entries(P.days || {}).map(([k, byForm]) => [k, Object.entries(byForm).reduce((n, [fid, c]) => n + (!P.form || P.form === fid ? c : 0), 0)]));
+  const out = {};
+  for (const l of list) { const k = dayKey(l.created_at); out[k] = (out[k] || 0) + 1; }
+  return out;
+}
+function daysChart(counts) {
+  const keys = Array.from({ length: 14 }, (_, i) => dayKey(Date.now() - (13 - i) * 864e5));
+  const max = Math.max(1, ...keys.map((k) => counts[k] || 0));
+  const week = keys.slice(7).reduce((n, k) => n + (counts[k] || 0), 0);
+  return `<div class="days14" aria-label="Leads per day, last 14 days"><div class="days14-head"><span>Leads per day</span><b>${week} in the last 7 days</b></div><div class="days14-bars">${keys.map((k) => {
+    const n = counts[k] || 0;
+    const d = keyDate(k);
+    return `<div class="dbar ${n ? '' : 'zero'}" title="${esc(dayTitle(k))}: ${n} lead${n === 1 ? '' : 's'}"><b>${n || ''}</b><i style="height:${Math.round((n / max) * 100)}%"></i><span>${esc(d.toLocaleDateString('en-US', { weekday: 'narrow' }))}<br />${d.getDate()}</span></div>`;
+  }).join('')}</div></div>`;
+}
 const readOnly = () => P.me?.session.kind === 'view-as';
 
 const leadStore = createLeadStore(api);
@@ -71,6 +97,7 @@ async function loadLeads(more = false) {
     P.leads = r.leads;
     P.next = r.next;
     P.counts = r.counts;
+    P.days = r.days || {};
   } catch (error) {
     if (seq !== leadRequest) return false;
     P.loadError = 'Could not load leads. Please try again.';
@@ -163,12 +190,20 @@ function leadsView() {
     : '';
   const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email or phone" value="${esc(P.q)}" /></label>`;
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
+  const perDay = dayCounts(list);
+  let lastDay = '';
   const cards = P.loading ? '<p class="empty" role="status">Loading leads…</p>' : P.loadError ? `<p class="empty" role="alert">${esc(P.loadError)} <button class="btn" data-act="retry-leads">Try again</button></p>` : list.map((l) => {
+    const k = dayKey(l.created_at);
+    const head = k !== lastDay ? `<h3 class="day-head"><span>${esc(dayTitle(k))}</span><b>${perDay[k] || 1} lead${(perDay[k] || 1) === 1 ? '' : 's'}</b></h3>` : '';
+    lastDay = k;
     const last = l.renders[l.renders.length - 1];
     const photos = l.photos.map((p) => `<figure><img src="${media(p.key)}" alt="${esc(p.label)}" width="64" height="64" loading="lazy" data-zoom tabindex="0" /><figcaption>${esc(p.label)}</figcaption></figure>`).join('');
-    const strip = l.renders.length > 1 ? l.renders.map((r, k) => `<figure><img src="${esc(r.url)}" alt="${k === 0 ? 'First render' : esc(r.tweak || `Render ${k + 1}`)}" width="64" height="64" loading="lazy" data-zoom tabindex="0" /><figcaption>${k === 0 ? 'First render' : esc(r.tweak || `Render ${k + 1}`)}</figcaption></figure>`).join('') : '';
+    // Izmjene koje je kupac tražio: sličica nosi broj, a cijeli tekst stoji ispod (ranije se vidio samo početak).
+    const capOf = (r, k) => (k === 0 ? 'First render' : r.tweak ? `Change ${k}: ${r.tweak}` : `Render ${k + 1}`);
+    const strip = l.renders.length > 1 ? l.renders.map((r, k) => `<figure><img src="${esc(r.url)}" alt="${esc(capOf(r, k))}" data-caption="${esc(capOf(r, k))}" width="64" height="64" loading="lazy" data-zoom tabindex="0" /><figcaption>${k === 0 ? 'First render' : r.tweak ? `Change ${k}` : `Render ${k + 1}`}</figcaption></figure>`).join('') : '';
+    const changes = l.renders.map((r, k) => (k && r.tweak ? `<li><b>Change ${k}</b>${esc(r.tweak)}</li>` : '')).join('');
     const sel = `<select class="status-sel s-${esc(l.status)}" data-lead-status="${esc(l.id)}" aria-label="Status of ${esc(l.name)}" ${readOnly() ? 'disabled title="Admin view is read-only. The client changes the status in their own portal."' : ''}>${STATUSES.map(([v, t]) => `<option value="${v}" ${l.status === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
-    return `
+    return `${head}
       <article class="lead">
         <div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>
         <div>
@@ -177,13 +212,15 @@ function leadsView() {
           <div class="tags">${l.details.map((d) => `<span class="tag">${esc(d.label)}: <b>${esc(d.value)}</b></span>`).join('')}</div>
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
           <div class="thumbs">${strip}${photos}</div>
+          ${changes ? `<div class="changes"><p class="changes-title">Changes the customer asked for</p><ol>${changes}</ol></div>` : ''}
           ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><video src="${esc(f.url)}" controls muted loop playsinline preload="metadata" width="160" height="160"></video><figcaption>Highlight video · <a href="${esc(f.url)}" download>Download</a></figcaption></figure>` : '<p class="film-wait">Highlight video is being made. It appears here in a few minutes.</p>')).join('')}</div>` : ''}
           <label class="lead-note"><span class="sr-only">Note</span><textarea class="in" rows="1" data-lead-note="${esc(l.id)}" placeholder="Add a note (quote sent, follow up Friday…)" ${readOnly() ? 'disabled' : ''}>${esc(l.note)}</textarea></label>
         </div>
       </article>`;
   }).join('') || '<p class="empty">No leads match.</p>';
   const more = P.next && !P.loading && !P.loadError ? `<div class="more"><button class="btn" data-act="more" ${P.loadingMore ? 'disabled' : ''}>${P.loadingMore ? 'Loading…' : 'Show older leads'}</button></div>` : '';
-  return `<div class="filters">${search}${statusChips}${formChips}</div>${cards}${more}`;
+  const chart = !P.loading && !P.loadError && list.length ? daysChart(perDay) : '';
+  return `<div class="filters">${search}${statusChips}${formChips}</div>${chart}${cards}${more}`;
 }
 
 function formsView() {
@@ -196,13 +233,13 @@ function formsView() {
   }).join('') || '<p class="empty">No forms yet.</p>';
 }
 
-function zoom(src) {
+function zoom(src, caption = '') {
   const box = document.createElement('div');
   box.className = 'lightbox';
   box.setAttribute('role', 'dialog');
   box.setAttribute('aria-label', 'Image');
   box.tabIndex = -1;
-  box.innerHTML = `<img src="${esc(src)}" alt="" />`;
+  box.innerHTML = `<figure><img src="${esc(src)}" alt="" />${caption ? `<figcaption>${esc(caption)}</figcaption>` : ''}</figure>`;
   const close = () => { box.remove(); document.removeEventListener('keydown', onKey); };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   box.onclick = close;
@@ -239,7 +276,7 @@ app.addEventListener('change', async (e) => {
   }
 });
 app.addEventListener('keydown', (e) => {
-  if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset?.zoom !== undefined) { e.preventDefault(); zoom(e.target.src); }
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset?.zoom !== undefined) { e.preventDefault(); zoom(e.target.src, e.target.dataset.caption); }
 });
 
 app.addEventListener('click', async (e) => {
@@ -258,7 +295,7 @@ app.addEventListener('click', async (e) => {
     try { await api('/api/portal/exit', { method: 'POST' }); } catch {}
     ended('Admin view closed', 'You can close this tab.');
   }
-  if (t.dataset.zoom !== undefined) zoom(t.src);
+  if (t.dataset.zoom !== undefined) zoom(t.src, t.dataset.caption);
 });
 
 // ---------- Onboarding (vodič za zlatara) ----------

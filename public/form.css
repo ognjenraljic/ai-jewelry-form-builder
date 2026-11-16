@@ -217,6 +217,9 @@ h1 em { font-style: italic; color: var(--accent); }
 .mouth .tooth:not(.deco):hover .crown { filter: brightness(1.05); }
 .mouth .tooth:focus-visible .crown { stroke: var(--accent); stroke-width: 3; }
 .mouth .tooth.deco { cursor: default; }
+/* Neizabrani zubi su providniji, da se bijeli metali (bijelo zlato, platina, srebro) jasno razlikuju (District 16.11). */
+.mouth .tooth:not(.on) { opacity: .38; transition: opacity .15s; }
+.mouth .tooth:not(.on):not(.deco):hover { opacity: .7; }
 .tpanel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 12px; }
 .tcount { display: grid; grid-template-columns: 40px 1fr 40px; align-items: center; text-align: center; }
 .tcount b { display: block; font-size: 22px; font-weight: 700; line-height: 1; }

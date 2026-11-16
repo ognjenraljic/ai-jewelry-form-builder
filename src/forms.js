@@ -35,6 +35,10 @@ export function withStyleTeeth(form) {
 
 // Opcije polja: obične, ili stilovi izabranog tipa (+ "Something else") za polje sa optionsFrom.styles.
 // perPiece: { komad: [vrijednosti] } suzi opcije za izabrani komad (npr. grillz bez platine); prazna lista = pitanje se za taj komad ne postavlja.
+// "Other" sa poljem za upis (writeIn na pitanju): kupac upiše svoj odgovor, tekst ide u <id>__more (Districtova napomena 16.11).
+export const WRITE_IN = 'other';
+export const writeInOption = (field) => ({ value: WRITE_IN, label: String(field.writeInLabel || '').trim().slice(0, 30) || 'Other', icon: 'note', writeIn: true });
+const withWriteIn = (field, list) => (field.writeIn && list ? [...list.filter((o) => o.value !== WRITE_IN), writeInOption(field)] : list);
 export function optionsOf(field, a, form) {
   if (field.optionsFrom?.styles) {
     const type = a[field.optionsFrom.field];
@@ -44,7 +48,7 @@ export function optionsOf(field, a, form) {
   }
   // Redoslijed je redoslijed komada (npr. njegovi rasponi budžeta od najmanjeg).
   const allow = field.perPiece?.[a.type];
-  return Array.isArray(allow) && field.options ? allow.map((v) => field.options.find((o) => o.value === v)).filter(Boolean) : field.options;
+  return withWriteIn(field, Array.isArray(allow) && field.options ? allow.map((v) => field.options.find((o) => o.value === v)).filter(Boolean) : field.options);
 }
 // Pitanje koje za izabrani komad nema nijednu opciju se preskače.
 export const offeredFor = (field, a) => !Array.isArray(field.perPiece?.[a.type]) || field.perPiece[a.type].length > 0;
@@ -354,6 +358,10 @@ export function validateFormDef(f, id) {
       if (fl.followup != null && !['text', 'file'].includes(fl.followup)) err(`Question ${fl.id}: follow-up must be text or file`);
       if (fl.max != null && (!Number.isInteger(fl.max) || fl.max < 1 || fl.max > 1000)) err(`Question ${fl.id}: max length 1 to 1000`);
       bool(fl.other, `Question ${fl.id} "Something else"`);
+      bool(fl.writeIn, `Question ${fl.id} "Other" with a text box`);
+      str(fl.writeInLabel, 30, `"Other" label of ${fl.id}`);
+      if (fl.writeIn && (!CHOICE_TYPES.includes(fl.type) || fl.optionsFrom || fl.lettering)) err(`Question ${fl.id}: "Other" with a text box only works on a choice question`);
+      if (fl.writeIn && (fl.options || []).some((o) => o.value === 'other')) err(`Question ${fl.id}: an option already uses the ID "other", rename it before adding "Other" with a text box`);
       if (fl.optionsFrom) {
         if (!fl.optionsFrom.styles || fl.optionsFrom.field !== 'type') err(`Question ${fl.id}: styles can only depend on the piece`);
       } else if (CHOICE_TYPES.includes(fl.type)) {

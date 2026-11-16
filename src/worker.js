@@ -1355,6 +1355,12 @@ async function portalApi(request, env, p, secure) {
           WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND r.status = 'ok' AND r.image_key IS NOT NULL ORDER BY r.created_at`).bind(client.id, before, oldest).all()).results
       : [];
     const counts = Object.fromEntries((await env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? GROUP BY COALESCE(l.status, 'new')`).bind(client.id).all()).results.map((r) => [r.s, r.n]));
+    // Upiti po danu (zlatar prati koliko mu dolazi dnevno): dan po vremenskoj zoni pregledača, zadnjih 90 dana, isti filteri kao lista.
+    const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
+    const days = {};
+    const dayRows = (await env.DB.prepare(`SELECT strftime('%Y-%m-%d', (l.created_at / 1000) - ? * 60, 'unixepoch') AS d, l.form_id AS fid, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id
+        WHERE ${where.filter((w) => w !== 'l.created_at < ?').join(' AND ')} AND l.created_at >= ? GROUP BY d, fid`).bind(tz, ...args.filter((_, k) => k !== 1), Date.now() - 90 * 864e5).all()).results;
+    for (const r of dayRows) (days[r.d] ||= {})[r.fid] = r.n;
     // Video komada (dugme kupca ili pozadinski): gotovi idu uz upit; nekoliko na čekanju se ovdje dovrši.
     let films = pageLeads.length
       ? (await env.DB.prepare(`SELECT fl.* FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
@@ -1362,7 +1368,7 @@ async function portalApi(request, env, p, secure) {
       : [];
     if (pikaOn(env)) films = await Promise.all(films.map((fl, k) => (fl.status === 'pending' && k < 4 ? settleFilm(env, fl) : fl)));
     return json({
-      more, next: more ? oldest : null, counts,
+      more, next: more ? oldest : null, counts, days,
       leads: pageLeads.map((l) => {
         const a = JSON.parse(l.answers);
         let files = {};
@@ -1634,7 +1640,10 @@ function validateAnswers(form, a) {
     const f = on.get(base) || (form.steps || []).flatMap((st) => st.fields).find((x) => x.id === base && x.default != null);
     if (!f) { delete a[k]; continue; }
     if (k !== base) {
-      if (f.followup !== 'text' || typeof a[k] !== 'string' || a[k].length > 500) return 'Invalid answer.';
+      const writeIn = f.writeIn && a[base] === 'other';
+      // Tekst "Other" ostao uz drugi izbor: samo se izbaci.
+      if (f.writeIn && !writeIn && f.followup !== 'text') { delete a[k]; continue; }
+      if ((f.followup !== 'text' && !writeIn) || typeof a[k] !== 'string' || a[k].length > 500) return 'Invalid answer.';
     }
   }
   applyPresetTeeth(form, a, styleOf(form, a));
@@ -1649,6 +1658,9 @@ function validateAnswers(form, a) {
     if (!visible(f, a, form)) { delete a[f.id]; delete a[`${f.id}__more`]; continue; }
     const v = a[f.id];
     if (fieldRequired(form, stepOf.get(f.id), f, a) && (v == null || v === '')) return `Please complete: ${f.label || f.id}`;
+    // "Other": kupac mora upisati šta; bez "Other" upisani tekst ne ostaje (osim kad pitanje ima i "Add details").
+    if (f.writeIn && v === 'other' && !String(a[`${f.id}__more`] || '').trim()) return `Please describe: ${f.label || f.id}`;
+    if (f.writeIn && v !== 'other' && f.followup !== 'text') delete a[`${f.id}__more`];
     if (v == null || v === '') continue;
     if (typeof v !== 'string') return 'Invalid answer.';
     if (f.type === 'teeth') {

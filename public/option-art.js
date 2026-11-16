@@ -29,9 +29,23 @@ export function pieceArt(fieldId, label) {
   const out = {};
   if (NO_ART.has(cat)) return out;
   for (const folder of Object.keys(ART)) {
-    if (!cat || !folder.startsWith(`${cat}/`)) continue;
+    if (!cat || !folder.startsWith(`${cat}/`) || folder.slice(cat.length + 1).includes('/')) continue;
     const src = fileIn(folder, cat, slug(label));
     if (src) out[folder.slice(cat.length + 1)] = src;
+  }
+  return out;
+}
+// The same choice in every metal color, per piece: <category>/<piece>/<yellow|white|rose>/<slug>. The form shows the one that
+// matches the metal the customer picked (a grill cut in rose gold looks rose gold). { grillz: { yellow, white, rose } }
+export const METAL_FAMILIES = ['yellow', 'white', 'rose'];
+export function metalArt(fieldId, label) {
+  const cat = artCategory(fieldId);
+  const out = {};
+  if (!cat || NO_ART.has(cat)) return out;
+  for (const folder of Object.keys(ART)) {
+    const m = folder.match(new RegExp(`^${cat}/([a-z0-9-]+)/(${METAL_FAMILIES.join('|')})$`));
+    const src = m && fileIn(folder, cat, slug(label));
+    if (src) (out[m[1]] ||= {})[m[2]] = src;
   }
   return out;
 }
@@ -76,8 +90,12 @@ export function withArt(field, o) {
   const key = field.id === 'type' ? 'type' : artField(field);
   const image = optionArt(key, o);
   const byPiece = ownImage(o) || o.noImage || key === 'type' ? {} : pieceArt(key, o.label);
+  // Boja metala: samo za sliku iz biblioteke (ili bez slike), nikad preko zlatareve fotografije. Ove slike su napravljene baš za taj
+  // komad i taj izbor, pa važe i kad je zlatar uklonio opštu sliku (District je sklonio sliku prstena sa "Pave" u pitanju za sve komade).
+  const cat = key === 'type' ? '' : artCategory(key);
+  const byMetal = !cat || (ownImage(o) && !ownImage(o).startsWith(`/library/options/${cat}/`)) ? {} : metalArt(key, o.label);
   const { image: _, ...rest } = o;
-  return { ...rest, ...(image ? { image } : {}), ...(Object.keys(byPiece).length ? { pieceArt: byPiece } : {}) };
+  return { ...rest, ...(image ? { image } : {}), ...(Object.keys(byPiece).length ? { pieceArt: byPiece } : {}), ...(Object.keys(byMetal).length ? { metalArt: byMetal } : {}) };
 }
 // Every style and added piece picture, for the image library in the builder.
 export const styleList = () => Object.entries(STYLE_ART).flatMap(([category, files]) => files.map((name) => (category === 'pieces'

@@ -22,10 +22,11 @@ export function createLeadStore(request, now = Date.now) {
       if (status) qs.set('status', status);
       if (q) qs.set('q', q);
       if (before) qs.set('before', before);
+      qs.set('tz', new Date().getTimezoneOffset());
       try {
         const r = await request(`/api/portal/leads?${qs}`, { signal: pending.signal });
         if (seq !== sequence) return null;
-        const entry = { leads: before ? [...previous, ...r.leads] : r.leads, next: r.next, counts: r.counts || {}, at: now() };
+        const entry = { leads: before ? [...previous, ...r.leads] : r.leads, next: r.next, counts: r.counts || {}, days: r.days || {}, at: now() };
         cache.set(key, entry);
         return entry;
       } catch (error) {

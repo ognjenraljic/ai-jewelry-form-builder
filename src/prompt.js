@@ -1,5 +1,6 @@
 // Slaže prompt za image model iz odgovora forme.
 import { teethPlan } from './teeth.js';
+import { artCategory } from '../public/option-art.js';
 // Ton: fotografija proizvoda visoke klase, jedan komad, bez ljudi, bez logotipa.
 
 const SUBJECT = {
@@ -54,6 +55,38 @@ const stonesOutside = (type) => `Stones are set only on the outer, visible surfa
 const NOT_ICED = (type) => `Not iced: no pave, no accent stones and no diamonds on the metal surfaces, even if the style is usually iced; clean polished metal${type === 'ring' ? '. A center stone is set only if one is specified in these instructions' : ''}.`;
 
 const clean = (s, max) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
+const slug = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+// Podrazumijevani opis izbora za AI kad zlatar nije upisao svoju napomenu (po natpisu izbora).
+// Rezovi i settingi po opisima Districtovog majstora (Ricky, 16.11.2026), da render pogodi baš taj rez.
+const CHOICE_NOTES = {
+  cut: {
+    polished: 'polished: plain high-polish mirror look on every cap, smooth metal with no engraving',
+    solid: 'polished: plain high-polish mirror look on every cap, smooth metal with no engraving',
+    'open-face': 'open face: opening window cutouts, each cap is only a metal outline frame with the center open so the natural tooth shows through',
+    'diamond-cut': 'diamond cut: angled slash cuts crossing over every cap, a bright faceted diamond lattice engraved into polished metal',
+    'diamond-cut-n-dust': 'diamond cut and dust: angled slash cuts with a dusted background, bright crossing cuts over a frosted sandblasted matte surface',
+    'nugget-cut': 'nugget cut: spaced out slash cuts with a dusted background, short scattered bright cuts over a frosted matte surface like a gold nugget',
+    'rose-cut': 'rose cut: a flower rose cut effect, spiral rose petals engraved into the face of every cap',
+    'perm-cut': 'perm cut: deep cuts between each tooth to give an individual look, every cap reads as a separate tooth, smooth polished surface',
+    'weed-cut': 'weed cut: an upwards leaf cut pattern, rows of diagonal slash cuts angled upward from a center line on every cap, like a leaf',
+    'pineapple-cut': 'pineapple cut: a dense crosshatched grid of small faceted diamond cuts covering every cap like pineapple skin',
+    'starburst-cut': 'starburst cut: star slash cuts radiating from the center of every cap over a dusted frosted background',
+  },
+  setting: {
+    pave: 'pave setting: small round stones set in an alternating honeycomb pattern, covering the surface',
+    straight: 'straight setting: stones set in neat straight rows and columns',
+    invisible: 'invisible setting: princess cut square stones set edge to edge in straight rows with no visible prongs',
+    jumbo: 'jumbo setting: large stones set into an alternating pattern, fewer but bigger stones',
+    mosaic: 'mosaic setting: stones of mixed sizes clustered together like a mosaic, large stones surrounded by small ones',
+  },
+};
+export function choiceNote(field, option) {
+  if (!option) return '';
+  if (option.note) return option.note;
+  const cat = artCategory(field.id) || artCategory(slug(field.label));
+  return CHOICE_NOTES[cat]?.[slug(option.label)] || '';
+}
 
 // Budžet vodi veličinu, težinu i bogatstvo detalja. Slika uvijek gađa GORNJU granicu izabranog raspona.
 const BUDGET_TIERS = [
@@ -134,7 +167,9 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
   const allFields = (form.steps || []).filter((st) => st.enabled !== false).flatMap((st) => (st.fields || []).filter((f) => f.enabled !== false));
   const fieldOf = (id) => allFields.find((f) => f.id === id);
   const optOf = (id) => (fieldOf(id)?.options || []).find((o) => o.value === a[id]);
-  const optLabel = (id) => clean(optOf(id)?.label, 60).toLowerCase();
+  // "Other" sa upisom: kupčev tekst je odgovor (npr. metal "black rhodium").
+  const writeIn = (id) => (a[id] === 'other' && fieldOf(id)?.writeIn ? clean(a[`${id}__more`], 120) : '');
+  const optLabel = (id) => clean(writeIn(id) || optOf(id)?.label, 60).toLowerCase();
   // Poznata polja važe samo ako je pitanje uključeno (type i style dolaze i iz isključenog koraka kao default).
   const on = new Set(allFields.map((f) => f.id));
   a = Object.fromEntries(Object.entries(a).filter(([k]) => k === 'type' || k === 'style' || on.has(k.replace(/__more$/, ''))));
@@ -152,7 +187,7 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
   }
   // Opcija koju je zlatar dodao (npr. "Black gold") nema ugrađen opis, pa ide njen natpis.
   let metal = METAL[a.metal] || (optLabel('metal') ? `polished ${optLabel('metal')}` : 'polished gold');
-  let karat = a.metal !== 'platinum' && a.karat ? ` (${a.karat})` : '';
+  let karat = a.metal !== 'platinum' && a.karat ? ` (${writeIn('karat') || a.karat})` : '';
   // "925 Silver" u pitanju Karat znači da je komad od srebra; boja zlata je onda samo pozlata (inače "zlato + srebro" zbunjuje model).
   if (/925|silver/i.test(a.karat || '')) {
     const tone = { 'yellow-gold': 'yellow gold', 'rose-gold': 'rose gold', 'two-tone': 'two-tone yellow and white' }[a.metal];
@@ -220,7 +255,7 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
   // Napomene za AI uz izabrane opcije (npr. "open face grill: ..."), iz šablona ili buildera.
   const notes = allFields
     .filter((f) => f.ai !== false && !f.lettering && f.options && a[f.id] != null)
-    .map((f) => clean((f.options.find((o) => o.value === a[f.id]) || {}).note, 300))
+    .map((f) => clean(choiceNote(f, f.options.find((o) => o.value === a[f.id])), 300))
     .filter(Boolean);
   if (notes.length) lines.push(`Design details: ${notes.join('; ')}.`);
 
@@ -230,8 +265,9 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
     .filter((f) => !KNOWN.has(f.id) && !f.lettering && f.ai !== false && f.type !== 'upload' && ((a[f.id] != null && a[f.id] !== '') || a[`${f.id}__more`]))
     .map((f) => {
       const o = (f.options || []).find((x) => x.value === a[f.id]);
-      const val = o ? o.label : a[f.id] || '';
-      const more = clean(a[`${f.id}__more`], 300);
+      const own = writeIn(f.id);
+      const val = own ? `other, the customer writes: "${own}"` : o ? o.label : a[f.id] || '';
+      const more = own ? '' : clean(a[`${f.id}__more`], 300);
       return `${clean(f.label || f.id, 80)}: ${clean(val, 200)}${more ? ` (customer adds: "${more}")` : ''}`;
     });
   if (extra.length) lines.push(`Additional customer choices (apply them to the design): ${extra.join('; ')}.`);

@@ -166,6 +166,7 @@ const H = {
     <dt>Picture</dt><dd>Shown on the choice in the form. Without your own picture a matching one from the library is used (pale until you pick another).</dd>
     <dt>Color dot</dt><dd>Optional swatch for chips such as metals.</dd>
     <dt>AI note</dt><dd>Sent to the AI only when this option is chosen, e.g. <i>open face: only the outline of each tooth is covered</i>. Customers never see it.</dd></dl>`,
+  writeIn: `<b>"Other" with a text box</b><p>Adds one more choice at the end of the list (called <b>Other</b> unless you rename it). When the customer picks it, a <b>"Please describe"</b> box appears under the question and they can't continue until they type their answer.</p><p>What they type goes to you with the lead (in the portal and the email) and, when <b>Send to AI</b> is on, to the AI as their answer to this question.</p>`,
   followup: `<b>Follow-up after a choice</b><p>After the customer picks any option, an extra field appears under the question: an <b>"Add details"</b> text box (sent to the AI with the answer) or an <b>"Add a photo"</b> upload (goes to the jeweler with the lead).</p>`,
   products: `<b>Shop products</b><p>Products from the jeweler's online shop, shown under the customer's AI preview with photo, price and a link to the shop. Products for the piece the customer designed come first; up to 6 show.</p><dl>
     <dt>Recommend with</dt><dd>Tick pieces to show a product only with them. Nothing ticked: shown with every piece.</dd></dl>`,
@@ -1210,7 +1211,8 @@ function fieldEditor(i, j, f) {
         </div>
         <input class="in note-in" data-bind="${p}.options.${k}.note" value="${esc(o.note || '')}" placeholder="AI note when chosen (optional), e.g. open face: only the outline of each tooth is covered" />
       </div>`).join('');
-    extra = `<p class="hint" style="margin:0">Options ${help(H.options)} · the image is shown to customers, the AI note goes to the AI</p><div class="opts">${rows}</div><button class="btn small" data-act="add-option" data-path="${p}">+ Add option</button>`;
+    extra = `<p class="hint" style="margin:0">Options ${help(H.options)} · the image is shown to customers, the AI note goes to the AI</p><div class="opts">${rows}</div><button class="btn small" data-act="add-option" data-path="${p}">+ Add option</button>${f.lettering ? '' : `
+      <div class="writein ${f.writeIn ? 'on' : ''}"><label class="check"><input type="checkbox" data-bind="${p}.writeIn" data-kind="bool" ${f.writeIn ? 'checked' : ''} /> Add "Other" where the customer types their own answer</label> ${help(H.writeIn, 'Other with a text box')}${f.writeIn ? `<input class="in" data-bind="${p}.writeInLabel" maxlength="30" value="${esc(f.writeInLabel || '')}" placeholder="Other" title="Name of the choice (optional)" />` : ''}</div>`}`;
   }
   const follow = CHOICE.includes(f.type)
     ? `<label class="f"><span>Follow-up after a choice ${help(H.followup)}</span><select class="sel" data-bind="${p}.followup" data-rerender><option value="">None</option><option value="text" ${f.followup === 'text' ? 'selected' : ''}>"Add details" text box</option><option value="file" ${f.followup === 'file' ? 'selected' : ''}>"Add a photo" upload</option></select></label>`
@@ -1358,7 +1360,7 @@ app.addEventListener('change', async (e) => {
       const f = getP(el.dataset.bind.replace(/\.type$/, ''));
       if (v === 'yesno') f.options = [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
       else if (CHOICE.includes(v) && !f.options?.length) f.options = [{ value: 'option-1', label: 'Option 1' }];
-      if (!CHOICE.includes(v)) { delete f.options; delete f.followup; }
+      if (!CHOICE.includes(v)) { delete f.options; delete f.followup; delete f.writeIn; delete f.writeInLabel; }
     }
     changed(el.dataset.rerender !== undefined || el.type === 'checkbox');
   } else if (el.dataset.origins !== undefined) {

@@ -200,7 +200,13 @@ document.addEventListener('error', (e) => {
 }, true);
 
 // Slika izbora prati komad: metal za prsten je na prstenu, ne na lancu.
-const pic = (o) => art(o.pieceArt?.[S.a.type] || o.image);
+// Izbor koji ima sliku u svakoj boji metala (rez grillza) prati metal koji je kupac izabrao; bez metala zlatna.
+const pickedFamily = () => {
+  const mf = S.cfg.steps.flatMap((st) => st.fields).find((f) => f.id === 'metal');
+  const mo = mf && (mf.options || []).find((o) => o.value === S.a.metal);
+  return mo ? metalFamily(mo.label) : 'yellow';
+};
+const pic = (o) => art(o.metalArt?.[S.a.type]?.[pickedFamily()] || o.pieceArt?.[S.a.type] || o.image);
 
 // Stilovi zavise od izabranog tipa; "Something else" je zadnji (bez reference), osim ako ga zlatar isključi.
 const optionsOf = (f) => {
@@ -210,8 +216,11 @@ const optionsOf = (f) => {
   }
   // Svaki komad ima svoje opcije (npr. grillz bez platine, svoj budžet).
   const allow = f.perPiece?.[S.a.type];
-  return Array.isArray(allow) ? allow.map((v) => (f.options || []).find((o) => o.value === v)).filter(Boolean) : f.options || [];
+  const list = Array.isArray(allow) ? allow.map((v) => (f.options || []).find((o) => o.value === v)).filter(Boolean) : f.options || [];
+  // "Other" sa poljem za upis (writeIn): uvijek zadnji izbor.
+  return f.writeIn ? [...list.filter((o) => o.value !== 'other'), { value: 'other', label: String(f.writeInLabel || '').trim() || 'Other', icon: 'note', writeIn: true }] : list;
 };
+const writeInOpen = (f) => f.writeIn && S.a[f.id] === 'other';
 
 function stepValid(step) {
   if (S.uploading.size) return false;
@@ -222,6 +231,7 @@ function stepValid(step) {
   const shown = (step.fields || []).filter(visible);
   const filled = (f) => (f.type === 'upload' ? !!S.files[f.id] : String(S.a[f.id] ?? '').trim() !== '');
   if (stepNeedsAnswer(step, S.a) && shown.length && !shown.some(filled)) return false;
+  if (shown.some((f) => writeInOpen(f) && !String(S.a[`${f.id}__more`] || '').trim())) return false;
   return shown.every((f) => !fieldRequired(S.cfg, step, f, S.a) || filled(f));
 }
 // Korak bez kojeg se ne može dalje (oznaka u formi).
@@ -291,6 +301,7 @@ function footHint(step, valid) {
     const top = [...set].filter((t) => t[0] === 'T').length;
     if (set.size) return `<span class="foot-teeth"><b>${top}</b> top + <b>${set.size - top}</b> bottom = <b>${set.size}</b> teeth</span>`;
   }
+  if (!valid && step.fields.some((f) => visible(f) && writeInOpen(f) && !String(S.a[`${f.id}__more`] || '').trim())) return 'Describe your answer to continue';
   return valid ? '' : step.fields.some((f) => visible(f) && f.options) || step.fields.some((f) => f.optionsFrom) ? 'Choose an option to continue' : 'Fill this in to continue';
 }
 
@@ -417,7 +428,13 @@ const backBtn = () => (S.i > 0 ? '<button type="button" class="btn ghost" data-a
 function fieldView(f) {
   const label = (f.label ? `<span class="label" id="lbl-${esc(f.id)}">${esc(f.label)}</span>` : '') + (f.subtitle ? `<p class="field-sub">${esc(f.subtitle)}</p>` : '');
   const v = S.a[f.id];
-  return choiceView(f, label, v) + (v != null && v !== '' && f.followup ? followupView(f) : '');
+  return choiceView(f, label, v) + (writeInOpen(f) ? writeInView(f) : v != null && v !== '' && f.followup ? followupView(f) : '');
+}
+
+// "Other": kupac upiše svoj odgovor; bez teksta se ne ide dalje.
+function writeInView(f) {
+  const key = `${f.id}__more`;
+  return `<label class="field more"><span class="label">Please describe</span><input class="input" data-text="${esc(key)}" data-writein maxlength="300" placeholder="Type your answer" value="${esc(S.a[key] || '')}" /></label>`;
 }
 
 // Dodatno polje poslije izbora: tekst ili fotografija (custom pitanja iz buildera).
@@ -500,11 +517,16 @@ const teethVal = (set) => [...set].sort((x, y) => (x[0] === y[0] ? +x.slice(1) -
 
 // Smile approved in the visual preview. IDs retain their existing server/prompt meaning.
 const SELECTED_FILL = { 'yellow-gold': '#e3b85a', 'white-gold': '#dfe2e5', platinum: '#d6d9dd', 'rose-gold': '#e2a690', 'two-tone': '#e3b85a' };
+// Metal koji zlatar sam doda (Silver, Dental Gold...) bez boje: boja po porodici iz natpisa.
+const FAMILY_FILL = { yellow: '#e3b85a', white: '#dfe2e5', rose: '#e2a690' };
 function mouthSvg(f, set) {
   const prefix = `mouth-${f.id.replace(/[^a-z0-9_-]/gi, '')}`;
   const scope = (markup) => markup.replace(/id="([^"]+)"/g, (_, id) => `id="${prefix}-${id}"`).replace(/url\(#([^)]+)\)/g, (_, id) => `url(#${prefix}-${id})`);
   const custom = S.cfg.steps.flatMap((s) => s.fields).find((x) => x.id === 'metal')?.options?.find((o) => o.value === S.a.metal)?.swatch;
-  const selected = SELECTED_FILL[S.a.metal] || (/^#[0-9a-f]{6}$/i.test(custom || '') ? custom : '#c8c5bf');
+  const metalOpt = S.cfg.steps.flatMap((s) => s.fields).find((x) => x.id === 'metal')?.options?.find((o) => o.value === S.a.metal);
+  // Prepoznat metal u natpisu ima prednost nad bojom tačke (District je Silver obojio plavo, zub mora biti srebrn).
+  const known = metalOpt && /gold|silver|platinum|steel|white|rose|yellow/i.test(metalOpt.label) ? FAMILY_FILL[metalFamily(metalOpt.label)] : '';
+  const selected = SELECTED_FILL[S.a.metal] || known || (/^#[0-9a-f]{6}$/i.test(custom || '') ? custom : '#c8c5bf');
   const teeth = SMILE_TEETH.map((t) => {
     const selectable = !t.id.includes('decor');
     const on = selectable && set.has(t.id);
@@ -721,7 +743,7 @@ function picked() {
     if (f.type === 'text' || f.type === 'textarea') return { f, name, value: v, icon: 'note' };
     if (f.type === 'upload') return null;
     const o = optionsOf(f).find((x) => x.value === v);
-    if (!o) return v === 'other' ? { f, name, value: S.a[`${f.id}__more`] || 'Something else', icon: 'note' } : null;
+    if (!o || o.writeIn) return v === 'other' ? { f, name, value: S.a[`${f.id}__more`] || o?.label || 'Something else', icon: 'note' } : null;
     return { f, name, value: o.label, o, img: pic(o), swatch: o.swatch, icon: o.icon || 'gem' };
   })).filter(Boolean);
 }
@@ -842,6 +864,10 @@ function bind() {
     b.addEventListener('click', () => {
       const changed = S.a[b.dataset.pick] !== b.dataset.val;
       S.a[b.dataset.pick] = b.dataset.val;
+      // Upisan "Other" tekst ne ostaje uz drugi izbor (osim kad pitanje ima i "Add details").
+      const pf = S.cfg.steps.flatMap((st) => st.fields).find((x) => x.id === b.dataset.pick);
+      if (pf?.writeIn && b.dataset.val !== 'other' && pf.followup !== 'text') delete S.a[`${pf.id}__more`];
+      if (pf?.writeIn && b.dataset.val === 'other') S.focusKey = `[data-text="${CSS.escape(`${pf.id}__more`)}"]`;
       // Skrivena polja čistimo da ne ostanu u odgovorima
       pruneHidden();
       // Promjena tipa poništava stil (opcije stila zavise od tipa)
@@ -850,12 +876,14 @@ function bind() {
       if (changed && b.dataset.pick === 'type') for (const st of S.cfg.steps) for (const f of st.fields) if (f.perPiece && S.a[f.id] != null && !optionsOf(f).some((o) => o.value === S.a[f.id])) delete S.a[f.id];
       if (changed && b.dataset.pick === 'style') for (const st of S.cfg.steps) for (const f of st.fields) if (f.type === 'teeth') delete S.a[f.id];
       applyPresetTeeth(S.cfg, S.a);
-      S.focusKey = `[data-pick="${CSS.escape(b.dataset.pick)}"][data-val="${CSS.escape(b.dataset.val)}"]`;
+      if (!(pf?.writeIn && b.dataset.val === 'other')) S.focusKey = `[data-pick="${CSS.escape(b.dataset.pick)}"][data-val="${CSS.escape(b.dataset.val)}"]`;
       render();
+      // Polje za "Other" se pojavi ispod pitanja: dovedi ga iznad ljepljivog dna ekrana.
+      if (pf?.writeIn && b.dataset.val === 'other') app.querySelector('[data-writein]')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       // Ne idi dalje sam ako polje ima dodatno pitanje (kupac možda želi da doda detalje).
       // Jedan tajmer: dvostruki dodir ili brz klik na Back ne preskaču sljedeći korak.
       clearTimeout(S.adv);
-      if (cur().autoAdvance && stepValid(cur()) && !cur().fields.some((f) => f.followup && visible(f))) {
+      if (cur().autoAdvance && stepValid(cur()) && !cur().fields.some((f) => (f.followup || f.writeIn) && visible(f))) {
         const at = S.i;
         S.adv = setTimeout(() => { if (S.i === at) go(1); }, 260);
       }
@@ -873,6 +901,13 @@ function bind() {
       if (el.dataset.text === 'inscription') app.querySelectorAll('[data-fontprev]').forEach((x) => { x.textContent = letterSample(); });
       const c = app.querySelector(`[data-count="${el.dataset.text}"]`);
       if (c) c.textContent = `${el.value.length}/${el.maxLength}`;
+      if (el.dataset.writein !== undefined) {
+        const ok = stepValid(cur());
+        const nb = app.querySelector('[data-act="next"]');
+        if (nb) nb.disabled = !ok;
+        const hint = app.querySelector('.foot .hint');
+        if (hint) hint.innerHTML = footHint(cur(), ok);
+      }
     })
   );
   app.querySelectorAll('[data-c]').forEach((el) => {

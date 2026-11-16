@@ -517,3 +517,8 @@ dialog.field-editor[open] { display: flex; flex-direction: column; }
 .img-off:not(.ghost):hover { border-color: var(--danger); color: var(--danger); }
 .style .body .img-off { justify-self: start; }
 .image-library-actions { display: flex; align-items: center; gap: 8px; }
+
+/* "Other" sa poljem za upis (16.11.2026) */
+.writein { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin-top: 10px; padding: 10px 12px; border: 1px dashed var(--line-strong, rgba(255,255,255,.18)); border-radius: 12px; }
+.writein.on { border-style: solid; }
+.writein .in { flex: 1 1 160px; max-width: 220px; }
