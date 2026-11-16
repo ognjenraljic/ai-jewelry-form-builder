@@ -677,7 +677,7 @@ function filmButtons(r) {
   const used = S.renders.filter((x) => x.film && x.film.status !== 'error').length;
   if (used >= 2) return '';
   const err = f?.status === 'error';
-  return `<button type="button" class="filmtile idle" data-act="film">${thumb('', `<span class="ft-play">${playIcon}</span>`)}<span class="ft-text"><b>${err ? 'We could not finish the video' : 'Highlight video of this version'}</b><small>${err ? 'Tap to try again' : 'A slow 10 second turn of your piece'}</small></span><span class="ft-go">${err ? 'Try again' : 'Create'}</span></button>`;
+  return `<button type="button" class="filmtile idle" data-act="film">${thumb('', `<span class="ft-play">${playIcon}</span>`)}<span class="ft-text"><b>${err ? 'We could not finish the video' : 'Highlight video of this version'}</b><small>${err ? 'Tap to try again' : 'A slow 10 second video of your piece'}</small></span><span class="ft-go">${err ? 'Try again' : 'Create'}</span></button>`;
 }
 
 function wireFilm(v) {

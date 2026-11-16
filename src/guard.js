@@ -90,15 +90,15 @@ function expand6(ip) {
 // Procjena za render koji je u toku (još nema stvarnog troška), da paralelni zahtjevi ne prođu limit.
 export const EST_RENDER_USD = 0.08;
 const dayStart = () => { const d = new Date(); d.setUTCHours(0, 0, 0, 0); return d.getTime(); };
+// Bez dnevnog limita (Ognjen 16.11: "bez limita za videa i slike"); limit postoji samo ako se postavi varijabla.
+// Hitno zaustavljanje svega ostaje RENDERS_PAUSED=1.
 export const budgets = (env) => ({
-  daily: Number(env.DAILY_BUDGET_USD) > 0 ? Number(env.DAILY_BUDGET_USD) : 30,
-  perForm: Number(env.FORM_DAILY_BUDGET_USD) > 0 ? Number(env.FORM_DAILY_BUDGET_USD) : 15,
+  daily: Number(env.DAILY_BUDGET_USD) > 0 ? Number(env.DAILY_BUDGET_USD) : Infinity,
+  perForm: Number(env.FORM_DAILY_BUDGET_USD) > 0 ? Number(env.FORM_DAILY_BUDGET_USD) : Infinity,
 });
-// null = može; inače razlog ('paused' | 'daily' | 'form').
-export async function spendBlock(env, formId) {
-  if (env.RENDERS_PAUSED === '1') return 'paused';
+// Današnja potrošnja (od ponoći UTC): sve forme i ova forma, slike + video + probni renderi, plus renderi u toku.
+export async function spendToday(env, formId) {
   const since = dayStart();
-  const { daily, perForm } = budgets(env);
   const [all, tests, form, films, formFilms] = await env.DB.batch([
     env.DB.prepare("SELECT COALESCE(SUM(cost_usd), 0) AS c, SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS p FROM renders WHERE created_at > ?").bind(since),
     env.DB.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS c FROM test_renders WHERE created_at > ?').bind(since),
@@ -108,9 +108,29 @@ export async function spendBlock(env, formId) {
   ]);
   const a = all.results[0];
   const f = form.results[0];
-  if (a.c + tests.results[0].c + films.results[0].c + (a.p || 0) * EST_RENDER_USD >= daily) return 'daily';
-  if (f.c + formFilms.results[0].c + (f.p || 0) * EST_RENDER_USD >= perForm) return 'form';
+  return {
+    all: a.c + tests.results[0].c + films.results[0].c + (a.p || 0) * EST_RENDER_USD,
+    form: f.c + formFilms.results[0].c + (f.p || 0) * EST_RENDER_USD,
+    films: films.results[0].c,
+    formFilms: formFilms.results[0].c,
+  };
+}
+// null = može; inače razlog ('paused' | 'daily' | 'form').
+export async function spendBlock(env, formId) {
+  if (env.RENDERS_PAUSED === '1') return 'paused';
+  const { daily, perForm } = budgets(env);
+  const s = await spendToday(env, formId);
+  if (s.all >= daily) return 'daily';
+  if (s.form >= perForm) return 'form';
   return null;
+}
+// Video koji kreće sam (auto/backend) smije samo dok ostaje bar 30% dnevnog budžeta: slika kupca uvijek ima prednost
+// (16.11: zadnji leadovi dana ostali bez slike jer je budžet forme potrošen).
+export const FILM_BUDGET_SHARE = 0.7;
+export async function filmRoom(env, formId, cost) {
+  const { daily, perForm } = budgets(env);
+  const s = await spendToday(env, formId);
+  return s.all + cost <= daily * FILM_BUDGET_SHARE && s.form + cost <= perForm * FILM_BUDGET_SHARE;
 }
 export const SPEND_MESSAGE = 'Previews are paused for now. Your request is saved and our team will follow up with you soon.';
 

@@ -5,6 +5,7 @@ const IMAGE_WAIT_MS = 150_000; // manje od STALE_PENDING_MS u workeru
 const POLL_MS = 2000;
 
 export const FILM_API = 'pika/pika-h3-flex/image-to-video';
+// 10 s blago njihanje u petlji (Ognjenova odluka 16.11); petlja jer je zadnji kadar ista slika kao prvi.
 export const FILM_SECONDS = 10;
 export const FILM_RESOLUTION = '768p';
 export const FILM_EST_USD = 0.2; // 0,02 $ po sekundi na 768p; trošak se ispravi kad posao stigne

@@ -138,25 +138,55 @@ const CINEMATIC_STYLE =
   'faint warm haze and a gentle glow around the brightest highlights, shallow depth of field, razor sharp macro detail on the piece. ' +
   'Square composition, the piece fills about 60% of the frame and sits in the center, with dark empty space around it. No people, no hands, no props, no text beyond what is specified, no watermark, no brand logos or trademarks. ' + NO_ENV_REFLECTIONS;
 
-// Video prvog kadra (Pika H3 Flex). Ranije pun okret od 360°: model je morao izmisliti stranu koja se na slici ne vidi i
-// dodavao detalje (Ognjen 16.11). Sada se komad samo blago njiše i vraća, pa se vidi samo ono što je na slici; pomjera se svjetlo.
-// Prvi i zadnji kadar su isti, pa se video vrti u krug. Privjesak i minđuše vise, pa se njišu oko tačke na kojoj vise.
-const HANGING = new Set(['pendant', 'earrings']);
+// Video prvog kadra (Pika H3 Flex). Model nema polje za zabrane i svaku riječ iz prompta shvata kao nešto što treba
+// prikazati: "no new stones, no new text" je 16.11. dalo video sa slovima i kamenjem na grillzu bez ijednog kamena.
+// Zato prompt SAMO pozitivno opisuje ono što je na slici (iz odgovora kupca) i pomjera svjetlo i kameru, a komad stoji
+// mirno: i okret od 15° traži od modela da izmisli oblik koji ne vidi. Prvi i zadnji kadar su ista slika (petlja).
+export function filmDescription(form, a) {
+  const fields = (form?.steps || []).filter((st) => st.enabled !== false).flatMap((st) => (st.fields || []).filter((f) => f.enabled !== false));
+  const fieldOf = (id) => fields.find((f) => f.id === id);
+  const label = (f) => {
+    if (!f || a[f.id] == null || a[f.id] === '') return '';
+    if (a[f.id] === 'other' && f.writeIn) return clean(a[`${f.id}__more`], 60).toLowerCase();
+    return clean((f.options || []).find((o) => o.value === a[f.id])?.label, 60).toLowerCase();
+  };
+  const typeLabel = label(fieldOf('type')) || a.type || 'piece of jewelry';
+  const metal = METAL[a.metal] || (label(fieldOf('metal')) ? `polished ${label(fieldOf('metal'))}` : 'polished gold');
+  const parts = [];
+  const t = a.type === 'grillz' ? teethPlan(a.teeth) : null;
+  if (t) parts.push(`${[t.top ? `${t.top} upper` : '', t.bottom ? `${t.bottom} lower` : ''].filter(Boolean).join(' and ')} tooth caps in ${metal}`);
+  else parts.push(`a ${typeLabel} in ${metal}`);
+  const notIced = a.coverage === 'none' || /^(none|no|not iced|no icing|no ice)$/i.test(label(fieldOf('coverage')));
+  if (!notIced && (a.stones || a.coverage) && a.stones !== 'none') parts.push(`${label(fieldOf('coverage')) || 'set'} with ${STONES[a.stones] || label(fieldOf('stones')) || 'diamonds'}`);
+  else parts.push('smooth polished metal');
+  const cut = fields.find((f) => /(^|_)cut$/.test(f.id) && a[f.id] != null && a[f.id] !== '');
+  if (cut) {
+    const o = (cut.options || []).find((x) => x.value === a[cut.id]);
+    parts.push(clean(choiceNote(cut, o) || label(cut), 160));
+  }
+  const text = clean(a.inscription, 24);
+  if (text) parts.push(`with the letters "${text}"`);
+  return parts.filter(Boolean).join(', ');
+}
 
-export function buildFilmPrompt(piece, type = '') {
+// Blago njihanje u petlji, 10 s (Ognjen 16.11: "ne mora puni krug, nego kako je i ranije bilo, ali da je loop").
+// Komad se malo okrene lijevo, pa desno, i vrati na početni ugao; zadnji kadar je ista slika kao prvi (last_frame_image).
+// Bez zabrana: samo opis onoga što je na slici, i pozitivno ponovljen isti dizajn kroz cijeli pokret.
+const HANGING = new Set(['pendant', 'earrings']);
+export function buildFilmPrompt(piece, type = '', desc = '') {
   const name = clean(piece, 60).toLowerCase() || 'piece';
+  const what = desc ? ` (${clean(desc, 400)})` : '';
+  const back = 'and settles back at exactly the starting angle, so the last frame matches the first frame and the video loops seamlessly';
   const move = HANGING.has(type)
     ? type === 'earrings'
-      ? 'Both earrings sway very gently on their hooks, turning only slightly left and right (no more than 15 degrees) and settling back exactly where they started. The hooks stay still.'
-      : `The ${name} sways very gently on its chain, turning only slightly left and right (no more than 15 degrees) and settling back exactly where it started. The chain stays still.`
-    : `The ${name} turns very slowly a little to the left, then a little to the right (no more than 15 degrees each way), and returns precisely to its starting angle. It never turns around: only the side visible in the first frame is ever seen.`;
+      ? `Both earrings sway gently on their hooks, turning slowly a little to the left, then a little to the right (about 15 degrees each way), ${back}; the hooks stay in place.`
+      : `The ${name} sways gently on its chain, turning slowly a little to the left, then a little to the right (about 15 degrees each way), ${back}; the chain stays in place.`
+    : `The ${name} turns slowly a little to the left, then a little to the right (about 15 degrees each way), ${back}.`;
   return [
-    'Luxury jewelry commercial: one continuous seamless shot that starts and ends on exactly the same frame as the input image.',
+    `Luxury jewelry commercial: one continuous shot of the exact ${name} shown in the input image${what}.`,
     move,
-    'Keep the piece EXACTLY as it is in the input image, frame after frame: the same shape and proportions, the same number of teeth, caps, links, stones and letters, the same engraving or cut pattern, the same lettering, the same metal color and finish.',
-    'Do not add, remove or change any detail: no new stones, no new engravings or patterns, no new text, no extra parts, no morphing, no melting, no redesign.',
-    'Only the light moves: a soft highlight glides slowly across the polished metal and the stones sparkle with small glints as they catch it.',
-    'Keep the same background, framing and lighting setup as the input image. The camera stays still. Calm, slow and elegant. No cuts, no added text, no hands, no people.',
+    'It keeps exactly the design of the input image throughout: identical shape, proportions, metal color, finish and pattern in every frame.',
+    'The camera stays still. A soft warm highlight glides across the polished metal as it moves. Same background, framing and lighting as the input image. Calm, slow and elegant.',
   ].join(' ');
 }
 

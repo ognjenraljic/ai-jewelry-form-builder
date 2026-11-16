@@ -61,9 +61,11 @@ const [a, b] = await Promise.all([send(`${api}/films`, { token: lead.token, n: 1
 check(a.data.film?.id && a.data.film.id === b.data.film?.id, 'dva istovremena klika su jedan film');
 check((await video()).length === before + 1, 'plaćen je samo jedan posao');
 const job = (await video()).pop();
-check(job.path.includes('pika/pika-h3-flex/image-to-video') && job.body.duration === 10 && job.body.resolution === '768p' && job.body.last_frame_image === job.body.image && job.body.rewrite === false, 'H3 Flex, 10 s, 768p, zadnji kadar = prvi');
-check(job.body.prompt.includes('The ring turns very slowly a little') && job.body.prompt.includes('never turns around') && !job.body.prompt.includes('360'), 'prompt samo blago njiše komad (bez okreta od 360°, da ne izmišlja zadnju stranu)');
-check(job.body.prompt.includes('Do not add, remove or change any detail'), 'prompt čuva svaki detalj slike');
+check(job.path.includes('pika/pika-h3-flex/image-to-video') && job.body.duration === 10 && job.body.resolution === '768p' && job.body.last_frame_image === job.body.image && job.body.rewrite === false, 'H3 Flex, 10 s, 768p, zadnji kadar = prvi (petlja)');
+check(job.body.prompt.includes('The ring turns slowly a little to the left') && job.body.prompt.includes('loops seamlessly') && !job.body.prompt.includes('360'), 'blago njihanje lijevo-desno u petlji, bez punog kruga');
+check(job.body.prompt.includes('keeps exactly the design of the input image throughout'), 'isti dizajn kroz cijeli pokret');
+check(job.body.prompt.includes('polished rose gold') && job.body.prompt.includes('natural diamonds'), 'prompt opisuje komad sa slike iz odgovora');
+check(!/\b(no|never|not)\b/i.test(job.body.prompt), 'bez zabrana: model ih shvata kao nešto što treba prikazati');
 
 const id = a.data.film.id;
 check((await send(`${api}/films/${id}`)).status === 403, 'stanje filma traži token');
