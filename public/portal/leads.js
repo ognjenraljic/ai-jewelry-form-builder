@@ -3,16 +3,16 @@
 export function createLeadStore(request, now = Date.now) {
   const cache = new Map();
   const fresh = (entry) => entry && now() - entry.at < 30_000;
-  const keyOf = (status, q) => JSON.stringify([status, q.toLowerCase()]);
+  const keyOf = (status, q, day = '', dfrom = '') => JSON.stringify([status, q.toLowerCase(), day, dfrom]);
   let pending, sequence = 0;
   return {
-    async load({ status = '', q = '', before = null, previous = [] } = {}) {
+    async load({ status = '', q = '', day = '', dfrom = '', before = null, previous = [] } = {}) {
       const seq = ++sequence;
       pending?.abort();
-      const key = keyOf(status, q);
+      const key = keyOf(status, q, day, dfrom);
       const all = cache.get(keyOf('', ''));
       const cached = cache.get(key);
-      if (!before && fresh(all) && !all.next) {
+      if (!before && !day && !dfrom && fresh(all) && !all.next) {
         const search = q.toLowerCase();
         return { ...all, leads: all.leads.filter((l) => (!status || l.status === status) && (!search || [l.name, l.email, l.phone].some((s) => String(s || '').toLowerCase().includes(search)))) };
       }
@@ -21,6 +21,8 @@ export function createLeadStore(request, now = Date.now) {
       const qs = new URLSearchParams();
       if (status) qs.set('status', status);
       if (q) qs.set('q', q);
+      if (day) qs.set('day', day);
+      if (dfrom) qs.set('dfrom', dfrom);
       if (before) qs.set('before', before);
       qs.set('tz', new Date().getTimezoneOffset());
       try {

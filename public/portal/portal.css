@@ -339,3 +339,82 @@ textarea.in { resize: vertical; line-height: 1.5; }
 .changes li b { color: var(--ink); font-weight: 600; margin-right: 6px; }
 .lightbox figure { margin: 0; display: grid; gap: 10px; justify-items: center; }
 .lightbox figcaption { max-width: min(92vw, 900px); color: #fff; font-size: 14px; line-height: 1.5; text-align: center; overflow-wrap: anywhere; }
+
+/* District 16.11.2026: statistika, vremena generisanja, klik na dan, kalkulator cijene, tab Pricing */
+.wrap.wide { max-width: 1640px; }
+.stats { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.gen { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.gen svg { width: 12px; height: 12px; }
+.shot-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.shot-col .gen { font-size: 12px; }
+button.dbar { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; border-radius: 8px; }
+button.dbar:hover i { background: var(--accent); }
+button.dbar.on i { background: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+button.dbar.on span, button.dbar.on b { color: var(--ink); font-weight: 700; }
+button.dbar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.days14-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-top: 10px; font-size: 12px; color: var(--ink-soft); }
+.dpick { display: inline-flex; align-items: center; gap: 8px; }
+.dpick .in { width: auto; padding: 5px 8px; font-size: 12px; color-scheme: dark; }
+.day-on b { color: var(--ink); }
+.days14-foot .chip { padding: 5px 12px; font-size: 12px; }
+
+/* Kalkulator: desno od leada na širokom ekranu, ispod na užem */
+@media (min-width: 1280px) {
+  .lead.has-calc { grid-template-columns: 220px minmax(0, 1fr) minmax(420px, 520px); }
+}
+.calc { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-self: start; min-width: 0; }
+@media (max-width: 1279px) { .calc { grid-column: 1 / -1; } }
+@media (max-width: 620px) { .calc { grid-template-columns: 1fr; } }
+.calc-box { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: color-mix(in srgb, var(--bg) 55%, var(--surface)); min-width: 0; }
+.calc-title { margin: 0 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); }
+.calc-num { margin: 0; font-family: var(--serif); font-size: 30px; line-height: 1.1; color: var(--ink); }
+.calc-diff { margin: 2px 0 8px; font-size: 12px; }
+.calc-diff .over { color: #f08a7a; }
+.calc-diff .ok, .calc-ok { color: #9be38a; }
+.calc-ok { margin: 0; font-size: 13px; }
+.calc-empty { margin: 0 0 10px; font-size: 12px; line-height: 1.45; color: var(--ink-soft); }
+.calc-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.calc-lines li { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--ink-soft); }
+.calc-lines span { min-width: 0; }
+.calc-lines b { color: var(--ink); font-weight: 600; text-align: right; white-space: nowrap; }
+.calc-lines li.chg { flex-direction: column; gap: 1px; }
+.calc-lines li.chg b { white-space: normal; text-align: left; }
+.btn.small { padding: 5px 10px; font-size: 12px; }
+
+/* Tab Pricing */
+.pricing .note { margin-top: 0; }
+.pgrid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.pcard2 { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+.pcard2 h3 { margin: 0 0 12px; font-size: 14px; }
+.prow { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; font-size: 13px; color: var(--ink-soft); }
+.prow2 { display: grid; grid-template-columns: 90px 1fr 1fr; gap: 8px; align-items: end; margin-bottom: 10px; font-size: 12px; color: var(--ink-soft); }
+.prow2 label { display: grid; gap: 4px; }
+.pin { width: 110px; padding: 6px 8px; font-size: 13px; text-align: right; }
+.prow2 .pin, .ptable .pin { width: 100%; }
+.ptable { display: grid; grid-template-columns: minmax(110px, 1.4fr) repeat(3, minmax(70px, 1fr)); gap: 6px 8px; align-items: center; font-size: 12px; color: var(--ink-soft); }
+.pfoot { display: flex; align-items: center; gap: 12px; margin: 14px 0; }
+.psaved { font-size: 13px; color: var(--ink-soft); }
+.btn.gold { background: var(--accent); border-color: var(--accent); color: #04211f; }
+
+/* Period trake (16.11): Last 14 days / This week / This month, stubci uvijek po danima */
+.days14-head { flex-wrap: wrap; align-items: center; }
+.drange { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: auto; margin-right: 8px; }
+.drange .chip { padding: 3px 10px; font-size: 11px; }
+.days14-bars { grid-template-columns: repeat(var(--n, 14), minmax(0, 1fr)); }
+.days14.many .days14-bars { gap: 3px; }
+.days14.many .dbar span { font-size: 9px; }
+.days14.many .dbar b { font-size: 9px; }
+button.dbar.future { opacity: .35; cursor: default; }
+@media (max-width: 620px) {
+  .drange { margin-left: 0; width: 100%; order: 3; }
+  .days14.many .days14-bars { gap: 1px; }
+  .days14.many .dbar span { font-size: 8px; letter-spacing: -0.02em; }
+  .days14.many .dbar b { font-size: 8px; }
+}
+
+/* Strelice za period (okt, nov, dec...), fiksno lijevo i desno */
+.dnav { display: grid; grid-template-columns: 36px 1fr 36px; align-items: center; gap: 8px; margin: 2px 0 10px; }
+.dnav-title { text-align: center; font-size: 13px; font-weight: 600; color: var(--ink); }
+.dnav-btn { width: 36px; height: 30px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--ink); font-size: 18px; line-height: 1; cursor: pointer; }
+.dnav-btn:hover:not(:disabled) { border-color: var(--accent); }
+.dnav-btn:disabled { opacity: .3; cursor: default; }

@@ -663,7 +663,7 @@ function filmButtons(r) {
   const f = r.film;
   const thumb = (cls, inner) => `<span class="ft-thumb ${cls}"><img src="${esc(r.url)}" alt="" />${inner}</span>`;
   if (f?.url && S.watch) {
-    return `<div class="filmbar"><button type="button" class="chip" data-act="film-photo">Show photo</button><button type="button" class="chip" data-act="film-sound" aria-pressed="${S.sound}">Sound ${S.sound ? 'on' : 'off'}</button></div>`;
+    return `<div class="filmbar"><button type="button" class="chip" data-act="film-photo">Show photo</button></div>`;
   }
   if (f?.url) {
     return `<button type="button" class="filmtile ready" data-act="film-watch">${thumb('', `<span class="ft-play">${playIcon}</span>`)}<span class="ft-text"><b>Your highlight video is ready</b><small>Tap to watch your piece turn in the light</small></span><span class="ft-go">Watch</span></button>`;
@@ -681,7 +681,7 @@ function filmButtons(r) {
 }
 
 function wireFilm(v) {
-  v.muted = !S.sound;
+  v.muted = true; // video je bez zvuka (16.11)
   if (reduceMotion()) { v.controls = true; return; }
   v.loop = true; // zadnji kadar je isti kao prvi, pa krug nema šav
   v.play().catch(() => {});
@@ -698,7 +698,7 @@ function filmPaint() {
   const v = stage?.querySelector('video.film');
   if (filmPlays(shown) && !v) { stage.insertAdjacentHTML('beforeend', filmVideo(shown)); wireFilm(stage.querySelector('video.film')); }
   else if (v && !filmPlays(shown)) v.remove();
-  else if (v) v.muted = !S.sound;
+  else if (v) v.muted = true;
 }
 
 function filmAct(b) {

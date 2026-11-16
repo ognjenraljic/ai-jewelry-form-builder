@@ -8,6 +8,7 @@ import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
+import { stripAudio } from './mp4.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, FILM_API, FILM_EST_USD } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
@@ -81,8 +82,9 @@ export default {
     }
   },
   // Svaku noć: brisanje selfija i proba na osmijehu starijih od 30 dana, i gašenje rendera koji su ostali "u toku".
+  // Svakih 5 minuta: slika i video za kupce koji su zatvorili stranicu prije kraja (za outreach iz portala).
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(nightly(env));
+    ctx.waitUntil(event.cron === '*/5 * * * *' ? catchUp(env) : nightly(env));
   },
 };
 
@@ -256,6 +258,55 @@ async function createLead(request, env) {
 
 // Mjesto za render se zauzima jednim upisom: prolazi samo ako upit nije potrošio limit i nema rendera u toku.
 // Tako ni 200 paralelnih zahtjeva ne napravi više od jednog plaćenog rendera.
+// ---------- Dovršavanje u pozadini (cron svakih 5 min) ----------
+// Ognjen 16.11: ako kupac zatvori stranicu ranije, slika i video se ipak naprave iz njegovih odgovora, za outreach.
+// 1) lead bez ijednog rendera (stariji od 3 min, mlađi od 24 h) dobija prvu sliku; 2) forma sa automatskim videom dobija
+// video prvog rendera ako ga nema; 3) videi "u toku" se preuzmu u R2. Po krugu ograničeno, da cron ostane kratak.
+const CATCHUP_RENDERS = 6;
+const CATCHUP_FILMS = 10;
+const ORIGIN = 'https://jewelrylead.com/';
+async function catchUp(env) {
+  const now = Date.now();
+  const leads = (await env.DB.prepare(`SELECT l.* FROM leads l WHERE l.created_at < ? AND l.created_at > ?
+      AND NOT EXISTS (SELECT 1 FROM renders r WHERE r.lead_id = l.id AND r.kind IS NULL) ORDER BY l.created_at LIMIT ${CATCHUP_RENDERS}`).bind(now - 3 * 60_000, now - 864e5).all()).results;
+  for (const lead of leads) await serverFirstRender(env, lead).catch((e) => console.error('catch-up render', lead.id, e.message));
+  if (pikaOn(env)) {
+    const need = (await env.DB.prepare(`SELECT l.* FROM leads l JOIN renders r ON r.lead_id = l.id AND r.n = 1 AND r.kind IS NULL AND r.status = 'ok' AND (r.checking IS NULL)
+        WHERE l.created_at > ? AND r.created_at < ? AND NOT EXISTS (SELECT 1 FROM films f WHERE f.lead_id = l.id) ORDER BY l.created_at LIMIT ${CATCHUP_FILMS}`).bind(now - 864e5, now - 60_000).all()).results;
+    for (const lead of need) {
+      const form = await loadForm(env, lead.form_id);
+      if (autoFilm(env, form)) await startLeadFilm(env, lead, form, 1, { auto: true }).catch((e) => console.error('catch-up film', lead.id, e.message));
+    }
+    const pending = (await env.DB.prepare("SELECT * FROM films WHERE status = 'pending' AND created_at < ? ORDER BY created_at LIMIT 20").bind(now - 60_000).all()).results;
+    for (const fl of pending) await settleFilm(env, fl).catch((e) => console.error('catch-up settle', fl.id, e.message));
+  }
+}
+
+// Prva slika bez otvorene stranice: isti model, ulazi i prompt kao kad je kupac na stranici.
+async function serverFirstRender(env, lead) {
+  const form = await loadForm(env, lead.form_id);
+  if (!form) return;
+  const answers = JSON.parse(lead.answers);
+  if (await spendBlock(env, lead.form_id)) return;
+  const model = MODELS[answers.type === 'grillz' ? grillzModel(env) : firstModel(env)];
+  const renderId = rid(12);
+  const n = await claimRender(env, { id: renderId, leadId: lead.id, model, tweak: null, kind: null, maxOk: form.maxRenders, maxAll: form.maxRenders + 3 });
+  if (!n) return;
+  const ref = lead.ref_key ? await r2Image(env, lead.ref_key) : null;
+  const { images, prompt } = await renderInputs(env, new Request(ORIGIN), form, answers, { ref });
+  const t0 = Date.now();
+  try {
+    const out = await runModel(env, model, prompt, images, null);
+    const key = await saveRender(env, lead.id, n, out);
+    await env.DB.prepare('UPDATE renders SET status = ?, image_key = ?, prompt = ?, ms = ?, in_tokens = ?, out_tokens = ?, cost_usd = ?, model = ? WHERE id = ?')
+      .bind('ok', key, prompt, out.ms, out.inT, out.outT, out.cost, out.modelUsed || model.id, renderId).run();
+    console.log('catch-up render ok', lead.id, out.ms);
+    if (n === 1 && autoFilm(env, form)) await startLeadFilm(env, lead, form, n, { auto: true }).catch((e) => console.error('catch-up film', lead.id, e.message));
+  } catch (err) {
+    await env.DB.prepare('UPDATE renders SET status = ?, error = ?, prompt = ?, ms = ? WHERE id = ?').bind('error', `catch-up: ${String(err.message).slice(0, 480)}`, prompt, Date.now() - t0, renderId).run();
+  }
+}
+
 async function claimRender(env, { id, leadId, model, tweak, kind, maxOk, maxAll }) {
   const now = Date.now();
   // Render koji je ostao "u toku" duže od 3 minute (zatvoren tab, pad) više ne blokira i ne broji se kao uspjeh.
@@ -539,9 +590,15 @@ async function settleFilm(env, film) {
   const res = file && (await fetch(file.url));
   if (!res?.ok) return film; // sljedeća provjera pokušava ponovo
   const key = `renders/${film.lead_id}/film-${rid(8)}.mp4`;
-  await env.MEDIA.put(key, await res.arrayBuffer(), { httpMetadata: { contentType: 'video/mp4' } });
+  // Bez zvuka i muzike (Ognjen 16.11): Pika uvijek dodaje zvuk, pa se audio traka izbaci prije čuvanja.
+  const raw = new Uint8Array(await res.arrayBuffer());
+  let silent = null;
+  try { silent = stripAudio(raw); } catch (err) { console.error('film audio strip', err.message); }
+  await env.MEDIA.put(key, silent || raw, { httpMetadata: { contentType: 'video/mp4' } });
   const cost = (await jobCharge(env, job)) ?? film.cost_usd;
-  await env.DB.prepare("UPDATE films SET status = 'ok', video_key = ?, ms = ?, cost_usd = ? WHERE id = ? AND status = 'pending'").bind(key, Date.now() - film.created_at, cost, film.id).run();
+  // Vrijeme generisanja: koliko je posao trajao kod Pike (runtime_s), inače od pokretanja do preuzimanja.
+  const ms = Number(job.runtime_s) > 0 ? Math.round(job.runtime_s * 1000) : Date.now() - film.created_at;
+  await env.DB.prepare("UPDATE films SET status = 'ok', video_key = ?, ms = ?, cost_usd = ? WHERE id = ? AND status = 'pending'").bind(key, ms, cost, film.id).run();
   return { ...film, status: 'ok', video_key: key };
 }
 
@@ -1396,6 +1453,11 @@ async function portalApi(request, env, p, secure) {
     // Po formi: upiti, renderi i zadnji upit. Trošak po formi klijent ne vidi; vidi samo mjesečnu potrošnju naspram budžeta.
     const per = Object.fromEntries((await env.DB.prepare(`SELECT l.form_id, COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, MAX(l.created_at) AS last_lead
       FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? GROUP BY l.form_id`).bind(client.id).all()).results.map((r) => [r.form_id, r]));
+    // Prosječno vrijeme generisanja (slika i video) i broj videa, za statistiku na vrhu portala.
+    const gen = await env.DB.prepare(`SELECT
+        (SELECT AVG(r.ms) FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND r.status = 'ok' AND r.kind IS NULL AND r.ms > 0) AS render_ms,
+        (SELECT AVG(fl.ms) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok' AND fl.ms > 0) AS film_ms,
+        (SELECT COUNT(*) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok') AS films`).bind(client.id).first();
     const ob = await pickOnboarding(request, env, client.id);
     return json({
       session: { kind: sess.kind, expiresAt: sess.expires_at || null },
@@ -1406,7 +1468,10 @@ async function portalApi(request, env, p, secure) {
         id: r.id, name: forms[r.id].name, template: r.template, label: TEMPLATES[r.template]?.label || 'Custom', updated_at: r.updated_at,
         leads: per[r.id]?.leads || 0, renders: per[r.id]?.renders || 0, lastLead: per[r.id]?.last_lead || null,
       })),
-      stats: { leads: stats?.leads || 0, renders: stats?.renders || 0, recent: stats?.recent || 0 },
+      stats: { leads: stats?.leads || 0, renders: stats?.renders || 0, recent: stats?.recent || 0, films: gen?.films || 0, renderMs: Math.round(gen?.render_ms || 0), filmMs: Math.round(gen?.film_ms || 0) },
+      pricing: d.pricing || null,
+      // Izbori formi koje kalkulator cijene treba (natpisi), po formi.
+      formSpecs: Object.fromEntries(formRows.filter((r) => !r.archived_at).map((r) => [r.id, pricingSpec(forms[r.id])])),
       usage: { spent: Math.round((await clientMonthCost(env, client.id)) * 100) / 100, limit: monthlyBudget(env), resetsAt: monthStart(Date.now(), 1) },
     });
   }
@@ -1420,13 +1485,25 @@ async function portalApi(request, env, p, secure) {
     const args = [client.id, before];
     if (LEAD_STATUSES.includes(status)) { where.push(status === 'new' ? "(l.status IS NULL OR l.status = 'new')" : 'l.status = ?'); if (status !== 'new') args.push(status); }
     if (q) { where.push('(lower(l.name) LIKE ? OR lower(l.email) LIKE ? OR l.phone LIKE ?)'); args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+    // Jedan dan (klik na traku u portalu): od ponoći do ponoći po vremenskoj zoni pregledača (?tz= u minutama).
+    // Dani za traku: od zadnjih 90 dana, ili od početka mjeseca/sedmice koju zlatar lista strelicama (do 2 godine unazad).
+    const dayFrom = Math.max(Date.now() - 730 * 864e5, Math.min(Date.now() - 90 * 864e5, Number(u.searchParams.get('dfrom')) || Infinity));
+    const baseWhere = [...where];
+    const baseArgs = [...args];
+    const dayM = (u.searchParams.get('day') || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dayM) {
+      const tzOff = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
+      const from = Date.UTC(+dayM[1], +dayM[2] - 1, +dayM[3]) + tzOff * 60_000;
+      where.push('l.created_at >= ? AND l.created_at < ?');
+      args.push(from, from + 864e5);
+    }
     const leads = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all()).results;
     const more = leads.length > PAGE_SIZE;
     const pageLeads = leads.slice(0, PAGE_SIZE);
     const oldest = pageLeads.length ? pageLeads[pageLeads.length - 1].created_at : before;
     const renders = pageLeads.length
-      ? (await env.DB.prepare(`SELECT r.lead_id, r.n, r.image_key, r.tweak, r.kind FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id
+      ? (await env.DB.prepare(`SELECT r.lead_id, r.n, r.image_key, r.tweak, r.kind, r.ms FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id
           WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND r.status = 'ok' AND r.image_key IS NOT NULL ORDER BY r.created_at`).bind(client.id, before, oldest).all()).results
       : [];
     const counts = Object.fromEntries((await env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? GROUP BY COALESCE(l.status, 'new')`).bind(client.id).all()).results.map((r) => [r.s, r.n]));
@@ -1434,7 +1511,7 @@ async function portalApi(request, env, p, secure) {
     const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
     const days = {};
     const dayRows = (await env.DB.prepare(`SELECT strftime('%Y-%m-%d', (l.created_at / 1000) - ? * 60, 'unixepoch') AS d, l.form_id AS fid, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id
-        WHERE ${where.filter((w) => w !== 'l.created_at < ?').join(' AND ')} AND l.created_at >= ? GROUP BY d, fid`).bind(tz, ...args.filter((_, k) => k !== 1), Date.now() - 90 * 864e5).all()).results;
+        WHERE ${baseWhere.filter((w) => w !== 'l.created_at < ?').join(' AND ')} AND l.created_at >= ? GROUP BY d, fid`).bind(tz, ...baseArgs.filter((_, k) => k !== 1), dayFrom).all()).results;
     for (const r of dayRows) (days[r.d] ||= {})[r.fid] = r.n;
     // Video komada (dugme kupca ili pozadinski): gotovi idu uz upit; nekoliko na čekanju se ovdje dovrši.
     let films = pageLeads.length
@@ -1451,17 +1528,27 @@ async function portalApi(request, env, p, secure) {
         return {
           id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
           status: l.status || 'new', note: l.note || '',
-          vision: a.vision || '', details: leadDetails(forms[l.form_id], a),
+          vision: a.vision || '', details: leadDetails(forms[l.form_id], a), answers: pricingAnswers(a),
           photos: [
             ...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []),
             ...Object.entries(files).map(([k, key]) => ({ label: k.replace(/__more$/, ' (extra)').replace(/_/g, ' '), key })),
             ...renders.filter((r) => r.lead_id === l.id && r.kind === 'tryon').map((r) => ({ label: 'On their smile', key: r.image_key })),
           ],
-          renders: renders.filter((r) => r.lead_id === l.id && r.kind !== 'tryon').map((r) => ({ url: `/media/${r.image_key}`, tweak: r.tweak })),
-          films: films.filter((fl) => fl.lead_id === l.id && fl.status !== 'error').map((fl) => (fl.video_key ? { url: `/media/${fl.video_key}` } : { pending: true })),
+          renders: renders.filter((r) => r.lead_id === l.id && r.kind !== 'tryon').map((r) => ({ url: `/media/${r.image_key}`, tweak: r.tweak, ms: r.ms || null })),
+          films: films.filter((fl) => fl.lead_id === l.id && fl.status !== 'error').map((fl) => (fl.video_key ? { url: `/media/${fl.video_key}`, ms: fl.ms || null } : { pending: true })),
         };
       }),
     });
+  }
+  // Tabela cijena za kalkulator (zlatar je sam unosi; cijena metala se stalno mijenja). Admin pregled ne mijenja.
+  if (p === '/api/portal/pricing' && request.method === 'PUT') {
+    if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const pricing = cleanPricing(b.pricing);
+    const d = JSON.parse(client.data || '{}');
+    d.pricing = { ...pricing, updatedAt: Date.now() };
+    await env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify(d), client.id).run();
+    return json({ pricing: d.pricing });
   }
   // Status i bilješka upita (zlatar prati šta je uradio); admin pregled ne mijenja podatke klijenta.
   let lm;
@@ -1475,6 +1562,29 @@ async function portalApi(request, env, p, secure) {
     return r.meta.changes ? json({ ok: true }) : json({ error: 'Not found' }, 404);
   }
   return json({ error: 'Not found' }, 404);
+}
+
+// ---------- Kalkulator cijene (portal) ----------
+// Samo izbori koji ulaze u cijenu, kao natpisi; vrijednosti iz odgovora kupca uz lead.
+const CUT_FIELD = /(^|_)cut$/;
+function pricingSpec(form) {
+  const fields = (form?.steps || []).filter((st) => st.enabled !== false).flatMap((st) => st.fields || []).filter((f) => f.enabled !== false);
+  const opts = (f) => (f?.options || []).map((o) => ({ value: o.value, label: o.label }));
+  const by = (id) => fields.find((f) => f.id === id);
+  return { type: opts(by('type')), metal: opts(by('metal')), karat: opts(by('karat')), stones: opts(by('stones')), coverage: opts(by('coverage')), budget: opts(by('budget')), cut: fields.filter((f) => CUT_FIELD.test(f.id)).flatMap(opts) };
+}
+function pricingAnswers(a) {
+  const out = {};
+  for (const k of ['type', 'metal', 'karat', 'stones', 'coverage', 'budget', 'teeth']) if (a[k] != null && a[k] !== '') out[k] = String(a[k]).slice(0, 200);
+  const cut = Object.keys(a).find((k) => CUT_FIELD.test(k) && a[k]);
+  if (cut) out.cut = String(a[cut]).slice(0, 80);
+  return out;
+}
+// Tabela cijena: samo brojevi >= 0, ključevi kratki, ograničen broj stavki.
+function cleanPricing(p) {
+  const n = (v) => { const x = Number(v); return Number.isFinite(x) && x >= 0 && x < 1e7 ? Math.round(x * 100) / 100 : undefined; };
+  const map = (o, depth = 1) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), depth > 1 ? map(v, depth - 1) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
+  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts) };
 }
 
 async function demoHandled(request, env, id) {

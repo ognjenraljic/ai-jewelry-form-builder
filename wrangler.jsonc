@@ -15,7 +15,7 @@
   // Deploy ne briše varijable i ključeve upisane u Cloudflare dashboardu.
   "keep_vars": true,
   // Noćno čišćenje: selfiji i probe na osmijehu stariji od 30 dana, renderi koji su ostali "u toku".
-  "triggers": { "crons": ["17 3 * * *"] },
+  "triggers": { "crons": ["17 3 * * *", "*/5 * * * *"] },
   "d1_databases": [
     { "binding": "DB", "database_name": "konfigurator", "database_id": "794da75c-1a57-466c-8e9d-7e2ba3ae4471", "migrations_dir": "migrations" }
   ],
