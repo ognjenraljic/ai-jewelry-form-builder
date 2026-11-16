@@ -1,10 +1,13 @@
 // Lokalna provjera toka slika -> film preko lažnog Pika servera, bez troška.
 // Pokretanje: node scripts/mock-pika.mjs 8898 film.mp4, pa wrangler dev uz
 // --var PIKA_API_KEY:mock-local --var PIKA_BASE:http://127.0.0.1:8898, pa BASE=... PIKA=... node scripts/film-check.mjs
+// Podrazumijevano slike idu na OpenAI (lažni: scripts/mock-openai.mjs + OPENAI_BASE), a Pika pravi samo video.
+// Sa --var PIKA_IMAGES:1 na serveru, pokreni i ovu provjeru sa PIKA_IMAGES=1: tada i slike idu preko Pike.
 import assert from 'node:assert/strict';
 
 const base = process.env.BASE || 'http://127.0.0.1:8798';
 const pika = process.env.PIKA || 'http://127.0.0.1:8898';
+const pikaImages = process.env.PIKA_IMAGES === '1';
 assert.ok(['localhost', '127.0.0.1'].includes(new URL(base).hostname), 'samo lokalno');
 let checks = 0;
 const check = (value, text) => { assert.ok(value, text); console.log(`OK ${++checks} ${text}`); };
@@ -38,11 +41,15 @@ const cfg = await send('/api/forms/demo');
 check(cfg.data.film === true, 'dugme za video uključeno u formi');
 
 const r1 = await send(`${api}/renders`, { token: lead.token });
-check(r1.status === 200 && r1.data.url, 'prvi render preko Pike');
+check(r1.status === 200 && r1.data.url, 'prvi render');
 const logA = await mock();
 const img = logA.jobs.filter((j) => j.kind === 'image').pop();
-check(img.path.includes('google/gemini-3-pro-image/'), `prvi render ide na Nano Banana Pro (${img.path})`);
-check(img.body.prompt.includes('Pure black seamless background'), 'prompt traži crnu filmsku scenu');
+if (pikaImages) {
+  check(img.path.includes('google/gemini-3-pro-image/'), `prvi render ide na Nano Banana Pro preko Pike (${img.path})`);
+  check(img.body.prompt.includes('Pure black seamless background'), 'prompt traži crnu filmsku scenu');
+} else {
+  check(!img, 'Pika ključ sam ne prebacuje slike na Piku (render ide na OpenAI/Gemini)');
+}
 check(!JSON.stringify(cfg.data).includes('mock-local'), 'ključ nije u odgovoru forme');
 
 const before = (await video()).length;
@@ -81,7 +88,8 @@ check(restored.renders[0].film?.url === film.url && restored.renders[0].n === 1,
 // Dorada ne pravi film sama; greška se ne broji, limit je dva filma.
 const tw = await send(`${api}/renders`, { token: lead.token, tweak: 'make the stone larger' });
 check(tw.status === 200, 'dorada radi');
-check((await mock()).jobs.filter((j) => j.kind === 'image').pop().path.includes('gemini-3.1-flash-image/image-to-image'), 'dorada ide na brži model');
+if (pikaImages) check((await mock()).jobs.filter((j) => j.kind === 'image').pop().path.includes('gemini-3.1-flash-image/image-to-image'), 'dorada ide na brži model');
+else check(!(await mock()).jobs.some((j) => j.kind === 'image'), 'ni dorada ne ide na Piku');
 await fetch(`${pika}/__fail`, { method: 'POST' });
 const f2 = await send(`${api}/films`, { token: lead.token, n: 2 });
 await send(`${api}/films/${f2.data.film.id}`, null, h);

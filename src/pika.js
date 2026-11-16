@@ -10,6 +10,9 @@ export const FILM_RESOLUTION = '768p';
 export const FILM_EST_USD = 0.2; // 0,02 $ po sekundi na 768p; trošak se ispravi kad posao stigne
 
 export const pikaOn = (env) => !!env.PIKA_API_KEY;
+// Slike preko Pike samo kad se izričito uključi (PIKA_IMAGES=1). Ključ sam po sebi pali samo video komada,
+// a renderi ostaju na OpenAI/Gemini modelima na kojima su podešeni prompt i provjera broja zuba (16.11.2026).
+export const pikaImages = (env) => pikaOn(env) && env.PIKA_IMAGES === '1';
 // Samo lokalno: lažni Pika server za provjere bez troška (scripts/mock-pika.mjs).
 const base = (env) => (env.DEV_MODE === '1' && env.PIKA_BASE ? env.PIKA_BASE : API);
 const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));

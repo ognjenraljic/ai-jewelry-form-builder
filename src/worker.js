@@ -7,7 +7,7 @@ import { stepNeedsAnswer, fieldRequired, conditionsMet } from '../public/step-ru
 import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList } from '../public/option-art.js';
-import { pikaOn, pikaImage, pikaJob, jobFile, jobCharge, startFilm, FILM_API, FILM_EST_USD } from './pika.js';
+import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, FILM_API, FILM_EST_USD } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
@@ -36,15 +36,15 @@ const MODELS = {
 // Model mora imati svoj ključ: bez OPENAI_API_KEY renderi idu na Gemini i obrnuto, umjesto da padaju.
 function withKey(env, key, geminiFallback) {
   const openai = MODELS[key].provider === 'openai';
-  // Pika ključ preuzima sve: jedan račun za sliku i video. GPT ostaje samo gdje treba tačan broj zuba i maska.
-  if (pikaOn(env)) return key === 'pikagpt' || key === 'gptsun' ? 'pikagpt' : 'pikapro';
+  // PIKA_IMAGES=1: i slike idu preko Pike (jedan račun). GPT ostaje samo gdje treba tačan broj zuba i maska.
+  if (pikaImages(env)) return key === 'pikagpt' || key === 'gptsun' ? 'pikagpt' : 'pikapro';
   if (openai && !env.OPENAI_API_KEY && env.GEMINI_API_KEY) return geminiFallback;
   if (!openai && !env.GEMINI_API_KEY && env.OPENAI_API_KEY) return 'gptflare';
   return key;
 }
-const maskModel = (env, model) => (pikaOn(env) ? MODELS.pikagpt : model);
-const firstModel = (env) => (pikaOn(env) ? 'pikapro' : withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro'));
-const tweakModel = (env) => (pikaOn(env) ? 'pikaflash' : withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash'));
+const maskModel = (env, model) => (pikaImages(env) ? MODELS.pikagpt : model);
+const firstModel = (env) => (pikaImages(env) ? 'pikapro' : withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro'));
+const tweakModel = (env) => (pikaImages(env) ? 'pikaflash' : withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash'));
 // Precision edits and sparse grillz need stronger count/shape adherence than everyday image generation.
 const grillzModel = (env) => withKey(env, MODELS[env.GRILLZ_MODEL] ? env.GRILLZ_MODEL : 'gptsun', 'pro');
 const tryOnModel = (env) => {
@@ -630,7 +630,7 @@ async function renderInputs(env, request, form, answers, { ref = null, tweak = '
     if (img) { images.push(img); refs.push('style'); }
   }
   if (ref) { images.push(ref); refs.push('customer'); }
-  return { images, prompt: buildPrompt(form, answers, { refs, style, cinematic: pikaOn(env) }) };
+  return { images, prompt: buildPrompt(form, answers, { refs, style, cinematic: pikaImages(env) }) };
 }
 
 async function r2Image(env, key) {
