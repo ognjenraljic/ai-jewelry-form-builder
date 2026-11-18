@@ -1575,7 +1575,7 @@ function pricingSpec(form) {
 }
 function pricingAnswers(a) {
   const out = {};
-  for (const k of ['type', 'metal', 'karat', 'stones', 'coverage', 'budget', 'teeth']) if (a[k] != null && a[k] !== '') out[k] = String(a[k]).slice(0, 200);
+  for (const k of ['type', 'metal', 'karat', 'stones', 'coverage', 'clarity', 'style', 'budget', 'teeth']) if (a[k] != null && a[k] !== '') out[k] = String(a[k]).slice(0, 200);
   const cut = Object.keys(a).find((k) => CUT_FIELD.test(k) && a[k]);
   if (cut) out.cut = String(a[cut]).slice(0, 80);
   return out;
@@ -1584,7 +1584,9 @@ function pricingAnswers(a) {
 function cleanPricing(p) {
   const n = (v) => { const x = Number(v); return Number.isFinite(x) && x >= 0 && x < 1e7 ? Math.round(x * 100) / 100 : undefined; };
   const map = (o, depth = 1) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), depth > 1 ? map(v, depth - 1) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
-  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts) };
+  // Grillz cjenovnik (18.11.2026): brojevi ili ugniježđene tabele do 3 nivoa (grillz.sets.6.10k).
+  const tree = (o, depth) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), v && typeof v === 'object' ? (depth > 1 ? tree(v, depth - 1) : undefined) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
+  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3) };
 }
 
 async function demoHandled(request, env, id) {

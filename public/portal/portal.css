@@ -421,3 +421,16 @@ button.dbar.future { opacity: .35; cursor: default; }
 .dnav-btn { width: 36px; height: 30px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--ink); font-size: 18px; line-height: 1; cursor: pointer; }
 .dnav-btn:hover:not(:disabled) { border-color: var(--accent); }
 .dnav-btn:disabled { opacity: .3; cursor: default; }
+/* Grillz cjenovnik (18.11.2026): široke tabele preko cijelog reda, napomene ispod procjene */
+.pwide { grid-column: 1 / -1; }
+.psec { margin: 18px 0 6px; font-size: 16px; }
+.pricing > .hint, .pwide .hint { margin: 0 0 12px; max-width: 760px; }
+.ptable .pin { padding-left: 6px; padding-right: 4px; }
+.calc-notes { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 3px; font-size: 11px; line-height: 1.4; color: var(--ink-soft); }
+.ptable .pin { -moz-appearance: textfield; }
+.ptable .pin::-webkit-outer-spin-button, .ptable .pin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+@media (max-width: 560px) {
+  .ptable { gap: 5px 4px; font-size: 11px; }
+  .ptable .pin { padding-left: 3px; padding-right: 3px; font-size: 12px; text-align: center; }
+  .pcard2.pwide { padding: 14px 10px; }
+}

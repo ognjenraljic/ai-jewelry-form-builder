@@ -1,5 +1,5 @@
 import { createLeadStore } from './leads.js';
-import { estimate, middleGround, parseBudget, LEVELS, PIECES, SUGGESTED_PRICING, key as pkey, money } from '/pricing.js';
+import { estimate, middleGround, parseBudget, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money } from '/pricing.js';
 import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
 import { SUGGESTED, suggestOptions } from '/option-suggestions.js';
@@ -88,7 +88,8 @@ function leadSpec(l) {
     spec: {
       type: a.type, metal: lab(fs.metal, a.metal) || a.metal || '', karat: lab(fs.karat, a.karat) || a.karat || '',
       stones: iced ? (a.stones && a.stones !== 'none' ? lab(fs.stones, a.stones) || a.stones : 'default') : '', coverage: iced ? a.coverage : '',
-      cut: iced ? '' : lab(fs.cut, a.cut), units: String(a.teeth || '').split(',').filter(Boolean).length || 1,
+      cut: iced ? '' : lab(fs.cut, a.cut) || a.cut || '', units: String(a.teeth || '').split(',').filter(Boolean).length || 1,
+      teeth: a.teeth || '', clarity: a.clarity || '', style: a.style || '',
     },
     budget: parseBudget(lab(fs.budget, a.budget) || a.budget),
     budgetLabel: lab(fs.budget, a.budget) || a.budget || '',
@@ -109,7 +110,7 @@ function calcView(l) {
   const diff = (t) => (Number.isFinite(high) ? (t <= high ? `<span class="ok">Within budget (${esc(ls.budgetLabel)})</span>` : `<span class="over">${money(t - high)} over budget (${esc(ls.budgetLabel)})</span>`) : ls.budgetLabel ? `<span>Budget ${esc(ls.budgetLabel)}</span>` : '');
   const a = est.total == null
     ? `<p class="calc-empty">Missing in your prices: ${est.missing.map(esc).join(', ')}.</p>${setBtn}`
-    : `<p class="calc-num">${money(est.total)}</p><p class="calc-diff">${diff(est.total)}</p><ul class="calc-lines">${est.lines.map((x) => `<li><span>${esc(x.label)}</span><b>${money(x.amount)}</b></li>`).join('')}</ul>`;
+    : `<p class="calc-num">${money(est.total)}</p><p class="calc-diff">${diff(est.total)}</p><ul class="calc-lines">${est.lines.map((x) => `<li><span>${esc(x.label)}</span><b>${money(x.amount)}</b></li>`).join('')}</ul>${(est.notes || []).length ? `<ul class="calc-notes">${est.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`;
   let b = '<p class="calc-empty">Appears once the estimate is complete.</p>';
   if (est.total != null) {
     if (!Number.isFinite(high)) b = '<p class="calc-empty">No budget limit to fit.</p>';
@@ -131,13 +132,37 @@ function pricingView() {
   const metals = uniq(specs.flatMap((s) => (s.metal || []).map((o) => o.label)));
   const stones = uniq(specs.flatMap((s) => (s.stones || []).filter((o) => o.value !== 'none').map((o) => o.label)));
   const cuts = uniq(specs.flatMap((s) => (s.cut || []).map((o) => o.label)));
-  const pieces = uniq(specs.flatMap((s) => (s.type || []).map((o) => o.value))).filter((x) => PIECES.includes(x));
+  const allPieces = uniq(specs.flatMap((s) => (s.type || []).map((o) => o.value))).filter((x) => PIECES.includes(x));
+  const pieces = allPieces.filter((x) => x !== 'grillz');
   const ro = '';
   const inp = (path, v, ph = '') => `<input class="in pin" type="number" min="0" step="0.01" inputmode="decimal" data-price="${esc(path)}" value="${v ?? ''}" placeholder="${esc(ph)}" ${ro} />`;
-  const per = (pc) => (pc === 'grillz' ? 'per tooth' : 'per piece');
+  const per = () => 'per piece';
+  const g = pr.grillz || {};
+  const colName = { '10k': '10K', '14k': '14K', '18k': '18K', silver: 'Silver', platinum: 'Platinum' };
+  const grid = (title, hint, rows, path, cols, rowName) => `<div class="pcard2 pwide"><h3>${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ''}<div class="ptable" style="grid-template-columns: minmax(0, 1.3fr) repeat(${cols.length}, minmax(0, 1fr))"><span></span>${cols.map((c) => `<span>${esc(colName[c] || c)}</span>`).join('')}
+      ${rows.map((r) => `<span>${esc(rowName(r))}</span>${cols.map((c) => inp(`${path}.${r}.${c}`, g[path.split('.')[1]]?.[r]?.[c])).join('')}`).join('')}</div></div>`;
+  const list = (title, hint, keys, path, label) => `<div class="pcard2"><h3>${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ''}${keys.map((k) => `<label class="prow"><span>${esc(label ? label(k) : k)}</span>${inp(`${path}.${pkey(k)}`, path.split('.').slice(1).reduce((o, x) => o?.[x], g)?.[pkey(k)])}</label>`).join('')}</div>`;
+  const addKeys = uniq([...cuts.filter((c) => !/^(polished|solid)$/i.test(c)), ...Object.keys(g.additions || {}), ...Object.keys(SUGGESTED_PRICING.grillz.additions)]);
+  const dentalKeys = uniq([...Object.keys(g.designs || {}), ...Object.keys(SUGGESTED_PRICING.grillz.designs)]);
+  const cap = (k) => k.replace(/\b\w/g, (m) => m.toUpperCase()).replace(/\b3d\b/i, '3D');
+  const grillzCards = allPieces.includes('grillz') ? `
+    <h2 class="psec">Grillz price list</h2>
+    <p class="hint">Final prices, no markup. Sets are top and bottom with 6 or more teeth on each row; anything else is priced row by row from "Bottom or top only". A count that is not on the list is priced at the next size up. Leave a box empty where you do not offer it.</p>
+    <div class="pgrid2">
+      ${grid('Sets (top and bottom), $', '', ['6', '8', '10', '12'], 'grillz.sets', GRILLZ_COLS, (r) => `${r} x ${r}`)}
+      ${grid('Bottom or top only, $', '', ['fangs', '2', '3', '4', '6', '8', '10', '12'], 'grillz.row', GRILLZ_COLS, (r) => (r === 'fangs' ? '2 fangs & backbar' : `${r} teeth`))}
+      ${grid('Diamond iced teeth, $ per tooth', 'Price for one iced tooth. 18K and platinum use the 14K price plus the metal difference.', ['lab', 'natural si1', 'natural vvs1'], 'grillz.iced', ICED_COLS, (r) => (r === 'lab' ? 'Lab diamond' : r === 'natural si1' ? 'Natural diamond SI1' : 'Natural diamond VVS1'))}
+      <div class="pcard2"><h3>Moissanite & silver iced out sets, pave, $</h3>${['6', '8', '10'].map((r) => `<label class="prow"><span>${r} x ${r}</span>${inp(`grillz.moissanite.${r}`, g.moissanite?.[r])}</label>`).join('')}</div>
+      <div class="pcard2"><h3>Dental gold (non-precious), $</h3>${['6', '8', '10'].map((r) => `<div class="prow2"><b>${r} teeth</b><label><span>Set ${r} on ${r}</span>${inp(`grillz.dental.set.${r}`, g.dental?.set?.[r])}</label><label><span>Bottom or top</span>${inp(`grillz.dental.row.${r}`, g.dental?.row?.[r])}</label></div>`).join('')}</div>
+      <div class="pcard2"><h3>Molding fee, $</h3><label class="prow"><span>Gold, silver, platinum</span>${inp('grillz.molding.metal', g.molding?.metal)}</label><label class="prow"><span>Dental gold</span>${inp('grillz.molding.dental', g.molding?.dental)}</label></div>
+      ${list('Additions, $ per tooth', '', addKeys, 'grillz.additions', cap)}
+      ${list('Dental gold designs, $ per tooth', '', dentalKeys, 'grillz.designs', cap)}
+    </div>
+    <h2 class="psec">Other pieces</h2>` : '';
   return `<section class="pricing">
     <p class="note">Your prices for the estimate next to every lead. Only you see them. Change any price at any time; metal prices move, so update the gold price when it does.</p>
-    <div class="pfill"><button type="button" class="btn small" data-act="fill-pricing">Fill suggested prices</button><span class="hint">Fills only empty fields with starting prices (gold $124/g on Nov 16, 2026, stones and labor per tooth). Then press Save.</span></div>
+    <div class="pfill"><button type="button" class="btn small" data-act="fill-pricing">Fill suggested prices</button><span class="hint">Fills only empty fields with starting prices (grillz from the District price list of Nov 2026, other pieces from gold at $124/g on Nov 16, 2026). Then press Save.</span></div>
+    ${grillzCards}
     <div class="pgrid2">
       <div class="pcard2"><h3>Gold and markup</h3>
         <label class="prow"><span>Pure gold (24K) price per gram, $</span>${inp('goldSpot', pr.goldSpot)}</label>
@@ -145,15 +170,14 @@ function pricingView() {
         <label class="prow"><span>Markup, %</span>${inp('markup', pr.markup)}</label></div>
       <div class="pcard2"><h3>Metal price per gram, $</h3>${metals.map((m) => `<label class="prow"><span>${esc(m)}</span>${inp(`metals.${pkey(m)}`, pr.metals?.[pkey(m)], /gold|two.?tone/i.test(m) && !/dental/i.test(m) ? 'from gold' : '')}</label>`).join('') || '<p class="hint">No metals in your forms.</p>'}</div>
       <div class="pcard2"><h3>Weight and labor</h3>${pieces.map((pc) => `<div class="prow2"><b>${esc(pc[0].toUpperCase() + pc.slice(1))}</b><label><span>Grams ${per(pc)}</span>${inp(`grams.${pc}`, pr.grams?.[pc])}</label><label><span>Labor ${per(pc)}, $</span>${inp(`labor.${pc}`, pr.labor?.[pc])}</label></div>`).join('')}</div>
-      <div class="pcard2"><h3>Stones, $ (per tooth for grillz)</h3><div class="ptable"><span></span>${LEVELS.map((v) => `<span>${v === 'half' ? 'Half iced' : v === 'full' ? 'Fully iced' : 'Accents'}</span>`).join('')}
+      <div class="pcard2"><h3>Stones, $ per piece${allPieces.includes('grillz') ? ' (not grillz)' : ''}</h3><div class="ptable"><span></span>${LEVELS.map((v) => `<span>${v === 'half' ? 'Half iced' : v === 'full' ? 'Fully iced' : 'Accents'}</span>`).join('')}
         ${[...stones, 'Default (no stone type chosen)'].map((st) => { const k = /^default/i.test(st) ? 'default' : pkey(st); return `<span>${esc(st)}</span>${LEVELS.map((v) => inp(`stones.${k}.${v}`, pr.stones?.[k]?.[v])).join('')}`; }).join('')}</div></div>
-      ${cuts.length ? `<div class="pcard2"><h3>Cut, extra $ per tooth</h3>${cuts.map((c) => `<label class="prow"><span>${esc(c)}</span>${inp(`cuts.${pkey(c)}`, pr.cuts?.[pkey(c)])}</label>`).join('')}</div>` : ''}
     </div>
     <div class="pfoot"><button class="btn gold" data-act="save-pricing">Save prices</button><span class="psaved" role="status"></span></div>
   </section>`;
 }
 function readPricing() {
-  const out = { metals: {}, grams: {}, labor: {}, stones: {}, cuts: {} };
+  const out = { metals: {}, grams: {}, labor: {}, stones: {}, cuts: { ...(P.me.pricing?.cuts || {}) }, grillz: {} };
   for (const el of app.querySelectorAll('[data-price]')) {
     if (el.value === '') continue;
     const parts = el.dataset.price.split('.');

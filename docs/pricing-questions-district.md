@@ -12,3 +12,16 @@ The portal now has a **Pricing** tab and two boxes next to every lead: an estima
 8. **Markup**: one markup percentage on top of everything, or different by piece or material?
 9. **Budget fit**: when a customer is over budget, which swaps do you prefer to suggest first (cheaper stones, lower karat, less ice, dental gold, fewer teeth)? Any swap you never suggest?
 10. **Display**: should the estimate show as one number, or as a range (for example ±10%)?
+
+## Update Nov 18, 2026: grillz now follow your price list
+
+Thank you for the price list. Grillz estimates now use it exactly (sets, top or bottom only, dental gold, iced teeth per tooth, moissanite silver sets, additions, molding fee). A few things the list does not cover, so for now the portal does this (please correct us):
+
+1. **Half iced and accents**: the list has fully iced teeth only. Half iced is priced halfway between plain and fully iced, accents a quarter of the way.
+2. **Moissanite in gold**: the list has moissanite silver sets only. Gold adds the difference between the plain gold and plain silver set.
+3. **Iced 18K and platinum**: priced as the 14K iced price plus the plain 18K (or platinum) vs 14K difference.
+4. **VS clarity**: priced between natural SI1 and VVS1. Flawless is priced as VVS1.
+5. **Weed Cut** is in your form but not on the list, so it is not added. What is the price per tooth?
+6. **Unequal rows** (for example 8 top + 6 bottom): half of the 8 x 8 set plus half of the 6 x 6 set.
+7. **Less than 6 teeth on a row** in a set (for example 4 top + 4 bottom): each row is priced from "bottom or top only".
+8. **Counts not on the list** (5, 7, 9 teeth, or 2 teeth in platinum) use the next size up that has a price.
