@@ -452,6 +452,7 @@ button.dbar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 
 /* Generisanje: orb koji kruži, statusi koji se smjenjuju, linije koje svjetlucaju */
 .qmsg-wrap:empty { display: none; }
+.calc-box:not(.quote) .qgo { margin-top: 12px; }
 .qmsg-wrap { margin-top: 12px; }
 .qgen { border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 14px; padding: 16px; display: grid; justify-items: center; gap: 10px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .qgen-orb { position: relative; width: 44px; height: 44px; }

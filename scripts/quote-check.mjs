@@ -38,7 +38,8 @@ ok(saved.body.pricing?.quoteInfo === INFO, 'store info sačuvan (emoji i redovi 
 const r2 = await q(leadId, body);
 ok(r2.status === 200 && r2.body.message.endsWith(`\n\n${INFO}`), `store info na kraju poruke (${r2.body.source})`);
 ok(r2.body.message.includes('$1,500') && r2.body.message.split('$60').length === 2, 'cijena tačna, $60 samo iz store infa');
-ok(!/\n\s*Quote Check Jewelers\s*\n\s*\n📍/.test(r2.body.message), 'nema dvostrukog potpisa iznad store infa');
+const above = r2.body.message.slice(0, r2.body.message.length - INFO.length).trim();
+ok(!/(Quote Check Jewelers|regards|sincerely)[\s.,!]*$/i.test(above), 'poruka iznad store infa nije potpisana');
 console.log(`\n${r2.body.message}\n`);
 if (fails) { console.log(`${fails} FAIL`); process.exit(1); }
 console.log('Quote checks passed.');

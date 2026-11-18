@@ -187,18 +187,20 @@ function quoteControls(l, ls, spec) {
   </div>`;
 }
 
-function quoteMessageView(l, q) {
+// Ključ poruke: `${id}` = Fits the budget (podešeno), `${id}|p` = Estimated price (tačno kako je kupac izabrao).
+const qkLead = (key) => String(key).split('|')[0];
+function quoteMessageView(l, q, key) {
   if (q.busy) return `<div class="qgen" role="status" aria-live="polite"><div class="qgen-orb" aria-hidden="true"><i></i><i></i><i></i></div><p class="qgen-step">${esc(q.step || 'Reading the specs')}</p><div class="qgen-lines" aria-hidden="true"><span></span><span></span><span></span><span></span></div></div>`;
   if (q.error) return `<p class="qerr" role="alert">${esc(q.error)}</p>`;
   if (q.msg == null) return '';
   const stale = q.msgFor && q.msgFor !== JSON.stringify(q.spec);
   const words = q.reveal ? q.msg.split(/(\s+)/).map((w, k) => (/^\s+$/.test(w) ? w.replace(/\n/g, '<br>') : `<span class="qw" style="--d:${Math.min(k, 160) * 14}ms">${esc(w)}</span>`)).join('') : '';
-  return `<div class="qout ${q.reveal ? 'revealing' : ''}">
+  return `<div class="qout ${q.reveal ? 'revealing' : ''}" data-qk="${esc(key)}">
     <div class="qout-head"><span>Quote message</span>${q.source === 'template' ? '<em title="The AI writer was not available, so this is the standard message.">standard</em>' : '<em>written by AI</em>'}</div>
     ${q.reveal ? `<div class="qreveal" aria-hidden="true">${words}</div>` : ''}
-    <textarea class="in qtext" data-qmsg="${esc(l.id)}" rows="7" ${q.reveal ? 'hidden' : ''} aria-label="Quote message for ${esc(l.name)}">${esc(q.msg)}</textarea>
+    <textarea class="in qtext" data-qmsg="${esc(key)}" rows="7" ${q.reveal ? 'hidden' : ''} aria-label="Quote message for ${esc(l.name)}">${esc(q.msg)}</textarea>
     ${stale ? '<p class="qstale">Specs changed after this message. Generate again to update it.</p>' : ''}
-    <div class="qacts"><button type="button" class="btn small" data-act="quote-copy" data-q="${esc(l.id)}">Copy</button><span class="qcopied" role="status"></span></div>
+    <div class="qacts"><button type="button" class="btn small" data-act="quote-copy" data-qk="${esc(key)}">Copy</button><span class="qcopied" role="status"></span></div>
   </div>`;
 }
 
@@ -212,9 +214,16 @@ function calcView(l) {
       <div class="calc-box"><p class="calc-title">Fits the budget</p><p class="calc-empty">Specs that fit the customer's budget, which you can adjust and turn into a quote message.</p></div></aside>`;
   }
   const est = estimate(pricing, ls.spec);
+  const pk = `${l.id}|p`;
+  const pq = (Q[pk] ||= {});
+  pq.spec = ls.spec;
+  const fitsAsPicked = est.total != null && (!Number.isFinite(ls.budget?.high) || est.total <= ls.budget.high);
+  const pgen = fitsAsPicked || pq.msg != null || pq.busy
+    ? `<button type="button" class="btn qgo" data-act="quote-gen" data-qk="${esc(pk)}" ${pq.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${pq.msg != null ? 'Generate again' : 'Generate quote message'}</button><div class="qmsg-wrap" data-qk="${esc(pk)}">${quoteMessageView(l, pq, pk)}</div>`
+    : '';
   const a = est.total == null
     ? `<p class="calc-empty">Missing in your prices: ${est.missing.map(esc).join(', ')}.</p>${setBtn}`
-    : `<p class="calc-num">${money(est.total)}</p>${budgetMeter(est.total, ls.budget, ls.budgetLabel) || (ls.budgetLabel ? `<p class="calc-diff">Budget ${esc(ls.budgetLabel)}</p>` : '')}${breakdown(est)}`;
+    : `<p class="calc-num">${money(est.total)}</p>${budgetMeter(est.total, ls.budget, ls.budgetLabel) || (ls.budgetLabel ? `<p class="calc-diff">Budget ${esc(ls.budgetLabel)}</p>` : '')}${breakdown(est)}${pgen}`;
   const q = quoteState(l, ls);
   const qe = estimate(pricing, q.spec);
   const diff = specDiff(ls, q.spec);
@@ -224,10 +233,10 @@ function calcView(l) {
     ? `<p class="calc-empty">Missing in your prices: ${qe.missing.map(esc).join(', ')}.</p>`
     : `<p class="calc-num" data-count="${Math.round(qe.total)}" data-from="${Math.round(q.animFrom ?? qe.total)}">${money(q.animFrom ?? qe.total)}</p>${budgetMeter(qe.total, ls.budget, ls.budgetLabel)}`;
   const tags = diff.length ? `<ul class="qdiff" aria-label="Changed from the customer's picks">${diff.map((c) => `<li><span>${esc(c.what)}</span>${esc(c.from)} <i aria-hidden="true">→</i> <b>${esc(c.to)}</b></li>`).join('')}</ul>` : '';
-  const gen = `<button type="button" class="btn qgo" data-act="quote-gen" data-q="${esc(l.id)}" ${qe.total == null || q.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${q.msg != null ? 'Generate again' : 'Generate quote message'}</button>`;
+  const gen = `<button type="button" class="btn qgo" data-act="quote-gen" data-qk="${esc(l.id)}" ${qe.total == null || q.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${q.msg != null ? 'Generate again' : 'Generate quote message'}</button>`;
   return `<aside class="calc" data-calc="${esc(l.id)}">
     <div class="calc-box"><p class="calc-title">Estimated price</p><p class="calc-sub">What the customer picked</p>${a}</div>
-    <div class="calc-box quote">${head}${num}${tags}${quoteControls(l, ls, q.spec)}${qe.total != null ? breakdown(qe) : ''}${gen}<div class="qmsg-wrap">${quoteMessageView(l, q)}</div></div>
+    <div class="calc-box quote">${head}${num}${tags}${quoteControls(l, ls, q.spec)}${qe.total != null ? breakdown(qe) : ''}${gen}<div class="qmsg-wrap" data-qk="${esc(l.id)}">${quoteMessageView(l, q, l.id)}</div></div>
   </aside>`;
 }
 
@@ -243,7 +252,7 @@ function renderCalc(id) {
   const n = box?.querySelector('.quote [data-count]');
   if (Q[id]) delete Q[id].animFrom;
   if (n) countTo(n, Number(n.dataset.from), Number(n.dataset.count), () => {});
-  if (Q[id]?.reveal) finishReveal(id);
+  for (const k of [id, `${id}|p`]) if (Q[k]?.reveal) finishReveal(k);
 }
 function countTo(el, from, to, done) {
   if (from === to || matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = money(to); done(); return; }
@@ -258,16 +267,17 @@ function countTo(el, from, to, done) {
   setTimeout(() => el.classList.remove('ticking'), 450);
   requestAnimationFrame(step);
 }
-function finishReveal(id) {
-  const q = Q[id];
-  const first = app.querySelector(`aside[data-calc="${CSS.escape(id)}"] .qout`);
+function finishReveal(key) {
+  const q = Q[key];
+  const sel = `aside[data-calc="${CSS.escape(qkLead(key))}"] .qout[data-qk="${CSS.escape(key)}"]`;
+  const first = app.querySelector(sel);
   if (!q || !first) return;
   const words = first.querySelectorAll('.qw').length;
   const ms = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : Math.min(words, 160) * 14 + 650;
   clearTimeout(q.revealTimer);
   q.revealTimer = setTimeout(() => {
     q.reveal = false;
-    const box = app.querySelector(`aside[data-calc="${CSS.escape(id)}"] .qout`);
+    const box = app.querySelector(sel);
     if (!box) return;
     const r = box.querySelector('.qreveal');
     const ta = box.querySelector('.qtext');
@@ -312,12 +322,14 @@ function quoteEdit(id, field, value, delta) {
 
 // Poruka: server je piše (Workers AI) iz konačnih izbora; animacija traje bar ~1,4 s da se vidi i kad je odgovor brz.
 const GEN_STEPS = ['Reading the specs', 'Checking the price', 'Writing the message', 'Polishing the wording'];
-async function quoteGenerate(id) {
+async function quoteGenerate(key) {
+  const id = qkLead(key);
   const l = P.leads.find((x) => x.id === id);
   const ls = l && leadSpec(l);
-  const q = Q[id];
+  const q = Q[key];
   if (!ls || !q || q.busy) return;
-  const est = estimate(P.me.pricing, q.spec);
+  const spec = key.endsWith('|p') ? ls.spec : q.spec;
+  const est = estimate(P.me.pricing, spec);
   if (est.total == null) return;
   Object.assign(q, { busy: true, error: '', step: GEN_STEPS[0] });
   renderCalc(id);
@@ -325,22 +337,22 @@ async function quoteGenerate(id) {
   const tick = setInterval(() => {
     k = Math.min(k + 1, GEN_STEPS.length - 1);
     q.step = GEN_STEPS[k];
-    const el = app.querySelector(`aside[data-calc="${CSS.escape(id)}"] .qgen-step`);
+    const el = app.querySelector(`aside[data-calc="${CSS.escape(id)}"] .qmsg-wrap[data-qk="${CSS.escape(key)}"] .qgen-step`);
     if (el) { el.classList.remove('swap'); void el.offsetWidth; el.textContent = q.step; el.classList.add('swap'); }
   }, 900);
-  const r = rowsOf(q.spec.teeth);
+  const r = rowsOf(spec.teeth);
   const body = {
-    piece: q.spec.type, metal: q.spec.metal, karat: isGold(q.spec.metal) ? q.spec.karat : '',
-    ice: q.spec.coverage ? coverLabel(q.spec.coverage, ls) : '', stones: q.spec.coverage ? q.spec.stones : '', clarity: q.spec.coverage && /natural/i.test(q.spec.stones) ? q.spec.clarity : '',
-    cut: q.spec.type === 'grillz' && !q.spec.coverage ? q.spec.cut : '', teeth: q.spec.type === 'grillz' ? { top: r.top, bottom: r.bottom } : null,
+    piece: spec.type, metal: spec.metal, karat: isGold(spec.metal) ? spec.karat : '',
+    ice: spec.coverage ? coverLabel(spec.coverage, ls) : '', stones: spec.coverage ? spec.stones : '', clarity: spec.coverage && /natural/i.test(spec.stones) ? spec.clarity : '',
+    cut: spec.type === 'grillz' && !spec.coverage ? spec.cut : '', teeth: spec.type === 'grillz' ? { top: r.top, bottom: r.bottom } : null,
     total: Math.round(est.total), lines: est.lines.map((x) => ({ label: x.label, amount: Math.round(x.amount) })),
-    budget: ls.budgetLabel, changes: specDiff(ls, q.spec),
+    budget: ls.budgetLabel, changes: specDiff(ls, spec),
   };
   const t0 = Date.now();
   try {
     const res = await api(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'POST', body: JSON.stringify(body), json: true });
     await new Promise((ok) => setTimeout(ok, Math.max(0, 1400 - (Date.now() - t0))));
-    Object.assign(q, { msg: res.message, source: res.source, msgFor: JSON.stringify(q.spec), reveal: true });
+    Object.assign(q, { msg: res.message, source: res.source, msgFor: JSON.stringify(spec), reveal: true });
   } catch (err) {
     q.error = err.message || 'Could not write the message. Try again.';
   } finally {
@@ -695,12 +707,12 @@ app.addEventListener('click', async (e) => {
   const t = e.target.closest('button, img[data-zoom]') || e.target;
   if (t.dataset?.film) { zoomVideo(t.dataset.film); return; }
   // Quote radni sto (Fits the budget): izbori, reset, poruka.
-  if (t.dataset?.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
+  if (t.tagName === 'BUTTON' && t.dataset.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
   if (t.dataset?.act === 'quote-reset') { const q = Q[t.dataset.q]; if (q) { const prev = estimate(P.me.pricing, q.spec).total; if (prev != null) q.animFrom = Math.round(prev); q.spec = { ...q.suggested }; renderCalc(t.dataset.q); } return; }
-  if (t.dataset?.act === 'quote-gen') { quoteGenerate(t.dataset.q); return; }
+  if (t.dataset?.act === 'quote-gen') { quoteGenerate(t.dataset.qk); return; }
   if (t.dataset?.act === 'quote-copy') {
-    const id = t.dataset.q;
-    const l = P.leads.find((x) => x.id === id);
+    const id = t.dataset.qk;
+    const l = P.leads.find((x) => x.id === qkLead(id));
     const msg = app.querySelector(`[data-qmsg="${CSS.escape(id)}"]`)?.value ?? Q[id]?.msg ?? '';
     if (!l || !msg) return;
     {

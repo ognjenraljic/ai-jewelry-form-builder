@@ -1565,7 +1565,7 @@ async function portalApi(request, env, p, secure) {
     try { info = quoteInfoText(JSON.parse(client.data || '{}').pricing?.quoteInfo) || ''; } catch {}
     facts.footer = !!info;
     const message = await quoteByAI(env, facts);
-    const body = message || quoteTemplate(facts);
+    const body = info ? dropSignature(message || quoteTemplate(facts), facts.store, info) : message || quoteTemplate(facts);
     return json({ message: info ? `${body}\n\n${info}` : body, source: message ? 'ai' : 'template' });
   }
   // Status i bilješka upita (zlatar prati šta je uradio); admin pregled ne mijenja podatke klijenta.
@@ -1610,6 +1610,22 @@ function quoteSpecLine(f) {
   const ice = f.ice ? `${f.ice.toLowerCase()} with ${[f.clarity, f.stones].filter(Boolean).join(' ').toLowerCase()}` : '';
   const cut = f.cut && !/polished|solid/i.test(f.cut) ? `${f.cut.toLowerCase()} finish` : '';
   return [teeth ? `${teeth} ${f.piece}` : f.piece, metal && `in ${metal}`, ice, cut].filter(Boolean).join(', ');
+}
+// Kad ispod ide store info, poruka se ne potpisuje (Ognjen 19.11: "District Jewelers Denver" na kraju ne treba).
+// Sa kraja se skidaju kratki redovi koji su samo pozdrav ili ime radnje (iz imena forme ili prvog reda store infa).
+function dropSignature(text, store, info) {
+  const words = (v) => String(v || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+  const name = new Set([...words(store), ...words(String(info).split('\n')[0]), 'the', 'team', 'from', 'at', 'and', 'co', 'inc', 'llc']);
+  const closing = /^(best|kind|warm|warmest)?\s*(regards|wishes)|^(sincerely|thanks|thank you|cheers|warmly|talk soon|all the best)[\s,!.]*$/i;
+  const lines = String(text).split('\n');
+  while (lines.length > 1) {
+    const last = lines[lines.length - 1].trim();
+    const w = words(last);
+    if (!last) { lines.pop(); continue; }
+    if (w.length <= 6 && (closing.test(last) || w.every((x) => name.has(x)))) { lines.pop(); continue; }
+    break;
+  }
+  return lines.join('\n').trim();
 }
 function quoteTemplate(f) {
   return `Hi ${f.first}, thank you for designing your ${f.piece} with ${f.store}!\n\nHere is your quote: ${quoteSpecLine(f)}.\n\nTotal: ${f.price}${f.molding ? ' (molding included)' : ''}.\n\nReply here if you would like to move forward or adjust anything, and we will set up the next step.${f.footer ? '' : `\n\n${f.store}`}`;
