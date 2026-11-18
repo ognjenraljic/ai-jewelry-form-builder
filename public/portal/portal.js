@@ -78,6 +78,9 @@ const secs = (ms) => (ms > 0 ? `${(ms / 1000).toFixed(ms < 60_000 ? 1 : 0)} s` :
 const genTime = (ms, what = 'Made in') => (ms > 0 ? `<span class="gen" title="${what} ${secs(ms)}">${CLOCK}${secs(ms)}</span>` : '');
 
 // ---------- Kalkulator cijene (desno od leada) ----------
+// Lijevo: procjena za ono što je kupac izabrao. Desno: "Fits the budget" kao radni sto zlatara (18.11.2026):
+// polazi od prijedloga u budžet, zlatar mijenja metal, karat, led, kamen, čistoću, rez i broj zuba, cijena se
+// odmah preračunava, pa "Generate quote message" piše poruku za kupca (Cloudflare Workers AI) sa konačnim izborima.
 function leadSpec(l) {
   const fs = P.me.formSpecs?.[l.formId];
   const a = l.answers || {};
@@ -94,34 +97,257 @@ function leadSpec(l) {
     budget: parseBudget(lab(fs.budget, a.budget) || a.budget),
     budgetLabel: lab(fs.budget, a.budget) || a.budget || '',
     choices: { stones: (fs.stones || []).filter((o) => o.value !== 'none').map((o) => o.label), karats: (fs.karat || []).map((o) => o.label), coverages: (fs.coverage || []).map((o) => o.value).filter((v) => LEVELS.includes(v)), metals: (fs.metal || []).map((o) => o.label) },
+    opts: {
+      coverage: (fs.coverage || []).filter((o) => LEVELS.includes(o.value)).map((o) => [o.value, o.label]),
+      clarity: (fs.clarity || []).map((o) => o.label), cut: (fs.cut || []).map((o) => o.label),
+    },
   };
 }
+
+const isGold = (m) => /gold|two.?tone/i.test(m || '') && !/dental/i.test(m || '');
+const isDental = (m) => /dental/i.test(m || '');
+const rowsOf = (teeth) => { const t = String(teeth || '').split(',').filter(Boolean); const top = t.filter((x) => x[0] === 'T'); return { top: top.length, bottom: t.length - top.length, topIds: top, bottomIds: t.filter((x) => x[0] === 'B') }; };
+// Broj zuba u redu: zadržava kupčeve zube kad se broj ne mijenja, inače centrirano (5 i 6 su srednji).
+const rowIds = (k, n, keep) => (keep.length === n ? keep : Array.from({ length: n }, (_, i) => `${k}${6 - Math.ceil(n / 2) + i}`));
+const coverLabel = (v, ls) => (!v ? 'Not iced' : ls.opts.coverage.find(([x]) => x === v)?.[1] || ({ accents: 'Accents', half: 'Half iced', full: 'Fully iced' }[v] || v));
+
+// Stanje quote radnog stola po leadu (ostaje kroz render, dok se stranica ne osvježi).
+const Q = {};
+function quoteState(l, ls) {
+  const q = (Q[l.id] ||= {});
+  if (!q.spec) {
+    const high = ls.budget?.high;
+    const mg = Number.isFinite(high) && P.me.pricing ? middleGround(P.me.pricing, ls.spec, high, ls.choices) : null;
+    q.suggested = { ...(mg?.spec || ls.spec) };
+    q.spec = { ...q.suggested };
+  }
+  return q;
+}
+// Šta se razlikuje od kupčevog izbora (za tagove i za poruku).
+function specDiff(ls, spec) {
+  const a = ls.spec;
+  const out = [];
+  const add = (what, from, to) => { if (String(from || '') !== String(to || '')) out.push({ what, from: from || 'none', to: to || 'none' }); };
+  add('Metal', a.metal, spec.metal);
+  if (isGold(a.metal) || isGold(spec.metal)) add('Karat', isGold(a.metal) ? a.karat : '', isGold(spec.metal) ? spec.karat : '');
+  add('Ice', coverLabel(a.coverage, ls), coverLabel(spec.coverage, ls));
+  if (a.coverage || spec.coverage) add('Stones', a.coverage ? a.stones : '', spec.coverage ? spec.stones : '');
+  if (/natural/i.test(spec.stones) || /natural/i.test(a.stones)) add('Clarity', /natural/i.test(a.stones) && a.coverage ? a.clarity : '', /natural/i.test(spec.stones) && spec.coverage ? spec.clarity : '');
+  if (a.type === 'grillz') {
+    const ra = rowsOf(a.teeth), rb = rowsOf(spec.teeth);
+    add('Teeth', `${ra.top} top + ${ra.bottom} bottom`, `${rb.top} top + ${rb.bottom} bottom`);
+    add('Cut', a.coverage ? '' : a.cut, spec.coverage ? '' : spec.cut);
+  }
+  return out;
+}
+
+// Traka budžeta: raspon kupca osjenčen, tačka je cijena (ispred raspona = ispod, iza = preko).
+function budgetMeter(total, b, label) {
+  if (!b || total == null) return '';
+  const top = Number.isFinite(b.high) ? b.high : b.low * 1.6;
+  const max = Math.max(top * 1.25, total * 1.08, 1);
+  const pct = (v) => Math.max(0, Math.min(100, (v / max) * 100));
+  const over = Number.isFinite(b.high) && total > b.high;
+  const under = total < b.low;
+  const note = over ? `${money(total - b.high)} over` : under ? `${money(b.low - total)} under` : 'In budget';
+  return `<div class="bm ${over ? 'is-over' : under ? 'is-under' : 'is-in'}" role="img" aria-label="Price ${money(total)}, budget ${esc(label)}: ${note}">
+    <div class="bm-track"><span class="bm-band" style="left:${pct(b.low)}%;width:${Math.max(2, (Number.isFinite(b.high) ? pct(b.high) : 100) - pct(b.low))}%"></span><span class="bm-dot" style="left:${pct(total)}%"></span></div>
+    <div class="bm-legend"><span>Budget ${esc(label)}</span><b>${note}</b></div></div>`;
+}
+const breakdown = (est, open = false) => `<details class="calc-more" ${open ? 'open' : ''}><summary>How it's priced</summary><ul class="calc-lines">${est.lines.map((x) => `<li><span>${esc(x.label)}</span><b>${money(x.amount)}</b></li>`).join('')}</ul>${(est.notes || []).length ? `<ul class="calc-notes">${est.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</details>`;
+
+// Izbori kao čipovi; mnogo opcija (rezovi) ide u padajuću listu.
+function qChips(id, field, label, options, cur) {
+  if (!options.length) return '';
+  if (options.length > 6) return `<label class="qf"><span class="qf-l">${label}</span><select class="in qsel" data-q="${esc(id)}" data-qf="${field}">${options.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
+  return `<div class="qf" role="group" aria-label="${esc(label)}"><span class="qf-l">${label}</span><div class="qchips">${options.map(([v, t]) => `<button type="button" class="qchip ${String(v) === String(cur) ? 'on' : ''}" aria-pressed="${String(v) === String(cur)}" data-q="${esc(id)}" data-qf="${field}" data-qv="${esc(v)}">${esc(t)}</button>`).join('')}</div></div>`;
+}
+function qStepper(id, field, label, n) {
+  return `<div class="qf qstep"><span class="qf-l">${label}</span><div class="qstepper"><button type="button" data-q="${esc(id)}" data-qf="${field}" data-qd="-1" ${n ? '' : 'disabled'} aria-label="Fewer ${label.toLowerCase()} teeth">&minus;</button><b aria-live="polite">${n}</b><button type="button" data-q="${esc(id)}" data-qf="${field}" data-qd="1" ${n < 10 ? '' : 'disabled'} aria-label="More ${label.toLowerCase()} teeth">+</button></div></div>`;
+}
+
+function quoteControls(l, ls, spec) {
+  const id = l.id;
+  const metals = ls.choices.metals.map((m) => [m, m]);
+  const karats = ls.choices.karats.filter((k) => !/silver|925/i.test(k)).map((k) => [k, k]);
+  const iceOpts = [['', 'Not iced'], ...ls.opts.coverage];
+  const stones = ls.choices.stones.map((x) => [x, x]);
+  const clar = ls.opts.clarity.map((x) => [x, x]);
+  const cuts = ls.opts.cut.map((x) => [x, x]);
+  const grillz = spec.type === 'grillz';
+  const r = rowsOf(spec.teeth);
+  return `<div class="qgrid">
+    ${qChips(id, 'metal', 'Metal', metals, spec.metal)}
+    ${isGold(spec.metal) ? qChips(id, 'karat', 'Karat', karats, spec.karat) : ''}
+    ${grillz ? `<div class="qrow2">${qStepper(id, 'top', 'Top', r.top)}${qStepper(id, 'bottom', 'Bottom', r.bottom)}</div>` : ''}
+    ${!isDental(spec.metal) && ls.opts.coverage.length ? qChips(id, 'coverage', 'How iced', iceOpts, spec.coverage || '') : ''}
+    ${spec.coverage && stones.length ? qChips(id, 'stones', 'Stones', stones, spec.stones) : ''}
+    ${spec.coverage && /natural/i.test(spec.stones) && clar.length ? qChips(id, 'clarity', 'Clarity', clar, spec.clarity) : ''}
+    ${grillz && !spec.coverage && cuts.length ? qChips(id, 'cut', 'Cut', cuts, spec.cut || cuts[0][0]) : ''}
+  </div>`;
+}
+
+function quoteMessageView(l, q) {
+  if (q.busy) return `<div class="qgen" role="status" aria-live="polite"><div class="qgen-orb" aria-hidden="true"><i></i><i></i><i></i></div><p class="qgen-step">${esc(q.step || 'Reading the specs')}</p><div class="qgen-lines" aria-hidden="true"><span></span><span></span><span></span><span></span></div></div>`;
+  if (q.error) return `<p class="qerr" role="alert">${esc(q.error)}</p>`;
+  if (q.msg == null) return '';
+  const stale = q.msgFor && q.msgFor !== JSON.stringify(q.spec);
+  const words = q.reveal ? q.msg.split(/(\s+)/).map((w, k) => (/^\s+$/.test(w) ? w.replace(/\n/g, '<br>') : `<span class="qw" style="--d:${Math.min(k, 160) * 14}ms">${esc(w)}</span>`)).join('') : '';
+  return `<div class="qout ${q.reveal ? 'revealing' : ''}">
+    <div class="qout-head"><span>Quote message</span>${q.source === 'template' ? '<em title="The AI writer was not available, so this is the standard message.">standard</em>' : '<em>written by AI</em>'}</div>
+    ${q.reveal ? `<div class="qreveal" aria-hidden="true">${words}</div>` : ''}
+    <textarea class="in qtext" data-qmsg="${esc(l.id)}" rows="7" ${q.reveal ? 'hidden' : ''} aria-label="Quote message for ${esc(l.name)}">${esc(q.msg)}</textarea>
+    ${stale ? '<p class="qstale">Specs changed after this message. Generate again to update it.</p>' : ''}
+    <div class="qacts"><button type="button" class="btn small" data-act="quote-copy" data-q="${esc(l.id)}">Copy</button><span class="qcopied" role="status"></span></div>
+  </div>`;
+}
+
 function calcView(l) {
   const pricing = P.me.pricing;
   const ls = leadSpec(l);
   const setBtn = '<button type="button" class="btn small" data-tab="pricing">Set prices</button>';
   if (!ls) return '';
   if (!pricing) {
-    return `<aside class="calc"><div class="calc-box"><p class="calc-title">Estimated price</p><p class="calc-empty">Add your prices (metal per gram, grams, labor, stones) and the estimate for every lead appears here.</p>${setBtn}</div>
-      <div class="calc-box"><p class="calc-title">Fits the budget</p><p class="calc-empty">Suggested specs that fit the customer's budget, starting from what they picked (for example moissanite instead of diamonds).</p></div></aside>`;
+    return `<aside class="calc" data-calc="${esc(l.id)}"><div class="calc-box"><p class="calc-title">Estimated price</p><p class="calc-empty">Add your prices and the estimate for every lead appears here.</p>${setBtn}</div>
+      <div class="calc-box"><p class="calc-title">Fits the budget</p><p class="calc-empty">Specs that fit the customer's budget, which you can adjust and turn into a quote message.</p></div></aside>`;
   }
   const est = estimate(pricing, ls.spec);
-  const high = ls.budget?.high;
-  const diff = (t) => (Number.isFinite(high) ? (t <= high ? `<span class="ok">Within budget (${esc(ls.budgetLabel)})</span>` : `<span class="over">${money(t - high)} over budget (${esc(ls.budgetLabel)})</span>`) : ls.budgetLabel ? `<span>Budget ${esc(ls.budgetLabel)}</span>` : '');
   const a = est.total == null
     ? `<p class="calc-empty">Missing in your prices: ${est.missing.map(esc).join(', ')}.</p>${setBtn}`
-    : `<p class="calc-num">${money(est.total)}</p><p class="calc-diff">${diff(est.total)}</p><ul class="calc-lines">${est.lines.map((x) => `<li><span>${esc(x.label)}</span><b>${money(x.amount)}</b></li>`).join('')}</ul>${(est.notes || []).length ? `<ul class="calc-notes">${est.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`;
-  let b = '<p class="calc-empty">Appears once the estimate is complete.</p>';
-  if (est.total != null) {
-    if (!Number.isFinite(high)) b = '<p class="calc-empty">No budget limit to fit.</p>';
-    else {
-      const mg = middleGround(pricing, ls.spec, high, ls.choices);
-      b = !mg ? b : mg.fits && !mg.changes.length
-        ? '<p class="calc-ok">What they picked already fits the budget.</p>'
-        : `<p class="calc-num">${money(mg.total)}</p><p class="calc-diff">${diff(mg.total)}</p><ul class="calc-lines">${mg.changes.map((c) => `<li class="chg"><span>${esc(c.what)}</span><b>${esc(c.from)} → ${esc(c.to)}</b></li>`).join('') || '<li><span>No cheaper option in this form</span></li>'}</ul>`;
-    }
+    : `<p class="calc-num">${money(est.total)}</p>${budgetMeter(est.total, ls.budget, ls.budgetLabel) || (ls.budgetLabel ? `<p class="calc-diff">Budget ${esc(ls.budgetLabel)}</p>` : '')}${breakdown(est)}`;
+  const q = quoteState(l, ls);
+  const qe = estimate(pricing, q.spec);
+  const diff = specDiff(ls, q.spec);
+  const changed = JSON.stringify(q.spec) !== JSON.stringify(q.suggested);
+  const head = `<div class="calc-head"><p class="calc-title">${Number.isFinite(ls.budget?.high) ? 'Fits the budget' : 'Your quote'}</p>${changed ? `<button type="button" class="qreset" data-act="quote-reset" data-q="${esc(l.id)}">Reset</button>` : `<span class="qbadge">${diff.length ? 'Suggested' : 'As picked'}</span>`}</div>`;
+  const num = qe.total == null
+    ? `<p class="calc-empty">Missing in your prices: ${qe.missing.map(esc).join(', ')}.</p>`
+    : `<p class="calc-num" data-count="${Math.round(qe.total)}" data-from="${Math.round(q.animFrom ?? qe.total)}">${money(q.animFrom ?? qe.total)}</p>${budgetMeter(qe.total, ls.budget, ls.budgetLabel)}`;
+  const tags = diff.length ? `<ul class="qdiff" aria-label="Changed from the customer's picks">${diff.map((c) => `<li><span>${esc(c.what)}</span>${esc(c.from)} <i aria-hidden="true">→</i> <b>${esc(c.to)}</b></li>`).join('')}</ul>` : '';
+  const gen = `<button type="button" class="btn qgo" data-act="quote-gen" data-q="${esc(l.id)}" ${qe.total == null || q.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${q.msg != null ? 'Generate again' : 'Generate quote message'}</button>`;
+  return `<aside class="calc" data-calc="${esc(l.id)}">
+    <div class="calc-box"><p class="calc-title">Estimated price</p><p class="calc-sub">What the customer picked</p>${a}</div>
+    <div class="calc-box quote">${head}${num}${tags}${quoteControls(l, ls, q.spec)}${qe.total != null ? breakdown(qe) : ''}${gen}<div class="qmsg-wrap">${quoteMessageView(l, q)}</div></div>
+  </aside>`;
+}
+
+// Samo kalkulator tog leada se crta ponovo (bez skoka stranice), broj klizi od stare do nove cijene.
+function renderCalc(id) {
+  const l = P.leads.find((x) => x.id === id);
+  const el = app.querySelector(`aside[data-calc="${CSS.escape(id)}"]`);
+  if (!l || !el) return;
+  const focus = document.activeElement?.closest?.(`aside[data-calc="${CSS.escape(id)}"]`) ? { qf: document.activeElement.dataset.qf, qv: document.activeElement.dataset.qv, qd: document.activeElement.dataset.qd } : null;
+  el.outerHTML = calcView(l);
+  const box = app.querySelector(`aside[data-calc="${CSS.escape(id)}"]`);
+  if (focus?.qf) box?.querySelector(`[data-qf="${focus.qf}"]${focus.qv != null ? `[data-qv="${CSS.escape(focus.qv)}"]` : ''}${focus.qd ? `[data-qd="${focus.qd}"]` : ''}`)?.focus();
+  const n = box?.querySelector('.quote [data-count]');
+  if (Q[id]) delete Q[id].animFrom;
+  if (n) countTo(n, Number(n.dataset.from), Number(n.dataset.count), () => {});
+  if (Q[id]?.reveal) finishReveal(id);
+}
+function countTo(el, from, to, done) {
+  if (from === to || matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = money(to); done(); return; }
+  const t0 = performance.now();
+  const step = (t) => {
+    const k = Math.max(0, Math.min(1, (t - t0) / 420));
+    const e = 1 - Math.pow(1 - k, 3);
+    el.textContent = money(from + (to - from) * e);
+    if (k < 1) requestAnimationFrame(step); else done();
+  };
+  el.classList.add('ticking');
+  setTimeout(() => el.classList.remove('ticking'), 450);
+  requestAnimationFrame(step);
+}
+function finishReveal(id) {
+  const q = Q[id];
+  const first = app.querySelector(`aside[data-calc="${CSS.escape(id)}"] .qout`);
+  if (!q || !first) return;
+  const words = first.querySelectorAll('.qw').length;
+  const ms = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : Math.min(words, 160) * 14 + 650;
+  clearTimeout(q.revealTimer);
+  q.revealTimer = setTimeout(() => {
+    q.reveal = false;
+    const box = app.querySelector(`aside[data-calc="${CSS.escape(id)}"] .qout`);
+    if (!box) return;
+    const r = box.querySelector('.qreveal');
+    const ta = box.querySelector('.qtext');
+    if (r) r.remove();
+    if (ta) { ta.hidden = false; ta.style.height = 'auto'; ta.style.height = `${ta.scrollHeight + 2}px`; }
+    box.classList.remove('revealing');
+  }, ms);
+}
+
+function quoteEdit(id, field, value, delta) {
+  const l = P.leads.find((x) => x.id === id);
+  const ls = l && leadSpec(l);
+  const q = Q[id];
+  if (!ls || !q) return;
+  const s = { ...q.spec };
+  if (field === 'top' || field === 'bottom') {
+    const r = rowsOf(s.teeth);
+    const n = Math.max(0, Math.min(10, (field === 'top' ? r.top : r.bottom) + Number(delta)));
+    if ((field === 'top' ? n + r.bottom : r.top + n) === 0) return;
+    const orig = rowsOf(ls.spec.teeth);
+    const top = field === 'top' ? rowIds('T', n, orig.topIds) : rowIds('T', r.top, r.topIds);
+    const bottom = field === 'bottom' ? rowIds('B', n, orig.bottomIds) : rowIds('B', r.bottom, r.bottomIds);
+    s.teeth = [...top, ...bottom].join(',');
+    s.units = top.length + bottom.length;
+  } else s[field] = value;
+  if (field === 'metal') {
+    if (isDental(value)) { s.coverage = ''; s.stones = ''; s.karat = ''; }
+    else if (isGold(value) && !s.karat) s.karat = ls.choices.karats.find((k) => !/silver|925/i.test(k)) || '';
+    else if (!isGold(value)) s.karat = '';
   }
-  return `<aside class="calc"><div class="calc-box"><p class="calc-title">Estimated price</p>${a}</div><div class="calc-box"><p class="calc-title">Fits the budget</p>${b}</div></aside>`;
+  if (field === 'coverage') {
+    if (value && !s.stones) s.stones = ls.choices.stones[0] || 'default';
+    if (!value) { s.stones = ''; s.clarity = ''; }
+  }
+  if (field === 'stones' && !/natural/i.test(value)) s.clarity = '';
+  if (field === 'stones' && /natural/i.test(value) && !s.clarity) s.clarity = ls.opts.clarity[0] || '';
+  const prev = estimate(P.me.pricing, q.spec).total;
+  if (prev != null) q.animFrom = Math.round(prev);
+  q.spec = s;
+  renderCalc(id);
+}
+
+// Poruka: server je piše (Workers AI) iz konačnih izbora; animacija traje bar ~1,4 s da se vidi i kad je odgovor brz.
+const GEN_STEPS = ['Reading the specs', 'Checking the price', 'Writing the message', 'Polishing the wording'];
+async function quoteGenerate(id) {
+  const l = P.leads.find((x) => x.id === id);
+  const ls = l && leadSpec(l);
+  const q = Q[id];
+  if (!ls || !q || q.busy) return;
+  const est = estimate(P.me.pricing, q.spec);
+  if (est.total == null) return;
+  Object.assign(q, { busy: true, error: '', step: GEN_STEPS[0] });
+  renderCalc(id);
+  let k = 0;
+  const tick = setInterval(() => {
+    k = Math.min(k + 1, GEN_STEPS.length - 1);
+    q.step = GEN_STEPS[k];
+    const el = app.querySelector(`aside[data-calc="${CSS.escape(id)}"] .qgen-step`);
+    if (el) { el.classList.remove('swap'); void el.offsetWidth; el.textContent = q.step; el.classList.add('swap'); }
+  }, 900);
+  const r = rowsOf(q.spec.teeth);
+  const body = {
+    piece: q.spec.type, metal: q.spec.metal, karat: isGold(q.spec.metal) ? q.spec.karat : '',
+    ice: q.spec.coverage ? coverLabel(q.spec.coverage, ls) : '', stones: q.spec.coverage ? q.spec.stones : '', clarity: q.spec.coverage && /natural/i.test(q.spec.stones) ? q.spec.clarity : '',
+    cut: q.spec.type === 'grillz' && !q.spec.coverage ? q.spec.cut : '', teeth: q.spec.type === 'grillz' ? { top: r.top, bottom: r.bottom } : null,
+    total: Math.round(est.total), lines: est.lines.map((x) => ({ label: x.label, amount: Math.round(x.amount) })),
+    budget: ls.budgetLabel, changes: specDiff(ls, q.spec),
+  };
+  const t0 = Date.now();
+  try {
+    const res = await api(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'POST', body: JSON.stringify(body), json: true });
+    await new Promise((ok) => setTimeout(ok, Math.max(0, 1400 - (Date.now() - t0))));
+    Object.assign(q, { msg: res.message, source: res.source, msgFor: JSON.stringify(q.spec), reveal: true });
+  } catch (err) {
+    q.error = err.message || 'Could not write the message. Try again.';
+  } finally {
+    clearInterval(tick);
+    q.busy = false;
+    renderCalc(id);
+  }
 }
 
 // ---------- Tab Pricing: tabela cijena zlatara ----------
@@ -404,6 +630,7 @@ function zoom(src, caption = '') {
 let searchTimer;
 app.addEventListener('input', (e) => {
   const el = e.target;
+  if (el.dataset.qmsg && Q[el.dataset.qmsg]) { Q[el.dataset.qmsg].msg = el.value; el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; return; }
   if (el.dataset.search !== undefined) {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(async () => { P.q = el.value.trim(); if (!await loadLeads()) return; render(); const s = app.querySelector('[data-search]'); s?.focus(); s?.setSelectionRange(s.value.length, s.value.length); }, 350);
@@ -411,6 +638,7 @@ app.addEventListener('input', (e) => {
 });
 app.addEventListener('change', async (e) => {
   const el = e.target;
+  if (el.dataset.q && el.dataset.qf) { quoteEdit(el.dataset.q, el.dataset.qf, el.value); return; }
   if (el.dataset.pickDay !== undefined) { P.day = el.value || ''; if (await loadLeads()) render(); return; }
   if (el.dataset.leadStatus) {
     const id = el.dataset.leadStatus;
@@ -435,6 +663,22 @@ app.addEventListener('keydown', (e) => {
 
 app.addEventListener('click', async (e) => {
   const t = e.target.closest('button, img[data-zoom]') || e.target;
+  // Quote radni sto (Fits the budget): izbori, reset, poruka.
+  if (t.dataset?.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
+  if (t.dataset?.act === 'quote-reset') { const q = Q[t.dataset.q]; if (q) { const prev = estimate(P.me.pricing, q.spec).total; if (prev != null) q.animFrom = Math.round(prev); q.spec = { ...q.suggested }; renderCalc(t.dataset.q); } return; }
+  if (t.dataset?.act === 'quote-gen') { quoteGenerate(t.dataset.q); return; }
+  if (t.dataset?.act === 'quote-copy') {
+    const id = t.dataset.q;
+    const l = P.leads.find((x) => x.id === id);
+    const msg = app.querySelector(`[data-qmsg="${CSS.escape(id)}"]`)?.value ?? Q[id]?.msg ?? '';
+    if (!l || !msg) return;
+    {
+      const note = t.parentElement.querySelector('.qcopied');
+      try { await navigator.clipboard.writeText(msg); if (note) { note.textContent = 'Copied'; setTimeout(() => { note.textContent = ''; }, 1600); } }
+      catch { const ta = app.querySelector(`[data-qmsg="${CSS.escape(id)}"]`); ta?.select(); if (note) note.textContent = 'Press Cmd+C to copy'; }
+    }
+    return;
+  }
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
   if (t.dataset.status !== undefined) { P.status = t.dataset.status; if (await loadLeads()) render(); }

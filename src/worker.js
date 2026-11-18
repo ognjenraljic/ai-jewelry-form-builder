@@ -1550,6 +1550,20 @@ async function portalApi(request, env, p, secure) {
     await env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify(d), client.id).run();
     return json({ pricing: d.pricing });
   }
+  // Quote poruka za kupca (18.11.2026): zlatar podesi specifikacije u "Fits the budget", Workers AI napiše kratku poruku.
+  // Ništa se ne čuva i ne šalje; zlatar je kopira (Copy) u svoj softver za poruke. Radi i u admin pregledu.
+  let qm;
+  if ((qm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/quote$/)) && request.method === 'POST') {
+    const lead = await env.DB.prepare('SELECT l.id, l.name, f.data AS form_data FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(qm[1], client.id).first();
+    if (!lead) return json({ error: 'Not found' }, 404);
+    const b = await request.json().catch(() => ({}));
+    let store = client.name;
+    try { store = JSON.parse(lead.form_data || '{}').brand?.name || client.name; } catch {}
+    const facts = quoteFacts(b, lead, store);
+    if (!facts) return json({ error: 'The quote needs a price first.' }, 400);
+    const message = await quoteByAI(env, facts);
+    return json(message ? { message, source: 'ai' } : { message: quoteTemplate(facts), source: 'template' });
+  }
   // Status i bilješka upita (zlatar prati šta je uradio); admin pregled ne mijenja podatke klijenta.
   let lm;
   if ((lm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)$/)) && request.method === 'PATCH') {
@@ -1564,6 +1578,50 @@ async function portalApi(request, env, p, secure) {
   return json({ error: 'Not found' }, 404);
 }
 
+// ---------- Quote poruka (portal) ----------
+// Činjenice samo iz konačnih izbora zlatara; tekst ograničen, cijena mora ostati tačno ona iz kalkulatora.
+function quoteFacts(b, lead, store) {
+  const str = (v, n = 60) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, n);
+  const total = Math.round(Number(b?.total));
+  if (!Number.isFinite(total) || total <= 0 || total > 5e6) return null;
+  const piece = str(b.piece, 30).toLowerCase() || 'piece';
+  const teeth = b.teeth && typeof b.teeth === 'object' ? { top: Math.max(0, Math.min(10, Math.round(Number(b.teeth.top) || 0))), bottom: Math.max(0, Math.min(10, Math.round(Number(b.teeth.bottom) || 0))) } : null;
+  const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 8).map((x) => ({ label: str(x?.label, 140), amount: Math.round(Number(x?.amount) || 0) })).filter((x) => x.label);
+  return {
+    store: str(store, 60), first: /^[A-Za-zÀ-ž][A-Za-zÀ-ž'-]*$/.test(str(lead.name, 60).split(' ')[0]) ? str(lead.name, 60).split(' ')[0] : 'there', piece,
+    metal: str(b.metal), karat: str(b.karat, 12), ice: str(b.ice, 30), stones: str(b.stones, 40), clarity: str(b.clarity, 12), cut: str(b.cut, 40),
+    teeth, total, price: `$${total.toLocaleString('en-US')}`,
+    molding: lines.some((x) => /molding/i.test(x.label)),
+  };
+}
+function quoteSpecLine(f) {
+  const metal = [f.karat, f.metal].filter(Boolean).join(' ');
+  const teeth = f.teeth ? [f.teeth.top ? `${f.teeth.top} top` : '', f.teeth.bottom ? `${f.teeth.bottom} bottom` : ''].filter(Boolean).join(' + ') : '';
+  const ice = f.ice ? `${f.ice.toLowerCase()} with ${[f.clarity, f.stones].filter(Boolean).join(' ').toLowerCase()}` : '';
+  const cut = f.cut && !/polished|solid/i.test(f.cut) ? `${f.cut.toLowerCase()} finish` : '';
+  return [teeth ? `${teeth} ${f.piece}` : f.piece, metal && `in ${metal}`, ice, cut].filter(Boolean).join(', ');
+}
+function quoteTemplate(f) {
+  return `Hi ${f.first}, thank you for designing your ${f.piece} with ${f.store}!\n\nHere is your quote: ${quoteSpecLine(f)}.\n\nTotal: ${f.price}${f.molding ? ' (molding included)' : ''}.\n\nReply here if you would like to move forward or adjust anything, and we will set up the next step.\n\n${f.store}`;
+}
+async function quoteByAI(env, f) {
+  if (!env.AI?.run) return null;
+  const sys = 'You write short quote messages that a jewelry store sends to a customer by text message. Plain US English, warm and premium, no emojis, no hashtags, no markdown, no em dashes. 55 to 95 words. Start with "Hi <first name>,". Thank them for their design, then describe the quoted piece in one natural sentence using only the given specs. It is a quote for a piece to be made: never say it is already made or created. State the total price exactly as given, written exactly the same way. Say molding is included only if told so. Do not invent anything: no deadlines, deposits, discounts, warranties, shipping or extra options. End with an invitation to reply to move forward or adjust anything, then an empty line and the store name on its own line.';
+  const user = `Store: ${f.store}\nCustomer first name: ${f.first}\nPiece: ${quoteSpecLine(f)}\nTotal price: ${f.price}\nMolding included: ${f.molding ? 'yes' : 'no'}`;
+  try {
+    const run = env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', { messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], max_tokens: 320, temperature: 0.6 });
+    const r = await Promise.race([run, new Promise((ok) => setTimeout(() => ok(null), 15000))]);
+    const text = String(r?.response || '').trim().replace(/^["']|["']$/g, '').replace(/—/g, ',').replace(/\n{3,}/g, '\n\n');
+    // Provjera: tačna cijena, bez drugih iznosa, razumna dužina; inače standardna poruka.
+    const amounts = [...text.matchAll(/\$\s?[\d,]+(?:\.\d+)?/g)].map((m) => m[0].replace(/\s/g, ''));
+    if (!text.includes(f.price) || amounts.some((a) => a !== f.price) || text.length > 900 || text.length < 80) return null;
+    return text;
+  } catch (e) {
+    console.log('quote AI failed', e?.message || e);
+    return null;
+  }
+}
+
 // ---------- Kalkulator cijene (portal) ----------
 // Samo izbori koji ulaze u cijenu, kao natpisi; vrijednosti iz odgovora kupca uz lead.
 const CUT_FIELD = /(^|_)cut$/;
@@ -1571,7 +1629,7 @@ function pricingSpec(form) {
   const fields = (form?.steps || []).filter((st) => st.enabled !== false).flatMap((st) => st.fields || []).filter((f) => f.enabled !== false);
   const opts = (f) => (f?.options || []).map((o) => ({ value: o.value, label: o.label }));
   const by = (id) => fields.find((f) => f.id === id);
-  return { type: opts(by('type')), metal: opts(by('metal')), karat: opts(by('karat')), stones: opts(by('stones')), coverage: opts(by('coverage')), budget: opts(by('budget')), cut: fields.filter((f) => CUT_FIELD.test(f.id)).flatMap(opts) };
+  return { type: opts(by('type')), metal: opts(by('metal')), karat: opts(by('karat')), stones: opts(by('stones')), coverage: opts(by('coverage')), clarity: opts(by('clarity')), budget: opts(by('budget')), cut: fields.filter((f) => CUT_FIELD.test(f.id)).flatMap(opts) };
 }
 function pricingAnswers(a) {
   const out = {};

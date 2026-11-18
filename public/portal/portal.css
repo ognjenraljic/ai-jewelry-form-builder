@@ -358,27 +358,128 @@ button.dbar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 .day-on b { color: var(--ink); }
 .days14-foot .chip { padding: 5px 12px; font-size: 12px; }
 
-/* Kalkulator: desno od leada na širokom ekranu, ispod na užem */
+/* Kalkulator (18.11.2026): desno od leada na širokom ekranu (dva boxa jedan ispod drugog), ispod leada na užem */
 @media (min-width: 1280px) {
-  .lead.has-calc { grid-template-columns: 220px minmax(0, 1fr) minmax(420px, 520px); }
+  .lead.has-calc { grid-template-columns: 220px minmax(0, 1fr) minmax(380px, 440px); }
 }
-.calc { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-self: start; min-width: 0; }
-@media (max-width: 1279px) { .calc { grid-column: 1 / -1; } }
-@media (max-width: 620px) { .calc { grid-template-columns: 1fr; } }
-.calc-box { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: color-mix(in srgb, var(--bg) 55%, var(--surface)); min-width: 0; }
-.calc-title { margin: 0 0 6px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); }
-.calc-num { margin: 0; font-family: var(--serif); font-size: 30px; line-height: 1.1; color: var(--ink); }
-.calc-diff { margin: 2px 0 8px; font-size: 12px; }
-.calc-diff .over { color: #f08a7a; }
-.calc-diff .ok, .calc-ok { color: #9be38a; }
-.calc-ok { margin: 0; font-size: 13px; }
-.calc-empty { margin: 0 0 10px; font-size: 12px; line-height: 1.45; color: var(--ink-soft); }
-.calc-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.calc { --ok: #8fe3a8; --over: #f39a86; --under: #f0c27a; display: grid; grid-template-columns: 1fr; gap: 10px; align-self: start; min-width: 0; }
+@media (max-width: 1279px) { .calc { grid-column: 1 / -1; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); align-items: start; } }
+@media (max-width: 720px) { .calc { grid-template-columns: 1fr; } }
+.calc-box { position: relative; border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px 16px; min-width: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 70%, transparent), color-mix(in srgb, var(--bg) 60%, var(--surface)));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent); }
+.calc-box.quote { border-color: color-mix(in srgb, var(--accent) 32%, var(--line)); background:
+  radial-gradient(120% 70% at 100% 0%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%),
+  linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 75%, transparent), color-mix(in srgb, var(--bg) 55%, var(--surface))); }
+.calc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.calc-title { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); }
+.calc-sub { margin: 2px 0 6px; font-size: 12px; color: var(--ink-soft); }
+.calc-head + .calc-num, .calc-head + .calc-empty { margin-top: 6px; }
+.calc-num { margin: 0; font-family: var(--serif); font-size: 36px; font-weight: 500; line-height: 1.05; color: var(--ink); font-variant-numeric: tabular-nums; transition: color .3s; }
+.calc-num.ticking { color: var(--accent); }
+.calc-diff { margin: 4px 0 8px; font-size: 12px; color: var(--ink-soft); }
+.calc-empty { margin: 4px 0 10px; font-size: 12px; line-height: 1.45; color: var(--ink-soft); }
+.qbadge { font-size: 11px; font-weight: 600; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 999px; padding: 3px 9px; }
+.qreset { border: 0; background: none; color: var(--ink-soft); font-size: 12px; font-weight: 600; cursor: pointer; padding: 3px 0; text-decoration: underline; text-underline-offset: 3px; }
+.qreset:hover { color: var(--accent); }
+
+/* Traka budžeta */
+.bm { margin: 10px 0 4px; }
+.bm-track { position: relative; height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--line) 80%, transparent); }
+.bm-band { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: color-mix(in srgb, var(--ok) 38%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 45%, transparent) inset; transition: left .45s, width .45s; }
+.bm-dot { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--ink); border: 3px solid var(--bg); box-shadow: 0 0 0 2px var(--ok), 0 4px 12px rgba(0,0,0,.45); transition: left .45s cubic-bezier(.2,.8,.2,1), box-shadow .3s; }
+.bm.is-over .bm-dot { box-shadow: 0 0 0 2px var(--over), 0 4px 12px rgba(0,0,0,.45); }
+.bm.is-under .bm-dot { box-shadow: 0 0 0 2px var(--under), 0 4px 12px rgba(0,0,0,.45); }
+.bm-legend { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--ink-faint); }
+.bm-legend b { font-weight: 700; color: var(--ok); white-space: nowrap; }
+.bm.is-over .bm-legend b { color: var(--over); }
+.bm.is-under .bm-legend b { color: var(--under); }
+
+/* Raspis cijene na klik */
+.calc-more { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.calc-more summary { cursor: pointer; list-style: none; font-size: 12px; font-weight: 600; color: var(--ink-soft); display: flex; align-items: center; gap: 6px; }
+.calc-more summary::-webkit-details-marker { display: none; }
+.calc-more summary::after { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg) translateY(-2px); transition: transform .2s; }
+.calc-more[open] summary::after { transform: rotate(225deg) translateY(-1px); }
+.calc-more summary:hover { color: var(--ink); }
+.calc-more .calc-lines { margin-top: 8px; }
+.calc-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
 .calc-lines li { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--ink-soft); }
 .calc-lines span { min-width: 0; }
-.calc-lines b { color: var(--ink); font-weight: 600; text-align: right; white-space: nowrap; }
-.calc-lines li.chg { flex-direction: column; gap: 1px; }
-.calc-lines li.chg b { white-space: normal; text-align: left; }
+.calc-lines b { color: var(--ink); font-weight: 600; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* Izmjene u odnosu na kupca */
+.qdiff { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.qdiff li { font-size: 11.5px; color: var(--ink-soft); background: color-mix(in srgb, var(--surface-2) 85%, transparent); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+.qdiff li span { color: var(--ink-faint); margin-right: 4px; }
+.qdiff li i { font-style: normal; color: var(--ink-faint); }
+.qdiff li b { color: var(--ink); font-weight: 600; }
+
+/* Izbori */
+.qgrid { display: grid; gap: 10px; margin-top: 14px; }
+.qf { display: grid; gap: 6px; min-width: 0; }
+.qf-l { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+.qchips { display: flex; flex-wrap: wrap; gap: 6px; }
+.qchip { border: 1px solid var(--line-strong); background: color-mix(in srgb, var(--bg) 40%, transparent); color: var(--ink-soft); border-radius: 999px; padding: 6px 11px; font-size: 12px; font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s, color .15s, transform .1s; }
+.qchip:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong)); color: var(--ink); }
+.qchip:active { transform: scale(.96); }
+.qchip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.qsel { width: 100%; padding: 7px 10px; font-size: 13px; border-radius: 10px; }
+.qrow2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.qstepper { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line-strong); border-radius: 12px; padding: 3px; background: color-mix(in srgb, var(--bg) 40%, transparent); }
+.qstepper button { width: 32px; height: 30px; border: 0; border-radius: 9px; background: var(--surface-2); color: var(--ink); font-size: 16px; cursor: pointer; }
+.qstepper button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 22%, var(--surface-2)); }
+.qstepper button:disabled { opacity: .35; cursor: default; }
+.qstepper b { font-size: 15px; font-variant-numeric: tabular-nums; }
+
+/* Dugme za poruku */
+.qgo { position: relative; overflow: hidden; width: 100%; margin-top: 14px; padding: 11px 16px; border-radius: 12px; font-size: 14px; display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 60%, #8ff3ea)); color: var(--accent-ink); border: 0; box-shadow: 0 8px 22px -10px color-mix(in srgb, var(--accent) 80%, transparent); }
+.qgo::after { content: ''; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.35) 50%, transparent 70%); transform: translateX(-100%); }
+.qgo:hover:not(:disabled)::after { animation: qshine .9s ease; }
+.qgo:disabled { opacity: .5; cursor: default; box-shadow: none; }
+.qgo-spark { width: 14px; height: 14px; background: currentColor; clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%); }
+@keyframes qshine { to { transform: translateX(100%); } }
+
+/* Generisanje: orb koji kruži, statusi koji se smjenjuju, linije koje svjetlucaju */
+.qmsg-wrap:empty { display: none; }
+.qmsg-wrap { margin-top: 12px; }
+.qgen { border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius: 14px; padding: 16px; display: grid; justify-items: center; gap: 10px; background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.qgen-orb { position: relative; width: 44px; height: 44px; }
+.qgen-orb::before { content: ''; position: absolute; inset: 12px; border-radius: 50%; background: radial-gradient(circle, #fff, var(--accent) 60%, transparent 72%); animation: qpulse 1.4s ease-in-out infinite; }
+.qgen-orb i { position: absolute; inset: 0; animation: qorbit 1.6s linear infinite; }
+.qgen-orb i::after { content: ''; position: absolute; top: 0; left: 50%; width: 7px; height: 7px; margin-left: -3.5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.qgen-orb i:nth-child(2) { animation-duration: 2.1s; animation-direction: reverse; inset: 5px; }
+.qgen-orb i:nth-child(3) { animation-duration: 2.8s; inset: 9px; opacity: .7; }
+.qgen-step { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+.qgen-step::after { content: '…'; display: inline-block; animation: qdots 1.2s steps(4) infinite; overflow: hidden; vertical-align: bottom; width: 1.1em; }
+.qgen-step.swap { animation: qswap .35s ease; }
+.qgen-lines { width: 100%; display: grid; gap: 7px; }
+.qgen-lines span { height: 8px; border-radius: 999px; background: linear-gradient(90deg, var(--line) 0%, color-mix(in srgb, var(--accent) 45%, var(--line)) 45%, var(--line) 90%); background-size: 220% 100%; animation: qshimmer 1.3s linear infinite; }
+.qgen-lines span:nth-child(2) { width: 92%; animation-delay: .12s; }
+.qgen-lines span:nth-child(3) { width: 97%; animation-delay: .24s; }
+.qgen-lines span:nth-child(4) { width: 60%; animation-delay: .36s; }
+@keyframes qorbit { to { transform: rotate(360deg); } }
+@keyframes qpulse { 50% { transform: scale(.75); opacity: .7; } }
+@keyframes qshimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@keyframes qswap { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+@keyframes qdots { from { width: 0; } to { width: 1.1em; } }
+
+/* Gotova poruka: riječi izranjaju iz zamućenja, pa postaje polje koje se može mijenjati */
+.qout { border: 1px solid var(--line-strong); border-radius: 14px; padding: 12px; background: color-mix(in srgb, var(--bg) 55%, transparent); animation: qswap .4s ease; }
+.qout-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 8px; font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-faint); }
+.qout-head em { font-style: normal; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--accent); }
+.qreveal, .qtext { font-size: 13.5px; line-height: 1.6; color: var(--ink); white-space: pre-wrap; }
+.qreveal { padding: 8px 10px; min-height: 120px; }
+.qw { display: inline-block; opacity: 0; filter: blur(6px); transform: translateY(4px); animation: qword .5s cubic-bezier(.2,.8,.2,1) forwards; animation-delay: var(--d); }
+@keyframes qword { to { opacity: 1; filter: none; transform: none; } }
+.qtext { width: 100%; resize: vertical; min-height: 120px; border-radius: 10px; padding: 8px 10px; background: transparent; border: 1px solid transparent; font-family: inherit; }
+.qtext:hover, .qtext:focus { border-color: var(--line-strong); background: color-mix(in srgb, var(--surface) 60%, transparent); }
+.qstale { margin: 8px 0 0; font-size: 12px; color: var(--warn); }
+.qerr { margin: 0; font-size: 12px; color: var(--over); }
+.qacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.qcopied { font-size: 12px; color: var(--ok); }
+@media (prefers-reduced-motion: reduce) { .qw { opacity: 1; filter: none; transform: none; } }
 .btn.small { padding: 5px 10px; font-size: 12px; }
 
 /* Tab Pricing */
