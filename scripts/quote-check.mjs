@@ -31,6 +31,14 @@ ok(r.body.message?.includes('$1,500'), 'poruka nosi tačnu cijenu $1,500');
 ok(!/\$(?!1,500)\d/.test(r.body.message || ''), 'nema drugih iznosa');
 ok(/Jordan/.test(r.body.message || ''), 'poruka se obraća kupcu po imenu');
 ok(!/—/.test(r.body.message || ''), 'bez em dash');
-console.log(`\n${r.body.message}\n`);
+// Store info zlatara ide doslovno na kraj svake poruke (i AI i standardne), a poruka se onda ne potpisuje dvaput.
+const INFO = '📍Quote Check Jewelers\n1 Main St\nMon-Sat 10am-6pm\n\nOut Of State Customers:\n$60 molding kit fee Plus Shipping Fees back';
+const saved = await fetch(`${BASE}/api/portal/pricing`, { method: 'PUT', headers: P, body: JSON.stringify({ pricing: { quoteInfo: `${INFO}\r\n\n\n` } }) }).then(j);
+ok(saved.body.pricing?.quoteInfo === INFO, 'store info sačuvan (emoji i redovi ostaju, višak praznih redova skinut)');
+const r2 = await q(leadId, body);
+ok(r2.status === 200 && r2.body.message.endsWith(`\n\n${INFO}`), `store info na kraju poruke (${r2.body.source})`);
+ok(r2.body.message.includes('$1,500') && r2.body.message.split('$60').length === 2, 'cijena tačna, $60 samo iz store infa');
+ok(!/\n\s*Quote Check Jewelers\s*\n\s*\n📍/.test(r2.body.message), 'nema dvostrukog potpisa iznad store infa');
+console.log(`\n${r2.body.message}\n`);
 if (fails) { console.log(`${fails} FAIL`); process.exit(1); }
 console.log('Quote checks passed.');

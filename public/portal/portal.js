@@ -399,6 +399,8 @@ function pricingView() {
       <div class="pcard2"><h3>Stones, $ per piece${allPieces.includes('grillz') ? ' (not grillz)' : ''}</h3><div class="ptable"><span></span>${LEVELS.map((v) => `<span>${v === 'half' ? 'Half iced' : v === 'full' ? 'Fully iced' : 'Accents'}</span>`).join('')}
         ${[...stones, 'Default (no stone type chosen)'].map((st) => { const k = /^default/i.test(st) ? 'default' : pkey(st); return `<span>${esc(st)}</span>${LEVELS.map((v) => inp(`stones.${k}.${v}`, pr.stones?.[k]?.[v])).join('')}`; }).join('')}</div></div>
     </div>
+    <div class="pcard2 pwide pinfo"><h3>Store info under every quote message</h3><p class="hint">Address, hours, turnaround, out of state terms. It is added word for word at the end of every quote message.</p>
+      <textarea class="in" rows="8" data-quote-info maxlength="1200" placeholder="Your store, address, hours, turnaround times…">${esc(pr.quoteInfo || '')}</textarea></div>
     <div class="pfoot"><button class="btn gold" data-act="save-pricing">Save prices</button><span class="psaved" role="status"></span></div>
   </section>`;
 }
@@ -411,6 +413,8 @@ function readPricing() {
     for (const k of parts.slice(0, -1)) o = o[k] ||= {};
     o[parts[parts.length - 1]] = Number(el.value);
   }
+  const info = app.querySelector('[data-quote-info]');
+  out.quoteInfo = info ? info.value : P.me.pricing?.quoteInfo || '';
   return out;
 }
 
@@ -590,7 +594,7 @@ function leadsView() {
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
           <div class="thumbs">${strip}${photos}</div>
           ${changes ? `<div class="changes"><p class="changes-title">Changes the customer asked for</p><ol>${changes}</ol></div>` : ''}
-          ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><video src="${esc(f.url)}" controls muted loop playsinline preload="metadata" width="160" height="160"></video><figcaption>Highlight video · <a href="${esc(f.url)}" download>Download</a></figcaption>${genTime(f.ms, 'Video made in')}</figure>` : '<p class="film-wait">Highlight video is being made. It appears here in a few minutes.</p>')).join('')}</div>` : ''}
+          ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><button type="button" class="film-tile" data-film="${esc(f.url)}" aria-label="Play the highlight video of ${esc(l.name)}"><video src="${esc(f.url)}" muted loop playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video><span class="film-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span></button><figcaption>Highlight video · <a href="${esc(f.url)}" download>Download</a></figcaption>${genTime(f.ms, 'Video made in')}</figure>` : '<p class="film-wait">Highlight video is being made. It appears here in a few minutes.</p>')).join('')}</div>` : ''}
           <label class="lead-note"><span class="sr-only">Note</span><textarea class="in" rows="1" data-lead-note="${esc(l.id)}" placeholder="Add a note (quote sent, follow up Friday…)" ${readOnly() ? 'disabled' : ''}>${esc(l.note)}</textarea></label>
         </div>
         ${calcView(l)}
@@ -626,6 +630,32 @@ function zoom(src, caption = '') {
   document.body.appendChild(box);
   box.focus();
 }
+
+// Video komada (19.11.2026): u listi je mala pločica (na prelaz mišem se pusti), klik ga otvara veliko i pušta u petlji.
+// Ranije je bio mali <video controls> od 160 px, pa se pokret skoro nije vidio ("slika stoji").
+function zoomVideo(src) {
+  const box = document.createElement('div');
+  box.className = 'lightbox';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-label', 'Highlight video');
+  box.tabIndex = -1;
+  box.innerHTML = `<figure><video src="${esc(src)}" autoplay muted loop playsinline controls></video><figcaption>Highlight video · <a href="${esc(src)}" download>Download</a></figcaption></figure>`;
+  const close = () => { box.querySelector('video')?.pause(); box.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  box.onclick = (e) => { if (!e.target.closest('video, a')) close(); };
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(box);
+  box.focus();
+  box.querySelector('video').play().catch(() => {});
+}
+app.addEventListener('mouseover', (e) => {
+  const t = e.target.closest?.('.film-tile');
+  if (t && !t.contains(e.relatedTarget)) { const v = t.querySelector('video'); v.play().catch(() => {}); t.classList.add('playing'); }
+});
+app.addEventListener('mouseout', (e) => {
+  const t = e.target.closest?.('.film-tile');
+  if (t && !t.contains(e.relatedTarget)) { const v = t.querySelector('video'); v.pause(); t.classList.remove('playing'); }
+});
 
 let searchTimer;
 app.addEventListener('input', (e) => {
@@ -663,6 +693,7 @@ app.addEventListener('keydown', (e) => {
 
 app.addEventListener('click', async (e) => {
   const t = e.target.closest('button, img[data-zoom]') || e.target;
+  if (t.dataset?.film) { zoomVideo(t.dataset.film); return; }
   // Quote radni sto (Fits the budget): izbori, reset, poruka.
   if (t.dataset?.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
   if (t.dataset?.act === 'quote-reset') { const q = Q[t.dataset.q]; if (q) { const prev = estimate(P.me.pricing, q.spec).total; if (prev != null) q.animFrom = Math.round(prev); q.spec = { ...q.suggested }; renderCalc(t.dataset.q); } return; }

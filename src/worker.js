@@ -1561,8 +1561,12 @@ async function portalApi(request, env, p, secure) {
     try { store = JSON.parse(lead.form_data || '{}').brand?.name || client.name; } catch {}
     const facts = quoteFacts(b, lead, store);
     if (!facts) return json({ error: 'The quote needs a price first.' }, 400);
+    let info = '';
+    try { info = quoteInfoText(JSON.parse(client.data || '{}').pricing?.quoteInfo) || ''; } catch {}
+    facts.footer = !!info;
     const message = await quoteByAI(env, facts);
-    return json(message ? { message, source: 'ai' } : { message: quoteTemplate(facts), source: 'template' });
+    const body = message || quoteTemplate(facts);
+    return json({ message: info ? `${body}\n\n${info}` : body, source: message ? 'ai' : 'template' });
   }
   // Status i bilješka upita (zlatar prati šta je uradio); admin pregled ne mijenja podatke klijenta.
   let lm;
@@ -1579,6 +1583,12 @@ async function portalApi(request, env, p, secure) {
 }
 
 // ---------- Quote poruka (portal) ----------
+// Store info zlatara (adresa, radno vrijeme, rokovi izrade, uslovi): ide doslovno na kraj SVAKE quote poruke
+// (Ognjen 19.11.2026, District). Čuva se uz cijene (pricing.quoteInfo); emoji i novi redovi ostaju kako su upisani.
+function quoteInfoText(v) {
+  const t = String(v ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').split('\n').map((x) => x.replace(/\s+$/, '')).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return t ? t.slice(0, 1200) : undefined;
+}
 // Činjenice samo iz konačnih izbora zlatara; tekst ograničen, cijena mora ostati tačno ona iz kalkulatora.
 function quoteFacts(b, lead, store) {
   const str = (v, n = 60) => String(v ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, n);
@@ -1602,19 +1612,20 @@ function quoteSpecLine(f) {
   return [teeth ? `${teeth} ${f.piece}` : f.piece, metal && `in ${metal}`, ice, cut].filter(Boolean).join(', ');
 }
 function quoteTemplate(f) {
-  return `Hi ${f.first}, thank you for designing your ${f.piece} with ${f.store}!\n\nHere is your quote: ${quoteSpecLine(f)}.\n\nTotal: ${f.price}${f.molding ? ' (molding included)' : ''}.\n\nReply here if you would like to move forward or adjust anything, and we will set up the next step.\n\n${f.store}`;
+  return `Hi ${f.first}, thank you for designing your ${f.piece} with ${f.store}!\n\nHere is your quote: ${quoteSpecLine(f)}.\n\nTotal: ${f.price}${f.molding ? ' (molding included)' : ''}.\n\nReply here if you would like to move forward or adjust anything, and we will set up the next step.${f.footer ? '' : `\n\n${f.store}`}`;
 }
 async function quoteByAI(env, f) {
   if (!env.AI?.run) return null;
-  const sys = 'You write short quote messages that a jewelry store sends to a customer by text message. Plain US English, warm and premium, no emojis, no hashtags, no markdown, no em dashes. 55 to 95 words. Start with "Hi <first name>,". Thank them for their design, then describe the quoted piece in one natural sentence using only the given specs. It is a quote for a piece to be made: never say it is already made or created. State the total price exactly as given, written exactly the same way. Say molding is included only if told so. Do not invent anything: no deadlines, deposits, discounts, warranties, shipping or extra options. End with an invitation to reply to move forward or adjust anything, then an empty line and the store name on its own line.';
-  const user = `Store: ${f.store}\nCustomer first name: ${f.first}\nPiece: ${quoteSpecLine(f)}\nTotal price: ${f.price}\nMolding included: ${f.molding ? 'yes' : 'no'}`;
+  const sys = 'You write short quote messages that a jewelry store sends to a customer by text message. Plain US English, warm and premium, no emojis, no hashtags, no markdown, no em dashes. 55 to 95 words. Start with "Hi <first name>,". Thank them for their design, then describe the quoted piece in one natural sentence using only the given specs. It is a quote for a piece to be made: never say it is already made or created. State the total price exactly as given, written exactly the same way. Say molding is included only if told so. Do not invent anything: no deadlines, deposits, discounts, warranties, shipping or extra options. End with an invitation to reply to move forward or adjust anything.';
+  const user = `Store: ${f.store}\nCustomer first name: ${f.first}\nPiece: ${quoteSpecLine(f)}\nTotal price: ${f.price}\nMolding included: ${f.molding ? 'yes' : 'no'}\n${f.footer ? 'Do not sign the message: the store details are added below it automatically.' : 'After the invitation, add an empty line and the store name on its own line.'}`;
   try {
     const run = env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', { messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], max_tokens: 320, temperature: 0.6 });
     const r = await Promise.race([run, new Promise((ok) => setTimeout(() => ok(null), 15000))]);
     const text = String(r?.response || '').trim().replace(/^["']|["']$/g, '').replace(/—/g, ',').replace(/\n{3,}/g, '\n\n');
     // Provjera: tačna cijena, bez drugih iznosa, razumna dužina; inače standardna poruka.
-    const amounts = [...text.matchAll(/\$\s?[\d,]+(?:\.\d+)?/g)].map((m) => m[0].replace(/\s/g, ''));
-    if (!text.includes(f.price) || amounts.some((a) => a !== f.price) || text.length > 900 || text.length < 80) return null;
+    const amounts = [...text.matchAll(/\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?(?!\d)|\$\s?\d+(?:\.\d+)?/g)].map((m) => m[0].replace(/\s/g, ''));
+    const why = !text.includes(f.price) ? 'price missing' : amounts.some((a) => a !== f.price) ? `other amount ${amounts.join(' ')}` : text.length > 900 ? 'too long' : text.length < 80 ? 'too short' : '';
+    if (why) { console.log('quote AI rejected:', why, JSON.stringify(text.slice(0, 300))); return null; }
     return text;
   } catch (e) {
     console.log('quote AI failed', e?.message || e);
@@ -1644,7 +1655,7 @@ function cleanPricing(p) {
   const map = (o, depth = 1) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), depth > 1 ? map(v, depth - 1) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
   // Grillz cjenovnik (18.11.2026): brojevi ili ugniježđene tabele do 3 nivoa (grillz.sets.6.10k).
   const tree = (o, depth) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), v && typeof v === 'object' ? (depth > 1 ? tree(v, depth - 1) : undefined) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
-  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3) };
+  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo) };
 }
 
 async function demoHandled(request, env, id) {
