@@ -61,9 +61,11 @@ if (dock && 'IntersectionObserver' in window) {
 
 // Deposit i Book appointment.
 const sheet = document.getElementById('sheet');
+// Dok zlatar nema link za depozit / zakazivanje: kupac zna da će ga kontaktirati za dalje detalje (Ognjen 19.11.2026),
+// a zlatar dobija obavještenje u portalu (tab Bookings).
 const TEXT = {
-  deposit: `${store} will contact you shortly with a secure link to place your deposit and start your piece.`,
-  appointment: `${store} will contact you shortly to set a time for your appointment.`,
+  deposit: `Thank you. ${store} will contact you shortly with further details about your deposit and the next steps for your piece.`,
+  appointment: `Thank you. ${store} will contact you shortly with further details to set up your appointment.`,
 };
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-action]');
@@ -76,7 +78,7 @@ document.addEventListener('click', async (e) => {
   } catch {}
   b.disabled = false;
   if (redirect) { location.href = redirect; return; }
-  document.getElementById('sheet-h').textContent = b.dataset.action === 'deposit' ? 'Deposit request sent' : 'Appointment request sent';
+  document.getElementById('sheet-h').textContent = b.dataset.action === 'deposit' ? 'Deposit request received' : 'Appointment request received';
   document.getElementById('sheet-p').textContent = TEXT[b.dataset.action] || TEXT.appointment;
   if (sheet?.showModal) sheet.showModal(); else alert(TEXT[b.dataset.action]);
 });

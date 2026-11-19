@@ -12,7 +12,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const safe = (fn) => { try { return fn(); } catch { return null; } };
 
 const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
-const P = { me: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
+const P = { me: null, bookings: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
 const day = (t) => new Date(t).toLocaleDateString('en-US', { dateStyle: 'medium' });
 // Dan upita u zoni pregledača (isto kao server sa ?tz=), da zlatar prati koliko mu dolazi dnevno.
 const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -389,6 +389,62 @@ const flushQuotes = () => { for (const k of Object.keys(Q)) if (Q[k]?.dirty) sav
 addEventListener('pagehide', flushQuotes);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushQuotes(); });
 
+// ---------- Bookings (19.11.2026) ----------
+// Kupci koji su na svojoj stranici kliknuli Reserve with a deposit ili Book an appointment. Obavještenje u portalu:
+// broj novih na tabu i traka na vrhu; provjera svakih 60 s, otvaranje taba ih označi kao viđene.
+async function loadBookings() {
+  try { P.bookings = await api('/api/portal/bookings'); } catch { P.bookings = P.bookings || null; }
+}
+async function pollBookings() {
+  const before = P.bookings?.unseen || 0;
+  const lastBefore = P.bookings?.items?.[0]?.lastAt || 0;
+  await loadBookings();
+  const changed = (P.bookings?.unseen || 0) !== before || (P.bookings?.items?.[0]?.lastAt || 0) !== lastBefore;
+  if (!changed) return;
+  // Bez ponovnog crtanja cijele stranice (zlatar možda kuca poruku): samo tab i traka.
+  const nav = app.querySelector('nav.tabs');
+  if (nav) nav.outerHTML = portalTabs();
+  const al = app.querySelector('.bk-alert');
+  const html = bookingAlert();
+  if (al) al.outerHTML = html || '<span hidden></span>';
+  else if (html) app.querySelector('nav.tabs')?.insertAdjacentHTML('afterend', html);
+  if (P.tab === 'bookings' && !app.querySelector('.bk-list textarea:focus')) render();
+}
+async function openBookings() {
+  await loadBookings();
+  render();
+  if (!P.bookings?.unseen || readOnly()) return;
+  try { await api('/api/portal/bookings/seen', { method: 'POST' }); } catch {}
+}
+const BK_LABEL = { deposit: 'Reserve with a deposit', appointment: 'Book an appointment' };
+const OPTION_LABEL = { picked: 'Option 1 · Their design', fit: 'Option 2 · Fits the budget' };
+function bookingAlert() {
+  const n = P.bookings?.unseen || 0;
+  if (!n || P.tab === 'bookings') return '';
+  const first = P.bookings.items.find((x) => x.isNew);
+  const what = first?.actions[0]?.action === 'appointment' ? 'wants to book an appointment' : 'wants to reserve with a deposit';
+  return `<div class="bk-alert" role="status"><span class="bk-dot" aria-hidden="true"></span><p><b>${n === 1 ? `${esc(first.name)} ${what}` : `${n} new booking requests`}</b><span>${n === 1 ? 'They pressed the button on their page. Contact them with the next steps.' : `Latest: ${esc(first.name)} ${what}.`}</span></p><button type="button" class="btn small" data-act="see-bookings">View bookings</button></div>`;
+}
+function bookingsView() {
+  const b = P.bookings;
+  if (!b) return '<p class="empty" role="status">Loading bookings…</p>';
+  const intro = '<p class="note bk-intro">Customers who pressed <b>Reserve with a deposit</b> or <b>Book an appointment</b> on their page. They were told you will contact them with further details.</p>';
+  if (!b.items.length) return `${intro}<p class="empty">No requests yet. They show up here as soon as a customer presses one of the buttons on their page.</p>`;
+  const rows = b.items.map((x) => {
+    const acts = x.actions.slice(0, 6).map((a) => `<li class="${a.at > b.seenAt ? 'is-new' : ''}"><b>${esc(BK_LABEL[a.action] || a.action)}</b>${a.option ? `<span>${esc(OPTION_LABEL[a.option] || a.option)}${a.total ? ` · ${money(a.total)}` : ''}</span>` : ''}<time>${esc(when(a.at))}</time>${a.at > b.seenAt ? '<em>New</em>' : ''}</li>`).join('');
+    return `<article class="bk${x.isNew ? ' is-new' : ''}">
+      <div class="bk-img">${x.img ? `<img src="${esc(x.img)}" alt="" width="96" height="96" loading="lazy" data-zoom tabindex="0" />` : '<span>No picture</span>'}</div>
+      <div class="bk-main">
+        <div class="bk-top"><h3>${esc(x.name)}</h3><span class="pill">${esc(x.piece ? x.piece[0].toUpperCase() + x.piece.slice(1) : 'Piece')}</span><span class="pill s-${esc(x.status)}">${esc((STATUSES.find(([v]) => v === x.status) || [, x.status])[1])}</span></div>
+        <div class="contact"><span class="cpair"><a href="mailto:${esc(x.email)}">${esc(x.email)}</a>${copyBtn(x.email, 'email')}</span><span class="cpair"><a href="tel:${esc(String(x.phone).replace(/[^\d+]/g, ''))}">${esc(x.phone)}</a>${copyBtn(x.phone, 'phone number')}</span></div>
+        <ul class="bk-acts">${acts}</ul>
+        <div class="bk-links"><button type="button" class="btn small" data-see-lead="${esc(x.email)}">See lead</button>${x.page ? `<a class="btn small ghost" href="${esc(x.page)}?preview=1" target="_blank" rel="noopener">Open their page ↗</a>` : ''}<span class="bk-views">${x.views ? `Page viewed ${x.views}×` : ''}</span></div>
+      </div>
+    </article>`;
+  }).join('');
+  return `${intro}<div class="bk-list">${rows}</div>`;
+}
+
 // ---------- Tab Pricing: tabela cijena zlatara ----------
 function pricingView() {
   const pr = P.me.pricing || {};
@@ -492,10 +548,11 @@ async function boot() {
   // A new setup draft must not hide a client's existing forms or enquiries.
   P.onboardingFlow = hasDraftOnboarding() && (onboardingRequested || (!P.me.forms.length && !P.me.stats.leads));
   P.tab = P.onboardingFlow ? 'onboarding' : 'leads';
-  await loadLeads();
+  await Promise.all([loadLeads(), loadBookings()]);
   document.title = `${P.me.client.name} · JewelryLead`;
   render();
   setInterval(tick, 30_000);
+  setInterval(pollBookings, 60_000);
 }
 
 const obUrl = (path) => path + (P.obQuery || '');
@@ -549,7 +606,8 @@ const media = (key) => `/media/${key}`;
 
 const hasDraftOnboarding = () => P.me.onboarding?.status === 'draft';
 function portalTabs() {
-  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ['pricing', 'Pricing'], ...(P.onboardingFlow && hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
+  const unseen = P.bookings?.unseen || 0;
+  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ['pricing', 'Pricing'], ['bookings', `Bookings${unseen ? ` <span class="tab-badge" aria-label="${unseen} new">${unseen}</span>` : ''}`], ...(P.onboardingFlow && hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
   return `<nav class="tabs" aria-label="Client portal">${tabs.map(([key, label]) => `<button class="tab ${P.tab === key ? 'on' : ''}" data-tab="${key}" ${P.tab === key ? 'aria-current="page"' : ''}>${label}</button>`).join('')}</nav>`;
 }
 
@@ -575,6 +633,7 @@ function render() {
     </div></header>
     <main class="wrap ${P.tab === 'leads' ? 'wide' : ''}">
       ${portalTabs()}
+      ${bookingAlert()}
       <div class="stats">
         <div class="stat">Leads<b>${stats.leads}</b></div>
         <div class="stat">Last 30 days<b>${stats.recent}</b></div>
@@ -585,7 +644,7 @@ function render() {
       </div>
       ${usageView()}
       ${P.me.onboarding?.status === 'submitted' || P.me.onboarding?.status === 'building' ? `<div class="ob-sent"><b>Thank you, we have your answers.</b> We are building your form now and it will appear under Forms. Your leads will show up here as soon as customers use it.</div>` : ''}
-      ${P.tab === 'leads' ? leadsView() : P.tab === 'pricing' ? pricingView() : formsView()}
+      ${P.tab === 'leads' ? leadsView() : P.tab === 'pricing' ? pricingView() : P.tab === 'bookings' ? bookingsView() : formsView()}
       <p class="note">Want to change a form, add styles or questions? Contact your JewelryLead team.</p>
     </main>`;
 }
@@ -796,7 +855,9 @@ app.addEventListener('click', async (e) => {
     }
     return;
   }
-  if (t.dataset.tab) { P.tab = t.dataset.tab; render(); }
+  if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'bookings') openBookings(); }
+  if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
+  if (t.dataset.seeLead) { P.tab = 'leads'; P.q = t.dataset.seeLead; P.status = ''; P.piece = ''; P.day = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
   if (t.dataset.piece !== undefined) { P.piece = t.dataset.piece; if (await loadLeads()) render(); }
   if (t.dataset.status !== undefined) { P.status = t.dataset.status; if (await loadLeads()) render(); }

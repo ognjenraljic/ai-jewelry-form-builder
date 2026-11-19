@@ -1491,6 +1491,15 @@ async function portalApi(request, env, p, secure) {
       usage: { spent: Math.round((await clientMonthCost(env, client.id)) * 100) / 100, limit: monthlyBudget(env), resetsAt: monthStart(Date.now(), 1) },
     });
   }
+  // Bookings (19.11.2026): kupci koji su na svojoj stranici kliknuli Reserve with a deposit ili Book an appointment.
+  if (p === '/api/portal/bookings' && request.method === 'GET') return json(await portalBookings(env, client));
+  // Zlatar je otvorio tab: zahtjevi do sada su viđeni (obavještenje nestaje). Admin pregled ne mijenja ništa.
+  if (p === '/api/portal/bookings/seen' && request.method === 'POST') {
+    if (sess.kind === 'view-as') return json({ ok: true, readOnly: true });
+    const at = Date.now();
+    await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.bookingsSeenAt', ?) WHERE id = ?`).bind(at, client.id).run();
+    return json({ ok: true, seenAt: at });
+  }
   // Upiti po stranicama (50), bez dugih IN lista (D1 prima najviše 100 parametara po upitu).
   if (p === '/api/portal/leads' && request.method === 'GET') {
     const u = new URL(request.url);
@@ -2211,4 +2220,28 @@ async function pageAction(request, env, key) {
   let pricing = {};
   try { pricing = JSON.parse(row.client_data || '{}').pricing || {}; } catch {}
   return json({ ok: true, redirect: httpsUrl(action === 'deposit' ? pricing.depositUrl : pricing.bookingUrl) || null });
+}
+
+// Bookings za portal: svaki lead sa bar jednim klikom na stranici kupca, najnoviji klik prvi; "new" = poslije zadnjeg
+// otvaranja taba (clients.data.bookingsSeenAt). Cijena ponude iz sačuvane poruke (quotes.picked/fit.total) kad postoji.
+async function portalBookings(env, client) {
+  let seenAt = 0;
+  try { seenAt = Number(JSON.parse(client.data || '{}').bookingsSeenAt) || 0; } catch {}
+  const rows = (await env.DB.prepare(`SELECT l.id, l.name, l.email, l.phone, l.created_at, l.status, l.page, l.page_key, l.quotes, l.answers,
+      (SELECT r.image_key FROM renders r WHERE r.lead_id = l.id AND r.status = 'ok' AND r.kind IS NULL AND r.image_key IS NOT NULL ORDER BY r.created_at DESC LIMIT 1) AS img
+      FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND json_array_length(COALESCE(l.page, '{}'), '$.actions') > 0
+      ORDER BY l.created_at DESC LIMIT 300`).bind(client.id).all()).results;
+  const items = rows.map((l) => {
+    const pg = JSON.parse(l.page || '{}') || {};
+    let q = {};
+    try { q = JSON.parse(l.quotes || '{}') || {}; } catch {}
+    let type = '';
+    try { type = JSON.parse(l.answers || '{}').type || ''; } catch {}
+    const actions = (Array.isArray(pg.actions) ? pg.actions : []).filter((a) => PAGE_ACTIONS.includes(a.action))
+      .map((a) => ({ action: a.action, option: a.option || '', at: a.at, total: Number(q[a.option]?.total) || null })).sort((a, b) => b.at - a.at);
+    return { id: l.id, name: l.name, email: l.email, phone: l.phone, createdAt: l.created_at, status: l.status || 'new', piece: type,
+      img: l.img ? `/media/${l.img}` : '', page: l.page_key ? `/p/${l.page_key}` : '', views: pg.views || 0, lastAt: actions[0]?.at || 0,
+      isNew: actions.some((a) => a.at > seenAt), actions };
+  }).filter((x) => x.actions.length).sort((a, b) => b.lastAt - a.lastAt);
+  return { seenAt, unseen: items.filter((x) => x.isNew).length, items };
 }
