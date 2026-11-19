@@ -56,6 +56,21 @@ export const INSIDE_RULE = (type) => `Rule for any icing, pave or stones on this
 // "How iced?" = None (zlatar ga postavi kao prvo pitanje o kamenju): bez kamenja na metalu, čak i kad stil inače ima led.
 const NOT_ICED = (type) => `Not iced: no pave, no accent stones and no diamonds on the metal surfaces, even if the style is usually iced; clean polished metal${type === 'ring' ? '. A center stone is set only if one is specified in these instructions' : ''}.`;
 
+// Referentne slike stilova sa natpisom nose probnu riječ ("Name"). Model ju je prepisivao umjesto kupčevog teksta
+// (District 19.11.2026: Layna i FLOW su izašli kao "Name"). Kad kupac upiše natpis, ta slika se ne šalje (worker.js),
+// a prompt u svakom slučaju kaže da je riječ sa slike samo zamjena.
+const LETTER_REFS = { '/library/pendant/script.webp': 'Name', '/library/pendant/block.webp': 'NAME' };
+export const placeholderWord = (style) => LETTER_REFS[String(style?.image || '').replace(/^\/library-light\//, '/library/')] || '';
+
+// Grillz kao pravi zubi (District 19.11.2026): slika je redala kape ravno jednu do druge, a video ih je "skupio" u
+// zubni luk i to je izgledalo mnogo bolje. Oblik luka i anatomija zuba idu u svaki grillz render sa više od jedne kape.
+const GRILLZ_ARCH = (both) =>
+  'Shape of the grill (important): the caps sit exactly as they would on real teeth and form a natural curved dental arch, never a flat straight strip of equal blocks. ' +
+  'Seen from the front at eye level with real perspective: the front teeth are closest to the camera, the side teeth curve back along the arch, so they look narrower and slightly turned away. ' +
+  'Every cap has real tooth anatomy: wide central incisors, slightly narrower lateral incisors, longer pointed canines, shorter rounded premolars, each with a softly domed front, rounded corners and a natural biting edge; the edge at the gum line follows a gentle scalloped curve. ' +
+  'Caps on neighboring selected teeth touch side by side like a real one-piece grill, with a fine groove marking each tooth; they are not spaced apart.' +
+  (both ? ' The top row sits above the bottom row like a slightly open smile, the lower arch nested just beneath the upper one, with a small dark gap between the rows.' : '');
+
 const clean = (s, max) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, max);
 const slug = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 
@@ -215,7 +230,7 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
   } else if (g && (g.rows === 'top' || g.rows === 'bottom')) {
     subject = `a single custom ${g.rows} grill: ONE row of ${g.rows === 'top' ? 'upper' : 'lower'}-teeth jewelry only, front view, displayed on its own without a mouth or face`;
   } else if (g?.lines) {
-    subject = `exactly ${g.top + g.bottom} individual dental jewelry caps ONLY: ${g.top} upper-tooth caps and ${g.bottom} lower-tooth caps, front view, displayed on their own without a mouth or face`;
+    subject = `a custom set of dental grillz made of exactly ${g.top + g.bottom} tooth caps ONLY: ${g.top} upper-tooth caps and ${g.bottom} lower-tooth caps, shaped and arranged like the real teeth they cover, front view, displayed on their own without a mouth or face`;
   }
   // Opcija koju je zlatar dodao (npr. "Black gold") nema ugrađen opis, pa ide njen natpis.
   let metal = METAL[a.metal] || (optLabel('metal') ? `polished ${optLabel('metal')}` : 'polished gold');
@@ -248,6 +263,7 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
     else if (g.rows === 'top') lines.push('Show ONLY the top (upper) row of teeth: a single row. Do not add a bottom or lower row.');
     if (g.count) lines.push(g.rows === 'both' ? `Exactly ${g.count} teeth covered in each row.` : `Exactly ${g.count} teeth covered, no more.`);
   }
+  if (g && !(g.lines && g.top + g.bottom === 1) && g.rows !== 'fangs') lines.push(GRILLZ_ARCH(g.rows === 'both'));
 
   // Dental gold ne nosi kamenje (Ognjen 16.11), čak i ako je kupac led tražio opisom.
   const noIceMetal = a.metal === 'dental-gold' || /dental/i.test(optLabel('metal'));
@@ -267,6 +283,7 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
   if (!notIced) lines.push(INSIDE_RULE(a.type));
 
   const text = clean(a.inscription, 24);
+  const placeholder = placeholderWord(style);
   // Stil slova (pitanje sa lettering: true): opis oblika slova ide uz sam natpis, ne među ostale napomene.
   const fontField = allFields.find((f) => f.lettering && f.ai !== false && a[f.id] != null && a[f.id] !== '');
   const fontOpt = fontField && (fontField.options || []).find((o) => o.value === a[fontField.id]);
@@ -275,7 +292,11 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
   if (text) {
     const letters = text.split('').join(' ');
     lines.push(`The piece includes the text "${text}" as part of the design, spelled exactly letter by letter: ${letters}. No other text anywhere.${fontLine ? ` ${fontLine}` : ''}`);
-  } else if (fontLine) lines.push(`${fontLine} Use it for any letters in the design.`);
+    if (placeholder && placeholder.toLowerCase() !== text.toLowerCase()) lines.push(`This style is normally shown with the sample word "${placeholder}". That word is only a placeholder: the piece must read "${text}" and the word "${placeholder}" must not appear anywhere.`);
+  } else {
+    if (fontLine) lines.push(`${fontLine} Use it for any letters in the design.`);
+    if (placeholder) lines.push(`The sample word "${placeholder}" shown with this style is only a placeholder for the customer's own name or word. If the customer's description gives a name or word, the piece spells that instead, and "${placeholder}" does not appear.`);
+  }
 
   // Budžet uvijek vodi sliku (i kad je "Send to AI" isključen), ako je pitanje uključeno i ima iznos.
   const budget = a.budget ? budgetLine(optOf('budget')?.label || a.budget) : '';
@@ -314,13 +335,14 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
         `${n} is a SURFACE DESIGN reference only. Borrow its stone setting, decorative motif and finish for the selected caps. ` +
           'Do not copy its arch, number of teeth, side caps, backing, connectors, wings, silhouette or overall width. The selected tooth map determines the only physical caps to generate. Apply the chosen metal and stones instead of copying the reference materials.' :
         `${n} shows the required SHAPE and construction for this style. Match its silhouette, proportions and number of elements closely. ` +
-          'It is a plain neutral reference: ignore its metal color, its background and any letters on it, and apply the metal, stones and text described here instead.'
+          'It is a plain neutral reference: ignore its metal color, its background and any letters on it, and apply the metal, stones and text described here instead.' +
+          (text ? ` Any word or letters visible in it are a placeholder: replace them with "${text}".` : placeholder ? ` The word "${placeholder}" in it is a placeholder, not the text to write.` : '')
       );
     } else if (kind === 'teethmap') {
       lines.push(
         `${n} is a TOOTH MAP: a flat schematic of the mouth seen from the front, upper row on top and lower row below. It is a layout guide only, not a photo: never copy its flat shapes, colors, outlines or black background. ` +
           `Each FILLED tooth shape is exactly one tooth that gets a cap (${g?.top || 0} filled in the top row, ${g?.bottom || 0} filled in the bottom row). Each empty outlined shape is a bare position that gets no metal at all. ` +
-          'Place the caps exactly on the filled positions, in the same order and spacing, with the same relative widths (narrower lower teeth), and nothing on the outlined positions.'
+          'Use the map only for WHICH teeth get a cap and their left to right order (narrower lower teeth), with nothing on the outlined positions. The map is flat and evenly spaced; the real caps are not: they follow the curved dental arch and the tooth anatomy described above.'
       );
     } else if (kind === 'customer') {
       lines.push(
@@ -334,11 +356,12 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
     `Style: luxury catalog photography, soft studio lighting with crisp reflections, sharp macro detail, on a seamless ${form.background || 'neutral'} background. ` +
       'Square composition, the piece fills about 70% of the frame. No people, no hands, no props, no watermark, no brand logos or trademarks. ' + NO_ENV_REFLECTIONS
   );
+  if (text) lines.push(`FINAL TEXT CHECK: the only lettering on the piece is "${text}" (${text.split('').join(' ')}), exactly as the customer typed it${placeholder && placeholder.toLowerCase() !== text.toLowerCase() ? `, never "${placeholder}"` : ''}.`);
   if (g?.lines) {
     lines.push(
       'FINAL PHYSICAL CAP INVENTORY (overrides style photos, inspiration, presets, budget and design descriptions):',
       ...g.lines,
-      'Selected teeth means the COMPLETE physical jewelry, not just which teeth get diamonds. Every object made of metal or stones in the image must belong to a selected tooth. Do not add plain gold teeth beside the decorated teeth, partial neighboring crowns, lateral wings, stabilizer teeth, support caps, backing arches or a full-mouth framework. Unselected positions must be empty background, never gold placeholders.',
+      'Selected teeth means the COMPLETE physical jewelry, not just which teeth get diamonds. Every object made of metal or stones in the image must belong to a selected tooth. Do not add plain gold teeth beside the decorated teeth, partial neighboring crowns, lateral wings, stabilizer teeth, support caps, backing plates, connecting bars or a full-mouth framework. Unselected positions must be empty background, never gold placeholders.',
       `The full product consists of ${g.top + g.bottom} tooth-shaped caps in total, not ${g.top + g.bottom} decorated caps inside a larger grill. End each row immediately at the outer edge of its last selected cap; no metal may extend sideways onto another tooth. Keep ordinary tooth-sized proportions; a higher budget increases craftsmanship, not the number of caps.`
     );
   }

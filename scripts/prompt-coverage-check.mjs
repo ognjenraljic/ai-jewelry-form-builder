@@ -12,7 +12,7 @@ const forms = process.argv[2]
   : Object.keys(TEMPLATES).map((t) => fromTemplate(t, { id: `check-${t}`, brand: 'Check' }));
 
 // Odgovori koji se u promptu namjerno pišu drugim riječima.
-const said = (k, label, p) => (k === 'coverage' && label === 'none' && p.includes('not iced')) || (/925/.test(label) && p.includes('925 sterling silver'));
+const said = (k, label, p) => (k === 'coverage' && label === 'none' && p.includes('not iced')) || (k === 'coverage' && label === 'half iced' && p.includes('roughly half')) || (/925/.test(label) && p.includes('925 sterling silver'));
 let fails = 0;
 for (const form of forms) {
   const fields = form.steps.filter((s) => s.enabled !== false).flatMap((s) => s.fields.filter((f) => f.enabled !== false));

@@ -12,7 +12,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const safe = (fn) => { try { return fn(); } catch { return null; } };
 
 const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
-const P = { me: null, leads: [], tab: 'leads', form: '', status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
+const P = { me: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
 const day = (t) => new Date(t).toLocaleDateString('en-US', { dateStyle: 'medium' });
 // Dan upita u zoni pregledača (isto kao server sa ?tz=), da zlatar prati koliko mu dolazi dnevno.
 const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -217,8 +217,9 @@ function calcView(l) {
   const pk = `${l.id}|p`;
   const pq = (Q[pk] ||= {});
   pq.spec = ls.spec;
-  const fitsAsPicked = est.total != null && (!Number.isFinite(ls.budget?.high) || est.total <= ls.budget.high);
-  const pgen = fitsAsPicked || pq.msg != null || pq.busy
+  // Poruka za tačno ono što je kupac izabrao postoji uvijek, i kad je iznad budžeta (District 19.11.2026: prva poruka je
+  // ponuda za izabrano, druga "Fits the budget" sa poređenjem; najčešće se šalje samo druga).
+  const pgen = est.total != null || pq.msg != null || pq.busy
     ? `<button type="button" class="btn qgo" data-act="quote-gen" data-qk="${esc(pk)}" ${pq.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${pq.msg != null ? 'Generate again' : 'Generate quote message'}</button><div class="qmsg-wrap" data-qk="${esc(pk)}">${quoteMessageView(l, pq, pk)}</div>`
     : '';
   const a = est.total == null
@@ -348,6 +349,9 @@ async function quoteGenerate(key) {
     total: Math.round(est.total), lines: est.lines.map((x) => ({ label: x.label, amount: Math.round(x.amount) })),
     budget: ls.budgetLabel, changes: specDiff(ls, spec),
   };
+  // "Fits the budget" sa izmjenama: poruka kaže šta se mijenja (od-do) i novu cijenu naspram cijene izabranog.
+  const orig = estimate(P.me.pricing, ls.spec).total;
+  if (!key.endsWith('|p') && body.changes.length && orig != null && Math.round(orig) !== body.total) Object.assign(body, { mode: 'fit', originalTotal: Math.round(orig), inBudget: !Number.isFinite(ls.budget?.high) || est.total <= ls.budget.high });
   const t0 = Date.now();
   try {
     const res = await api(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'POST', body: JSON.stringify(body), json: true });
@@ -381,7 +385,8 @@ function pricingView() {
       ${rows.map((r) => `<span>${esc(rowName(r))}</span>${cols.map((c) => inp(`${path}.${r}.${c}`, g[path.split('.')[1]]?.[r]?.[c])).join('')}`).join('')}</div></div>`;
   const list = (title, hint, keys, path, label) => `<div class="pcard2"><h3>${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ''}${keys.map((k) => `<label class="prow"><span>${esc(label ? label(k) : k)}</span>${inp(`${path}.${pkey(k)}`, path.split('.').slice(1).reduce((o, x) => o?.[x], g)?.[pkey(k)])}</label>`).join('')}</div>`;
   const addKeys = uniq([...cuts.filter((c) => !/^(polished|solid)$/i.test(c)), ...Object.keys(g.additions || {}), ...Object.keys(SUGGESTED_PRICING.grillz.additions)]);
-  const dentalKeys = uniq([...Object.keys(g.designs || {}), ...Object.keys(SUGGESTED_PRICING.grillz.designs)]);
+  // Svaki rez koji forma nudi ima red i za dental gold (District 19.11.2026: falili Pineapple Cut i Weed Cut); prazno = ne računa se.
+  const dentalKeys = uniq([...Object.keys(g.designs || {}), ...Object.keys(SUGGESTED_PRICING.grillz.designs), 'pineapple cut', 'weed cut', ...cuts.filter((c) => !/^(polished|solid|open face)$/i.test(c))]);
   const cap = (k) => k.replace(/\b\w/g, (m) => m.toUpperCase()).replace(/\b3d\b/i, '3D');
   const grillzCards = allPieces.includes('grillz') ? `
     <h2 class="psec">Grillz price list</h2>
@@ -480,7 +485,7 @@ async function loadLeads(more = false) {
   P.loading = !more;
   P.loadingMore = more;
   P.loadError = '';
-  const result = leadStore.load({ status: P.status, q: P.q, day: P.day, dfrom: rangeFrom(), before: more ? P.next : null, previous: P.leads });
+  const result = leadStore.load({ status: P.status, q: P.q, day: P.day, dfrom: rangeFrom(), piece: P.piece, before: more ? P.next : null, previous: P.leads });
   if (P.me) render();
   try {
     const r = await result;
@@ -489,6 +494,7 @@ async function loadLeads(more = false) {
     P.next = r.next;
     P.counts = r.counts;
     P.days = r.days || {};
+    if (r.pieces && Object.keys(r.pieces).length) P.pieces = r.pieces;
   } catch (error) {
     if (seq !== leadRequest) return false;
     P.loadError = 'Could not load leads. Please try again.';
@@ -575,11 +581,17 @@ function usageView() {
 
 function leadsView() {
   const total = Object.values(P.counts).reduce((a, b) => a + b, 0);
-  if (!total && !P.q && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
+  if (!total && !P.q && !P.piece && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
   const forms = P.me.forms.filter((f) => f.leads);
   const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}</div>`;
   const formChips = forms.length > 1
     ? `<div class="chips" role="group" aria-label="Filter by form"><button class="chip ${P.form ? '' : 'on'}" data-form="">All forms</button>${forms.map((f) => `<button class="chip ${P.form === f.id ? 'on' : ''}" data-form="${esc(f.id)}">${esc(f.name)}</button>`).join('')}</div>`
+    : '';
+  // Filter po komadu (District 19.11.2026): grillz, privjesci, prstenje... sa brojem upita.
+  const PIECE_NAMES = { grillz: 'Grillz', pendant: 'Pendants', ring: 'Rings', chain: 'Chains', bracelet: 'Bracelets', earrings: 'Earrings', watch: 'Watches' };
+  const pieceList = Object.entries(P.pieces || {}).sort((a, b) => b[1] - a[1]);
+  const pieceChips = pieceList.length > 1 || P.piece
+    ? `<div class="chips" role="group" aria-label="Filter by piece"><button class="chip ${P.piece ? '' : 'on'}" data-piece="" aria-pressed="${!P.piece}">All pieces</button>${pieceList.map(([v, n]) => `<button class="chip ${P.piece === v ? 'on' : ''}" data-piece="${esc(v)}" aria-pressed="${P.piece === v}">${esc(PIECE_NAMES[v] || v[0].toUpperCase() + v.slice(1))} <span>${n}</span></button>`).join('')}</div>`
     : '';
   const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email or phone" value="${esc(P.q)}" /></label>`;
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
@@ -601,7 +613,7 @@ function leadsView() {
         <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}</div>
         <div>
           <div class="lead-top"><h2>${esc(l.name)}</h2><span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
-          <div class="contact"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a></div>
+          <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number')}</span></div>
           <div class="tags">${l.details.map((d) => `<span class="tag">${esc(d.label)}: <b>${esc(d.value)}</b></span>`).join('')}</div>
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
           <div class="thumbs">${strip}${photos}</div>
@@ -615,7 +627,26 @@ function leadsView() {
   const more = P.next && !P.loading && !P.loadError ? `<div class="more"><button class="btn" data-act="more" ${P.loadingMore ? 'disabled' : ''}>${P.loadingMore ? 'Loading…' : 'Show older leads'}</button></div>` : '';
   // Traka ostaje i kad izabrani dan nema leadova, da se može izabrati drugi dan ili "All days".
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
-  return `<div class="filters">${search}${statusChips}${formChips}</div>${chart}${cards}${more}`;
+  return `<div class="filters">${search}${statusChips}${pieceChips}${formChips}</div>${chart}${cards}${more}`;
+}
+
+// Copy pored mejla i telefona (District 19.11.2026): jedan klik kopira, ikonica se na trenutak pretvori u kvačicu.
+const COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
+const DONE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const copyBtn = (v, what) => (v ? `<button type="button" class="copy-btn" data-copy="${esc(v)}" data-label="Copy ${what}" aria-label="Copy ${what}" title="Copy ${what}">${COPY_ICON}</button>` : '');
+async function copyText(btn, text) {
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; } catch {
+    const ta = Object.assign(document.createElement('textarea'), { value: text });
+    ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch {}
+    ta.remove();
+  }
+  if (!ok) return;
+  clearTimeout(btn._t);
+  btn.classList.add('done'); btn.innerHTML = DONE_ICON; btn.setAttribute('aria-label', 'Copied'); btn.title = 'Copied';
+  btn._t = setTimeout(() => { btn.classList.remove('done'); btn.innerHTML = COPY_ICON; btn.setAttribute('aria-label', btn.dataset.label || 'Copy'); btn.title = btn.dataset.label || 'Copy'; }, 1400);
 }
 
 function formsView() {
@@ -706,6 +737,7 @@ app.addEventListener('keydown', (e) => {
 app.addEventListener('click', async (e) => {
   const t = e.target.closest('button, img[data-zoom]') || e.target;
   if (t.dataset?.film) { zoomVideo(t.dataset.film); return; }
+  if (t.dataset?.copy != null) { copyText(t, t.dataset.copy); return; }
   // Quote radni sto (Fits the budget): izbori, reset, poruka.
   if (t.tagName === 'BUTTON' && t.dataset.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
   if (t.dataset?.act === 'quote-reset') { const q = Q[t.dataset.q]; if (q) { const prev = estimate(P.me.pricing, q.spec).total; if (prev != null) q.animFrom = Math.round(prev); q.spec = { ...q.suggested }; renderCalc(t.dataset.q); } return; }
@@ -724,6 +756,7 @@ app.addEventListener('click', async (e) => {
   }
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
+  if (t.dataset.piece !== undefined) { P.piece = t.dataset.piece; if (await loadLeads()) render(); }
   if (t.dataset.status !== undefined) { P.status = t.dataset.status; if (await loadLeads()) render(); }
   if (t.dataset.range) { P.range = t.dataset.range; P.shift = 0; if (await loadLeads()) render(); }
   if (t.dataset.shift) { P.shift = Math.max(0, P.shift + Number(t.dataset.shift)); if (await loadLeads()) render(); }

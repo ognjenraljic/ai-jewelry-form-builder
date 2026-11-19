@@ -25,3 +25,7 @@ Thank you for the price list. Grillz estimates now use it exactly (sets, top or 
 6. **Unequal rows** (for example 8 top + 6 bottom): half of the 8 x 8 set plus half of the 6 x 6 set.
 7. **Less than 6 teeth on a row** in a set (for example 4 top + 4 bottom): each row is priced from "bottom or top only".
 8. **Counts not on the list** (5, 7, 9 teeth, or 2 teeth in platinum) use the next size up that has a price.
+
+## Update Nov 19, 2026
+
+9. **Pineapple Cut and Weed Cut on dental gold**: they now have their own rows under "Dental gold designs, $ per tooth" in the Pricing tab, empty until you enter a price (empty = not added to the estimate). What do you charge per tooth for each on dental gold, and Weed Cut on gold and silver?

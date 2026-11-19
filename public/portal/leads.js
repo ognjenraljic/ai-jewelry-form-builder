@@ -3,16 +3,17 @@
 export function createLeadStore(request, now = Date.now) {
   const cache = new Map();
   const fresh = (entry) => entry && now() - entry.at < 30_000;
-  const keyOf = (status, q, day = '', dfrom = '') => JSON.stringify([status, q.toLowerCase(), day, dfrom]);
+  const keyOf = (status, q, day = '', dfrom = '', piece = '') => JSON.stringify([status, q.toLowerCase(), day, dfrom, piece]);
   let pending, sequence = 0;
   return {
-    async load({ status = '', q = '', day = '', dfrom = '', before = null, previous = [] } = {}) {
+    async load({ status = '', q = '', day = '', dfrom = '', piece = '', before = null, previous = [] } = {}) {
       const seq = ++sequence;
       pending?.abort();
-      const key = keyOf(status, q, day, dfrom);
+      const key = keyOf(status, q, day, dfrom, piece);
       const all = cache.get(keyOf('', ''));
       const cached = cache.get(key);
-      if (!before && !day && !dfrom && fresh(all) && !all.next) {
+      // Izabran komad ide sa servera: on filtrira i brojeve po statusu i dane na traci.
+      if (!before && !day && !dfrom && !piece && fresh(all) && !all.next) {
         const search = q.toLowerCase();
         return { ...all, leads: all.leads.filter((l) => (!status || l.status === status) && (!search || [l.name, l.email, l.phone].some((s) => String(s || '').toLowerCase().includes(search)))) };
       }
@@ -23,12 +24,13 @@ export function createLeadStore(request, now = Date.now) {
       if (q) qs.set('q', q);
       if (day) qs.set('day', day);
       if (dfrom) qs.set('dfrom', dfrom);
+      if (piece) qs.set('piece', piece);
       if (before) qs.set('before', before);
       qs.set('tz', new Date().getTimezoneOffset());
       try {
         const r = await request(`/api/portal/leads?${qs}`, { signal: pending.signal });
         if (seq !== sequence) return null;
-        const entry = { leads: before ? [...previous, ...r.leads] : r.leads, next: r.next, counts: r.counts || {}, days: r.days || {}, at: now() };
+        const entry = { leads: before ? [...previous, ...r.leads] : r.leads, next: r.next, counts: r.counts || {}, days: r.days || {}, pieces: r.pieces || {}, at: now() };
         cache.set(key, entry);
         return entry;
       } catch (error) {

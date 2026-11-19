@@ -1,5 +1,5 @@
 import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
-import { buildPrompt, buildTweakPrompt, buildFilmPrompt, filmDescription } from './prompt.js';
+import { buildPrompt, buildTweakPrompt, buildFilmPrompt, filmDescription, placeholderWord } from './prompt.js';
 import { parseTeeth, teethSummary, teethPlan } from './teeth.js';
 import { buildTryOnPrompt } from './tryon.js';
 import { applyPresetTeeth } from '../public/grillz-selection.js';
@@ -743,7 +743,10 @@ async function renderInputs(env, request, form, answers, { ref = null, tweak = '
   const style = styleOf(form, answers);
   // Ugrađeni grillz stilovi govore samo broj zuba; kad kupac izabere tačne zube, njihova slika bi nametnula pogrešan broj.
   const countOnly = answers.type === 'grillz' && parseTeeth(answers.teeth) && /^\/library\/grillz\/(top6|top8|set|fangs)\.webp$/.test(style?.image || '');
-  if (style?.image && !countOnly) {
+  // Slika stila sa probnom riječi ("Name") se ne šalje kad je kupac upisao svoj natpis: model je prepisivao riječ sa slike
+  // (District 19.11.2026). Oblik tada nosi opis stila i izabrani font.
+  const sampleWord = placeholderWord(style) && String(answers.inscription || '').trim();
+  if (style?.image && !countOnly && !sampleWord) {
     let img = null;
     if (style.image.startsWith('/media/forms/')) img = await r2Image(env, style.image.slice(7));
     else {
@@ -1485,6 +1488,9 @@ async function portalApi(request, env, p, secure) {
     const args = [client.id, before];
     if (LEAD_STATUSES.includes(status)) { where.push(status === 'new' ? "(l.status IS NULL OR l.status = 'new')" : 'l.status = ?'); if (status !== 'new') args.push(status); }
     if (q) { where.push('(lower(l.name) LIKE ? OR lower(l.email) LIKE ? OR l.phone LIKE ?)'); args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+    // Filter po komadu (District 19.11.2026: "filter po kategoriji proizvoda"): odgovor "type" iz upita.
+    const piece = /^[a-z0-9-]{1,40}$/.test(u.searchParams.get('piece') || '') ? u.searchParams.get('piece') : '';
+    if (piece) { where.push("json_extract(l.answers, '$.type') = ?"); args.push(piece); }
     // Jedan dan (klik na traku u portalu): od ponoći do ponoći po vremenskoj zoni pregledača (?tz= u minutama).
     // Dani za traku: od zadnjih 90 dana, ili od početka mjeseca/sedmice koju zlatar lista strelicama (do 2 godine unazad).
     const dayFrom = Math.max(Date.now() - 730 * 864e5, Math.min(Date.now() - 90 * 864e5, Number(u.searchParams.get('dfrom')) || Infinity));
@@ -1506,7 +1512,9 @@ async function portalApi(request, env, p, secure) {
       ? (await env.DB.prepare(`SELECT r.lead_id, r.n, r.image_key, r.tweak, r.kind, r.ms FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id
           WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND r.status = 'ok' AND r.image_key IS NOT NULL ORDER BY r.created_at`).bind(client.id, before, oldest).all()).results
       : [];
-    const counts = Object.fromEntries((await env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? GROUP BY COALESCE(l.status, 'new')`).bind(client.id).all()).results.map((r) => [r.s, r.n]));
+    // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
+    const counts = Object.fromEntries((await env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all()).results.map((r) => [r.s, r.n]));
+    const pieces = Object.fromEntries((await env.DB.prepare(`SELECT json_extract(l.answers, '$.type') AS t, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? GROUP BY t`).bind(client.id).all()).results.filter((r) => r.t).map((r) => [String(r.t), r.n]));
     // Upiti po danu (zlatar prati koliko mu dolazi dnevno): dan po vremenskoj zoni pregledača, zadnjih 90 dana, isti filteri kao lista.
     const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
     const days = {};
@@ -1520,7 +1528,7 @@ async function portalApi(request, env, p, secure) {
       : [];
     if (pikaOn(env)) films = await Promise.all(films.map((fl, k) => (fl.status === 'pending' && k < 4 ? settleFilm(env, fl) : fl)));
     return json({
-      more, next: more ? oldest : null, counts, days,
+      more, next: more ? oldest : null, counts, days, pieces,
       leads: pageLeads.map((l) => {
         const a = JSON.parse(l.answers);
         let files = {};
@@ -1602,7 +1610,27 @@ function quoteFacts(b, lead, store) {
     metal: str(b.metal), karat: str(b.karat, 12), ice: str(b.ice, 30), stones: str(b.stones, 40), clarity: str(b.clarity, 12), cut: str(b.cut, 40),
     teeth, total, price: `$${total.toLocaleString('en-US')}`,
     molding: lines.some((x) => /molding/i.test(x.label)),
+    ...fitFacts(b, total, str),
   };
+}
+// "Fits the budget" (District 19.11.2026, Enrique): poruka kao "to fit your budget, these are the changes: from gold to
+// silver, from lab diamonds to moissanite, this would run you $880". Samo kad ima izmjena i drugačiju cijenu od izabranog.
+function fitFacts(b, total, str) {
+  const orig = Math.round(Number(b?.originalTotal));
+  const changes = (Array.isArray(b?.changes) ? b.changes : []).slice(0, 6)
+    .map((c) => ({ what: str(c?.what, 20), from: str(c?.from, 50), to: str(c?.to, 50) }))
+    .filter((c) => c.what && c.to && c.from.toLowerCase() !== c.to.toLowerCase())
+    // Karat i čistoća koji samo nestanu (zlato u srebro, prirodni dijamanti u moissanite) se podrazumijevaju.
+    .filter((c) => !(['Karat', 'Clarity'].includes(c.what) && /^(none|)$/i.test(c.to)));
+  if (b?.mode !== 'fit' || !changes.length || !Number.isFinite(orig) || orig <= 0 || orig > 5e6 || orig === total) return {};
+  // Ako ni predlog ne stane u budžet, poruka ne smije reći da staje: "to get closer to your budget".
+  return { fit: true, changes, original: `$${orig.toLocaleString('en-US')}`, budget: str(b.budget, 40), toFit: b.inBudget === false ? 'To get closer to your budget' : 'To fit your budget' };
+}
+// "Gold to Silver", "Teeth: 6 top + 6 bottom to 4 top + 4 bottom"; "none" dobija riječi ("no stones", "not iced").
+function changeLine(c) {
+  const none = (v) => (/^(none|)$/i.test(v) ? (c.what === 'Stones' ? 'no stones' : c.what === 'Ice' ? 'not iced' : c.what === 'Cut' ? 'polished' : 'none') : v);
+  const label = ['Teeth', 'Karat', 'Clarity', 'Cut'].includes(c.what) ? `${c.what}: ` : '';
+  return `${label}${none(c.from)} to ${none(c.to)}`;
 }
 function quoteSpecLine(f) {
   const metal = [f.karat, f.metal].filter(Boolean).join(' ');
@@ -1628,10 +1656,14 @@ function dropSignature(text, store, info) {
   return lines.join('\n').trim();
 }
 function quoteTemplate(f) {
+  if (f.fit) {
+    return `Hi ${f.first}, thank you for designing your ${f.piece} with ${f.store}!\n\n${f.toFit}${f.budget ? ` (${f.budget})` : ''}, these are the changes we would make:\n${f.changes.map((c) => `- ${changeLine(c)}`).join('\n')}\n\nThat makes it ${quoteSpecLine(f)}, and it would run you ${f.price}${f.molding ? ' (molding included)' : ''} instead of ${f.original} for the original design.\n\nLet me know if that sounds fair and we will get started.${f.footer ? '' : `\n\n${f.store}`}`;
+  }
   return `Hi ${f.first}, thank you for designing your ${f.piece} with ${f.store}!\n\nHere is your quote: ${quoteSpecLine(f)}.\n\nTotal: ${f.price}${f.molding ? ' (molding included)' : ''}.\n\nReply here if you would like to move forward or adjust anything, and we will set up the next step.${f.footer ? '' : `\n\n${f.store}`}`;
 }
 async function quoteByAI(env, f) {
   if (!env.AI?.run) return null;
+  if (f.fit) return fitByAI(env, f);
   const sys = 'You write short quote messages that a jewelry store sends to a customer by text message. Plain US English, warm and premium, no emojis, no hashtags, no markdown, no em dashes. 55 to 95 words. Start with "Hi <first name>,". Thank them for their design, then describe the quoted piece in one natural sentence using only the given specs. It is a quote for a piece to be made: never say it is already made or created. State the total price exactly as given, written exactly the same way. Say molding is included only if told so. Do not invent anything: no deadlines, deposits, discounts, warranties, shipping or extra options. End with an invitation to reply to move forward or adjust anything.';
   const user = `Store: ${f.store}\nCustomer first name: ${f.first}\nPiece: ${quoteSpecLine(f)}\nTotal price: ${f.price}\nMolding included: ${f.molding ? 'yes' : 'no'}\n${f.footer ? 'Do not sign the message: the store details are added below it automatically.' : 'After the invitation, add an empty line and the store name on its own line.'}`;
   try {
@@ -1645,6 +1677,26 @@ async function quoteByAI(env, f) {
     return text;
   } catch (e) {
     console.log('quote AI failed', e?.message || e);
+    return null;
+  }
+}
+
+// Poruka "Fits the budget": izmjene od-do, nova cijena naspram cijene izabranog; provjera kao kod obične poruke.
+async function fitByAI(env, f) {
+  const sys = 'You write short text messages that a jewelry store sends to a customer whose design came out above their budget. Friendly, relaxed and personal, like the jeweler texting a regular customer. Plain US English, no emojis, no hashtags, no markdown, no em dashes. 60 to 110 words. Start with "Hi <first name>,". Introduce the changes with exactly the given lead-in phrase, then list EVERY given change on its own line starting with "- ", worded exactly as given. Then say what the piece would run them, the new total exactly as given, and compare it with the original design price exactly as given. It is a quote for a piece to be made. Do not invent anything: no other changes, deadlines, deposits, discounts, warranties or shipping. End by asking if it sounds fair and inviting them to reply. Follow this format, with your own warm wording:\n\nHi <first name>,\n\nThank you for designing your <piece> with us! <lead-in>, these are the changes we would make:\n- <change 1>\n- <change 2>\n\nWith those changes it would run you <new total>, compared to <original design price> for the original design.\n\nLet me know if that sounds fair and we can get started.';
+  const user = `Store: ${f.store}\nCustomer first name: ${f.first}\nCustomer budget: ${f.budget || 'not given'}\nLead-in phrase: ${f.toFit}\nChanges:\n${f.changes.map((c) => `- ${changeLine(c)}`).join('\n')}\nPiece after the changes: ${quoteSpecLine(f)}\nNew total: ${f.price}\nOriginal design price: ${f.original}\nMolding included: ${f.molding ? 'yes' : 'no'}\n${f.footer ? 'Do not sign the message: the store details are added below it automatically.' : 'After the question, add an empty line and the store name on its own line.'}`;
+  try {
+    const run = env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', { messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], max_tokens: 360, temperature: 0.5 });
+    const r = await Promise.race([run, new Promise((ok) => setTimeout(() => ok(null), 15000))]);
+    const text = String(r?.response || '').trim().replace(/^["']|["']$/g, '').replace(/—/g, ',').replace(/\n{3,}/g, '\n\n');
+    const amounts = [...text.matchAll(/\$\s?\d{1,3}(?:,\d{3})*(?:\.\d+)?(?!\d)|\$\s?\d+(?:\.\d+)?/g)].map((m) => m[0].replace(/\s/g, ''));
+    const lower = text.toLowerCase();
+    const lost = f.changes.find((c) => !/^none$/i.test(c.to) && !lower.includes(String(c.to).toLowerCase()));
+    const why = !text.includes(f.price) ? 'price missing' : !text.includes(f.original) ? 'original price missing' : amounts.some((a) => a !== f.price && a !== f.original) ? `other amount ${amounts.join(' ')}` : lost ? `change missing ${lost.what}` : text.length > 1000 ? 'too long' : text.length < 80 ? 'too short' : '';
+    if (why) { console.log('fit AI rejected:', why, JSON.stringify(text.slice(0, 300))); return null; }
+    return text;
+  } catch (e) {
+    console.log('fit AI failed', e?.message || e);
     return null;
   }
 }
