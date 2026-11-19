@@ -8,6 +8,8 @@ import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
+import { estimate, leadSpecFrom, quoteBody } from '../public/pricing.js';
+import { leadPageHtml, PAGE_ACTIONS } from './leadpage.js';
 import { stripAudio } from './mp4.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, FILM_API, FILM_EST_USD } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
@@ -125,7 +127,10 @@ async function route(request, env, ctx, url) {
   if ((m = p.match(/^\/api\/leads\/([\w-]+)$/)) && request.method === 'GET') return leadStatus(request, env, m[1]);
   if (p.startsWith('/api/admin/clients') && !p.endsWith('/upload')) return adminClients(request, env, p);
   if (p.startsWith('/api/admin/forms') || /^\/api\/admin\/clients\/[a-z0-9-]+\/upload$/.test(p)) return adminForms(request, env, p);
-  if (p === '/api/leads' && request.method === 'POST') return createLead(request, env);
+  if (p === '/api/leads' && request.method === 'POST') return createLead(request, env, ctx);
+  // Stranica kupca (19.11.2026): njegov dizajn, ponude i dugmad Deposit / Book appointment.
+  if ((m = p.match(/^\/p\/([a-z0-9]{16,32})$/)) && read) return leadPage(request, env, ctx, m[1], url);
+  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/action$/)) && request.method === 'POST') return pageAction(request, env, m[1]);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/renders$/)) && request.method === 'POST') return createRender(request, env, m[1], ctx);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/check$/)) && request.method === 'POST') return teethCheckRoute(request, env, m[1], ctx);
   if (p === '/api/demo-requests' && request.method === 'POST') return createDemoRequest(request, env);
@@ -186,7 +191,7 @@ async function getForm(env, id) {
   return json(out);
 }
 
-async function createLead(request, env) {
+async function createLead(request, env, ctx) {
   const fd = await request.formData();
   const form = await loadForm(env, fd.get('formId'), { live: true });
   if (!form) return json({ error: 'This form is not available.' }, 404);
@@ -236,9 +241,9 @@ async function createLead(request, env) {
   const id = rid(12);
   const token = rid(24);
   const ins = await env.DB.prepare(
-    `INSERT INTO leads (id, form_id, token, name, email, phone, answers, ip, ip_net, created_at)
-     SELECT ?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM leads WHERE ip_net = ? AND created_at > ?) < ?`
-  ).bind(id, form.id, token, name, email, phone, JSON.stringify(answers), ip, net, Date.now(), net, Date.now() - 3600_000, limit).run();
+    `INSERT INTO leads (id, form_id, token, name, email, phone, answers, ip, ip_net, created_at, page_key)
+     SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM leads WHERE ip_net = ? AND created_at > ?) < ?`
+  ).bind(id, form.id, token, name, email, phone, JSON.stringify(answers), ip, net, Date.now(), rid(24), net, Date.now() - 3600_000, limit).run();
   if (!ins.meta.changes) return json({ error: 'Too many requests. Please try again later.' }, 429);
 
   // Fotografije tek poslije upisa, pa nema fajlova bez upita.
@@ -253,6 +258,8 @@ async function createLead(request, env) {
   if (refKey || Object.keys(files).length) {
     await env.DB.prepare('UPDATE leads SET ref_key = ?, files = ? WHERE id = ?').bind(refKey, Object.keys(files).length ? JSON.stringify(files) : null, id).run();
   }
+  // Prva quote poruka (Estimated price) se napiše odmah sa upitom (Ognjen 19.11.2026); cron je mreža sigurnosti.
+  ctx?.waitUntil?.(autoQuote(env, id, new URL(request.url).origin).catch((e) => console.error('auto quote', id, e.message)));
   return json({ leadId: id, token, maxRenders: form.maxRenders });
 }
 
@@ -264,12 +271,18 @@ async function createLead(request, env) {
 // video prvog rendera ako ga nema; 3) videi "u toku" se preuzmu u R2. Po krugu ograničeno, da cron ostane kratak.
 const CATCHUP_RENDERS = 6;
 const CATCHUP_FILMS = 10;
+const CATCHUP_QUOTES = 5;
 const ORIGIN = 'https://jewelrylead.com/';
 async function catchUp(env) {
   const now = Date.now();
   const leads = (await env.DB.prepare(`SELECT l.* FROM leads l WHERE l.created_at < ? AND l.created_at > ?
       AND NOT EXISTS (SELECT 1 FROM renders r WHERE r.lead_id = l.id AND r.kind IS NULL) ORDER BY l.created_at LIMIT ${CATCHUP_RENDERS}`).bind(now - 3 * 60_000, now - 864e5).all()).results;
   for (const lead of leads) await serverFirstRender(env, lead).catch((e) => console.error('catch-up render', lead.id, e.message));
+  // Prva quote poruka za upite koji je još nemaju (zadnjih 30 dana, zlatar ima cijene); svaki upit samo jednom ($.auto).
+  const noQuote = await (async () => (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
+      WHERE l.created_at > ? AND l.created_at < ? AND json_type(COALESCE(l.quotes, '{}'), '$.picked') IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.auto') IS NULL
+      AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' ORDER BY l.created_at DESC LIMIT ${CATCHUP_QUOTES}`).bind(now - 30 * 864e5, now - 60_000).all()).results)().catch((e) => { console.error('catch-up quotes', e.message); return []; });
+  for (const q of noQuote) await autoQuote(env, q.id, ORIGIN.replace(/\/$/, '')).catch((e) => console.error('catch-up quote', q.id, e.message));
   if (pikaOn(env)) {
     const need = (await env.DB.prepare(`SELECT l.* FROM leads l JOIN renders r ON r.lead_id = l.id AND r.n = 1 AND r.kind IS NULL AND r.status = 'ok' AND (r.checking IS NULL)
         WHERE l.created_at > ? AND r.created_at < ? AND NOT EXISTS (SELECT 1 FROM films f WHERE f.lead_id = l.id) ORDER BY l.created_at LIMIT ${CATCHUP_FILMS}`).bind(now - 864e5, now - 60_000).all()).results;
@@ -1503,7 +1516,7 @@ async function portalApi(request, env, p, secure) {
       where.push('l.created_at >= ? AND l.created_at < ?');
       args.push(from, from + 864e5);
     }
-    const leads = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes
+    const leads = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all()).results;
     const more = leads.length > PAGE_SIZE;
     const pageLeads = leads.slice(0, PAGE_SIZE);
@@ -1535,7 +1548,7 @@ async function portalApi(request, env, p, secure) {
         try { files = JSON.parse(l.files || '{}'); } catch {}
         return {
           id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
-          status: l.status || 'new', note: l.note || '', quotes: leadQuotes(l.quotes),
+          status: l.status || 'new', note: l.note || '', quotes: leadQuotes(l.quotes), page: pageInfo(l),
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a), answers: pricingAnswers(a),
           photos: [
             ...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []),
@@ -1562,27 +1575,11 @@ async function portalApi(request, env, p, secure) {
   // Ništa se ne čuva i ne šalje; zlatar je kopira (Copy) u svoj softver za poruke. Radi i u admin pregledu.
   let qm;
   if ((qm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/quote$/)) && request.method === 'POST') {
-    const lead = await env.DB.prepare('SELECT l.id, l.name, f.data AS form_data FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(qm[1], client.id).first();
+    const lead = await env.DB.prepare('SELECT l.id, l.name, l.page_key, f.data AS form_data FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(qm[1], client.id).first();
     if (!lead) return json({ error: 'Not found' }, 404);
     const b = await request.json().catch(() => ({}));
-    let store = client.name;
-    try { store = JSON.parse(lead.form_data || '{}').brand?.name || client.name; } catch {}
-    const facts = quoteFacts(b, lead, store);
-    if (!facts) return json({ error: 'The quote needs a price first.' }, 400);
-    let info = '';
-    try { info = quoteInfoText(JSON.parse(client.data || '{}').pricing?.quoteInfo) || ''; } catch {}
-    facts.footer = !!info;
-    const message = await quoteByAI(env, facts);
-    const body = info ? dropSignature(message || quoteTemplate(facts), facts.store, info) : message || quoteTemplate(facts);
-    const out = { message: info ? `${body}\n\n${info}` : body, source: message ? 'ai' : 'template' };
-    // Poruka ostaje zabilježena za taj lead (Ognjen 19.11.2026): poslije izlaska ili osvježavanja je ista, nova je zamjenjuje.
-    const slot = QUOTE_SLOTS.includes(b.slot) ? b.slot : null;
-    if (slot) {
-      const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), edited: false, at: Date.now() };
-      await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(saved), lead.id).run();
-      out.saved = saved;
-    }
-    return json(out);
+    const out = await writeQuote(env, client, lead, b, new URL(request.url).origin);
+    return out ? json(out) : json({ error: 'The quote needs a price first.' }, 400);
   }
   // Izmjena poruke (zlatar je uredi u polju): čuva se najnovija verzija, izbori i izvor ostaju.
   if ((qm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/quote$/)) && request.method === 'PUT') {
@@ -1610,6 +1607,49 @@ async function portalApi(request, env, p, secure) {
 }
 
 // ---------- Quote poruka (portal) ----------
+// Piše poruku iz konačnih izbora (portal ili automatski) i čuva je uz lead. Ispod teksta ide link stranice kupca
+// (19.11.2026: kupcu se šalje link sa njegovim dizajnom i ponudama), pa store info zlatara.
+async function writeQuote(env, client, lead, b, origin) {
+  let store = client.name;
+  try { store = JSON.parse(lead.form_data || '{}').brand?.name || client.name; } catch {}
+  const facts = quoteFacts(b, lead, store);
+  if (!facts) return null;
+  let info = '';
+  try { info = quoteInfoText(JSON.parse(client.data || '{}').pricing?.quoteInfo) || ''; } catch {}
+  facts.footer = !!info;
+  const message = await quoteByAI(env, facts);
+  const body = info ? dropSignature(message || quoteTemplate(facts), facts.store, info) : message || quoteTemplate(facts);
+  const slot = QUOTE_SLOTS.includes(b.slot) ? b.slot : null;
+  const link = lead.page_key ? `${slot === 'fit' ? 'See both options side by side' : 'See your design and quote'}: ${origin}/p/${lead.page_key}` : '';
+  const out = { message: [body, link, info].filter(Boolean).join('\n\n'), source: message ? 'ai' : 'template' };
+  // Poruka ostaje zabilježena za taj lead (Ognjen 19.11.2026): poslije izlaska ili osvježavanja je ista, nova je zamjenjuje.
+  if (slot) {
+    const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, edited: false, at: Date.now() };
+    await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(saved), lead.id).run();
+    out.saved = saved;
+  }
+  return out;
+}
+// Prva poruka bez zlatara (Ognjen 19.11.2026: "neka se prva poruka odmah generiše sa leadom"): Estimated price, tačno
+// kako je kupac izabrao, istim računom kao portal. Ne dira poruku koju je zlatar već napravio; pokušava se samo jednom.
+async function autoQuote(env, leadId, origin) {
+  const row = await env.DB.prepare(`SELECT l.id, l.name, l.answers, l.quotes, l.page_key, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data
+      FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id WHERE l.id = ?`).bind(leadId).first();
+  if (!row) return null;
+  const mark = () => env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.auto', ?) WHERE id = ?`).bind(Date.now(), leadId).run();
+  let quotes = {};
+  try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
+  if (quotes.picked) return null;
+  let pricing = null;
+  try { pricing = JSON.parse(row.client_data || '{}').pricing || null; } catch {}
+  const form = JSON.parse(row.form_data || '{}');
+  const ls = pricing && leadSpecFrom(pricingSpec(form), pricingAnswers(JSON.parse(row.answers || '{}')));
+  const est = ls && estimate(pricing, ls.spec);
+  if (!est || est.total == null) { await mark(); return null; }
+  await mark();
+  const client = { id: row.client_id, name: row.client_name, data: row.client_data };
+  return writeQuote(env, client, { id: row.id, name: row.name, page_key: row.page_key, form_data: row.form_data }, { ...quoteBody(ls, ls.spec, est), slot: 'picked', spec: ls.spec }, origin);
+}
 // Sačuvane poruke po leadu: picked = Estimated price, fit = Fits the budget (vidi migraciju 0023).
 const QUOTE_SLOTS = ['picked', 'fit'];
 function quoteMessageText(v) {
@@ -1764,7 +1804,7 @@ function cleanPricing(p) {
   const map = (o, depth = 1) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), depth > 1 ? map(v, depth - 1) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
   // Grillz cjenovnik (18.11.2026): brojevi ili ugniježđene tabele do 3 nivoa (grillz.sets.6.10k).
   const tree = (o, depth) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), v && typeof v === 'object' ? (depth > 1 ? tree(v, depth - 1) : undefined) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
-  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo) };
+  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo), depositUrl: httpsUrl(p?.depositUrl), bookingUrl: httpsUrl(p?.bookingUrl) };
 }
 
 async function demoHandled(request, env, id) {
@@ -2109,4 +2149,65 @@ function fromB64(b64) {
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+}
+
+// ---------- Stranica kupca /p/<page_key> (19.11.2026) ----------
+// Ognjen: kupcu se šalje link na personalizovanu stranicu: njegove slike i video, dvije ponude (kako je izabrao i
+// "Fits the budget" kad je zlatar napravi), dugmad Deposit i Book appointment, stilovi i završne obrade radnje.
+// Cijene se računaju uživo iz zlatarevog cjenovnika, isto kao u portalu. Bez prijave: link je nepogodiv.
+const BOT_UA = /bot|crawl|spider|preview|facebookexternalhit|whatsapp|slack|telegram|twitter|linkedin|discord|embedly|skype|bitly|vkshare|pinterest/i;
+function httpsUrl(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return undefined;
+  try { const u = new URL(s); return u.protocol === 'https:' && s.length <= 500 ? u.href : undefined; } catch { return undefined; }
+}
+function pageInfo(l) {
+  let pg = {};
+  try { pg = JSON.parse(l.page || '{}') || {}; } catch {}
+  return l.page_key ? { url: `/p/${l.page_key}`, views: pg.views || 0, lastView: pg.lastView || null, actions: Array.isArray(pg.actions) ? pg.actions.slice(-10) : [] } : null;
+}
+async function leadPage(request, env, ctx, key, url) {
+  const row = await env.DB.prepare(`SELECT l.*, f.data AS form_data, c.name AS client_name, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id
+      LEFT JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?`).bind(key).first();
+  if (!row) return notFoundPage();
+  const form = JSON.parse(row.form_data || '{}');
+  const answers = JSON.parse(row.answers || '{}');
+  let client = {};
+  try { client = JSON.parse(row.client_data || '{}') || {}; } catch {}
+  let quotes = {};
+  try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
+  const pricing = client.pricing || null;
+  const renders = (await env.DB.prepare(`SELECT image_key, tweak, n FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL AND kind IS NULL ORDER BY created_at`).bind(row.id).all()).results;
+  const film = await env.DB.prepare(`SELECT video_key FROM films WHERE lead_id = ? AND status = 'ok' AND video_key IS NOT NULL ORDER BY created_at DESC LIMIT 1`).bind(row.id).first();
+  const ls = leadSpecFrom(pricingSpec(form), pricingAnswers(answers));
+  const html = leadPageHtml({
+    key, origin: url.origin, form, answers, details: leadDetails(form, answers), ls, pricing, quotes,
+    lead: { name: row.name, createdAt: row.created_at },
+    store: { name: form.brand?.name || row.client_name || 'Our studio', logo: form.brand?.logo || '', info: quoteInfoText(pricing?.quoteInfo) || '' },
+    renders: renders.map((r, k) => ({ url: `/media/${r.image_key}`, label: k === 0 ? 'First design' : r.tweak ? `Change ${k}` : `Version ${k + 1}` })),
+    film: film ? `/media/${film.video_key}` : '',
+  });
+  // Pregled: zlatar (?preview=1) i roboti za preglede linkova se ne broje.
+  if (request.method === 'GET' && url.searchParams.get('preview') !== '1' && !BOT_UA.test(request.headers.get('user-agent') || '')) {
+    const now = Date.now();
+    ctx.waitUntil(env.DB.prepare(`UPDATE leads SET page = json_set(COALESCE(page, '{}'), '$.views', COALESCE(json_extract(page, '$.views'), 0) + 1, '$.lastView', ?, '$.firstView', COALESCE(json_extract(page, '$.firstView'), ?)) WHERE id = ?`).bind(now, now, row.id).run());
+  }
+  const res = new Response(request.method === 'HEAD' ? null : html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
+  return withSecurity(res, { page: true, ancestors: "'none'" });
+}
+// Deposit / Book appointment: zabilježi klik uz lead (zlatar ga vidi u portalu) i vrati link radnje ako ga je upisala.
+async function pageAction(request, env, key) {
+  const b = await request.json().catch(() => ({}));
+  const action = PAGE_ACTIONS.includes(b.action) ? b.action : null;
+  const option = ['picked', 'fit'].includes(b.option) ? b.option : '';
+  if (!action) return json({ error: 'Unknown action.' }, 400);
+  const row = await env.DB.prepare('SELECT l.id, l.page, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?').bind(key).first();
+  if (!row) return json({ error: 'Not found' }, 404);
+  let pg = {};
+  try { pg = JSON.parse(row.page || '{}') || {}; } catch {}
+  const actions = [...(Array.isArray(pg.actions) ? pg.actions : []), { action, option, at: Date.now() }].slice(-30);
+  await env.DB.prepare(`UPDATE leads SET page = json_set(COALESCE(page, '{}'), '$.actions', json(?)) WHERE id = ?`).bind(JSON.stringify(actions), row.id).run();
+  let pricing = {};
+  try { pricing = JSON.parse(row.client_data || '{}').pricing || {}; } catch {}
+  return json({ ok: true, redirect: httpsUrl(action === 'deposit' ? pricing.depositUrl : pricing.bookingUrl) || null });
 }

@@ -362,6 +362,16 @@ textarea.in { resize: vertical; line-height: 1.5; }
 .gen svg { width: 12px; height: 12px; }
 .shot-col { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .shot-col .gen { font-size: 12px; }
+.lpage { margin-top: 10px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); font-size: 12px; }
+.lpage-t { margin: 0 0 6px; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
+.lpage-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.lpage-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+.lpage-link:hover { text-decoration: underline; }
+.lpage-v { margin: 4px 0 0; color: var(--ink-soft); }
+.lpage-acts { list-style: none; margin: 8px 0 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 6px; }
+.lpage-acts b { display: block; color: var(--accent); font-weight: 600; }
+.lpage-acts span { display: block; color: var(--ink-faint); }
+.plinks-h { margin: 18px 0 4px; }
 button.dbar { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; border-radius: 8px; }
 button.dbar:hover i { background: var(--accent); }
 button.dbar.on i { background: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }

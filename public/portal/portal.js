@@ -1,5 +1,5 @@
 import { createLeadStore } from './leads.js';
-import { estimate, middleGround, parseBudget, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money } from '/pricing.js';
+import { estimate, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody } from '/pricing.js';
 import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
 import { SUGGESTED, suggestOptions } from '/option-suggestions.js';
@@ -82,34 +82,10 @@ const genTime = (ms, what = 'Made in') => (ms > 0 ? `<span class="gen" title="${
 // polazi od prijedloga u budžet, zlatar mijenja metal, karat, led, kamen, čistoću, rez i broj zuba, cijena se
 // odmah preračunava, pa "Generate quote message" piše poruku za kupca (Cloudflare Workers AI) sa konačnim izborima.
 function leadSpec(l) {
-  const fs = P.me.formSpecs?.[l.formId];
-  const a = l.answers || {};
-  if (!fs || !a.type) return null;
-  const lab = (list, v) => (list || []).find((o) => o.value === v)?.label || '';
-  const iced = LEVELS.includes(a.coverage);
-  return {
-    spec: {
-      type: a.type, metal: lab(fs.metal, a.metal) || a.metal || '', karat: lab(fs.karat, a.karat) || a.karat || '',
-      stones: iced ? (a.stones && a.stones !== 'none' ? lab(fs.stones, a.stones) || a.stones : 'default') : '', coverage: iced ? a.coverage : '',
-      cut: iced ? '' : lab(fs.cut, a.cut) || a.cut || '', units: String(a.teeth || '').split(',').filter(Boolean).length || 1,
-      teeth: a.teeth || '', clarity: a.clarity || '', style: a.style || '',
-    },
-    budget: parseBudget(lab(fs.budget, a.budget) || a.budget),
-    budgetLabel: lab(fs.budget, a.budget) || a.budget || '',
-    choices: { stones: (fs.stones || []).filter((o) => o.value !== 'none').map((o) => o.label), karats: (fs.karat || []).map((o) => o.label), coverages: (fs.coverage || []).map((o) => o.value).filter((v) => LEVELS.includes(v)), metals: (fs.metal || []).map((o) => o.label) },
-    opts: {
-      coverage: (fs.coverage || []).filter((o) => LEVELS.includes(o.value)).map((o) => [o.value, o.label]),
-      clarity: (fs.clarity || []).map((o) => o.label), cut: (fs.cut || []).map((o) => o.label),
-    },
-  };
+  return leadSpecFrom(P.me.formSpecs?.[l.formId], l.answers || {});
 }
-
-const isGold = (m) => /gold|two.?tone/i.test(m || '') && !/dental/i.test(m || '');
-const isDental = (m) => /dental/i.test(m || '');
-const rowsOf = (teeth) => { const t = String(teeth || '').split(',').filter(Boolean); const top = t.filter((x) => x[0] === 'T'); return { top: top.length, bottom: t.length - top.length, topIds: top, bottomIds: t.filter((x) => x[0] === 'B') }; };
 // Broj zuba u redu: zadržava kupčeve zube kad se broj ne mijenja, inače centrirano (5 i 6 su srednji).
 const rowIds = (k, n, keep) => (keep.length === n ? keep : Array.from({ length: n }, (_, i) => `${k}${6 - Math.ceil(n / 2) + i}`));
-const coverLabel = (v, ls) => (!v ? 'Not iced' : ls.opts.coverage.find(([x]) => x === v)?.[1] || ({ accents: 'Accents', half: 'Half iced', full: 'Fully iced' }[v] || v));
 
 // Stanje quote radnog stola po leadu (ostaje kroz render, dok se stranica ne osvježi).
 const Q = {};
@@ -133,24 +109,6 @@ function restoreQuote(q, saved, spec) {
   if (!saved?.msg || q.msg != null) return;
   Object.assign(q, { msg: saved.msg, source: saved.source, edited: saved.edited, savedAt: saved.at, msgFor: JSON.stringify(saved.spec ? { ...spec, ...saved.spec } : spec) });
 }
-// Šta se razlikuje od kupčevog izbora (za tagove i za poruku).
-function specDiff(ls, spec) {
-  const a = ls.spec;
-  const out = [];
-  const add = (what, from, to) => { if (String(from || '') !== String(to || '')) out.push({ what, from: from || 'none', to: to || 'none' }); };
-  add('Metal', a.metal, spec.metal);
-  if (isGold(a.metal) || isGold(spec.metal)) add('Karat', isGold(a.metal) ? a.karat : '', isGold(spec.metal) ? spec.karat : '');
-  add('Ice', coverLabel(a.coverage, ls), coverLabel(spec.coverage, ls));
-  if (a.coverage || spec.coverage) add('Stones', a.coverage ? a.stones : '', spec.coverage ? spec.stones : '');
-  if (/natural/i.test(spec.stones) || /natural/i.test(a.stones)) add('Clarity', /natural/i.test(a.stones) && a.coverage ? a.clarity : '', /natural/i.test(spec.stones) && spec.coverage ? spec.clarity : '');
-  if (a.type === 'grillz') {
-    const ra = rowsOf(a.teeth), rb = rowsOf(spec.teeth);
-    add('Teeth', `${ra.top} top + ${ra.bottom} bottom`, `${rb.top} top + ${rb.bottom} bottom`);
-    add('Cut', a.coverage ? '' : a.cut, spec.coverage ? '' : spec.cut);
-  }
-  return out;
-}
-
 // Traka budžeta: raspon kupca osjenčen, tačka je cijena (ispred raspona = ispod, iza = preko).
 function budgetMeter(total, b, label) {
   if (!b || total == null) return '';
@@ -352,15 +310,7 @@ async function quoteGenerate(key) {
     const el = app.querySelector(`aside[data-calc="${CSS.escape(id)}"] .qmsg-wrap[data-qk="${CSS.escape(key)}"] .qgen-step`);
     if (el) { el.classList.remove('swap'); void el.offsetWidth; el.textContent = q.step; el.classList.add('swap'); }
   }, 900);
-  const r = rowsOf(spec.teeth);
-  const body = {
-    piece: spec.type, metal: spec.metal, karat: isGold(spec.metal) ? spec.karat : '',
-    ice: spec.coverage ? coverLabel(spec.coverage, ls) : '', stones: spec.coverage ? spec.stones : '', clarity: spec.coverage && /natural/i.test(spec.stones) ? spec.clarity : '',
-    cut: spec.type === 'grillz' && !spec.coverage ? spec.cut : '', teeth: spec.type === 'grillz' ? { top: r.top, bottom: r.bottom } : null,
-    total: Math.round(est.total), lines: est.lines.map((x) => ({ label: x.label, amount: Math.round(x.amount) })),
-    budget: ls.budgetLabel, changes: specDiff(ls, spec),
-    slot: key.endsWith('|p') ? 'picked' : 'fit', spec,
-  };
+  const body = { ...quoteBody(ls, spec, est), slot: key.endsWith('|p') ? 'picked' : 'fit', spec };
   // "Fits the budget" sa izmjenama: poruka kaže šta se mijenja (od-do) i novu cijenu naspram cijene izabranog.
   const orig = estimate(P.me.pricing, ls.spec).total;
   if (!key.endsWith('|p') && body.changes.length && orig != null && Math.round(orig) !== body.total) Object.assign(body, { mode: 'fit', originalTotal: Math.round(orig), inBudget: !Number.isFinite(ls.budget?.high) || est.total <= ls.budget.high });
@@ -490,7 +440,10 @@ function pricingView() {
         ${[...stones, 'Default (no stone type chosen)'].map((st) => { const k = /^default/i.test(st) ? 'default' : pkey(st); return `<span>${esc(st)}</span>${LEVELS.map((v) => inp(`stones.${k}.${v}`, pr.stones?.[k]?.[v])).join('')}`; }).join('')}</div></div>
     </div>
     <div class="pcard2 pwide pinfo"><h3>Store info under every quote message</h3><p class="hint">Address, hours, turnaround, out of state terms. It is added word for word at the end of every quote message.</p>
-      <textarea class="in" rows="8" data-quote-info maxlength="1200" placeholder="Your store, address, hours, turnaround times…">${esc(pr.quoteInfo || '')}</textarea></div>
+      <textarea class="in" rows="8" data-quote-info maxlength="1200" placeholder="Your store, address, hours, turnaround times…">${esc(pr.quoteInfo || '')}</textarea>
+      <h3 class="plinks-h">Buttons on customer pages</h3><p class="hint">Where "Reserve with a deposit" and "Book an appointment" go (for example a payment link or your booking page). Leave empty and the customer's request shows on the lead, so you can contact them.</p>
+      <label class="prow"><span>Deposit link</span><input class="in" type="url" data-link="depositUrl" placeholder="https://" value="${esc(pr.depositUrl || '')}" /></label>
+      <label class="prow"><span>Booking link</span><input class="in" type="url" data-link="bookingUrl" placeholder="https://" value="${esc(pr.bookingUrl || '')}" /></label></div>
     <div class="pfoot"><button class="btn gold" data-act="save-pricing">Save prices</button><span class="psaved" role="status"></span></div>
   </section>`;
 }
@@ -505,6 +458,7 @@ function readPricing() {
   }
   const info = app.querySelector('[data-quote-info]');
   out.quoteInfo = info ? info.value : P.me.pricing?.quoteInfo || '';
+  for (const el of app.querySelectorAll('[data-link]')) out[el.dataset.link] = el.value.trim();
   return out;
 }
 
@@ -683,7 +637,7 @@ function leadsView() {
     const sel = `<select class="status-sel s-${esc(l.status)}" data-lead-status="${esc(l.id)}" aria-label="Status of ${esc(l.name)}" ${readOnly() ? 'disabled title="Admin view is read-only. The client changes the status in their own portal."' : ''}>${STATUSES.map(([v, t]) => `<option value="${v}" ${l.status === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
     return `${head}
       <article class="lead has-calc">
-        <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}</div>
+        <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}${pageBox(l)}</div>
         <div>
           <div class="lead-top"><h2>${esc(l.name)}</h2><span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
           <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number')}</span></div>
@@ -701,6 +655,20 @@ function leadsView() {
   // Traka ostaje i kad izabrani dan nema leadova, da se može izabrati drugi dan ili "All days".
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
   return `<div class="filters">${search}${statusChips}${pieceChips}${formChips}</div>${chart}${cards}${more}`;
+}
+
+// Stranica kupca (19.11.2026): link ispod slike, otvaranje bez brojanja posjete, posjete i klikovi na Deposit / Book.
+const ACTION_LABEL = { deposit: 'Asked to place a deposit', appointment: 'Asked for an appointment' };
+const when = (t) => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+function pageBox(l) {
+  const pg = l.page;
+  if (!pg?.url) return '';
+  const full = `${location.origin}${pg.url}`;
+  const acts = (pg.actions || []).slice(-3).reverse().map((a) => `<li><b>${esc(ACTION_LABEL[a.action] || a.action)}</b>${a.option === 'fit' ? ' · Option 2' : a.option === 'picked' ? ' · Option 1' : ''}<span>${esc(when(a.at))}</span></li>`).join('');
+  return `<div class="lpage"><p class="lpage-t">Customer page</p>
+    <div class="lpage-row"><a class="lpage-link" href="${esc(pg.url)}?preview=1" target="_blank" rel="noopener" title="${esc(full)}">Open page ↗</a>${copyBtn(full, 'customer page link')}</div>
+    <p class="lpage-v">${pg.views ? `Viewed ${pg.views}× · last ${esc(when(pg.lastView))}` : 'Not opened yet'}</p>
+    ${acts ? `<ul class="lpage-acts">${acts}</ul>` : ''}</div>`;
 }
 
 // Copy pored mejla i telefona (District 19.11.2026): jedan klik kopira, ikonica se na trenutak pretvori u kvačicu.

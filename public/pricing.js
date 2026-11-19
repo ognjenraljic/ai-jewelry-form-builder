@@ -297,3 +297,63 @@ export function middleGround(pricing, spec, budgetHigh, choices = {}) {
   }
   return { spec: cur, total, changes, fits: total <= budgetHigh };
 }
+
+// ---------- Specifikacija leada (portal i server, 19.11.2026) ----------
+// Isti račun u portalu i na serveru: server sam napiše prvu poruku čim stigne upit i pokaže cijene na stranici kupca.
+// fs = izbori forme kao natpisi (pricingSpec u workeru), a = odgovori kupca.
+export function leadSpecFrom(fs, a = {}) {
+  if (!fs || !a?.type) return null;
+  const lab = (list, v) => (list || []).find((o) => o.value === v)?.label || '';
+  const iced = LEVELS.includes(a.coverage);
+  return {
+    spec: {
+      type: a.type, metal: lab(fs.metal, a.metal) || a.metal || '', karat: lab(fs.karat, a.karat) || a.karat || '',
+      stones: iced ? (a.stones && a.stones !== 'none' ? lab(fs.stones, a.stones) || a.stones : 'default') : '', coverage: iced ? a.coverage : '',
+      cut: iced ? '' : lab(fs.cut, a.cut) || a.cut || '', units: String(a.teeth || '').split(',').filter(Boolean).length || 1,
+      teeth: a.teeth || '', clarity: a.clarity || '', style: a.style || '',
+    },
+    budget: parseBudget(lab(fs.budget, a.budget) || a.budget),
+    budgetLabel: lab(fs.budget, a.budget) || a.budget || '',
+    choices: { stones: (fs.stones || []).filter((o) => o.value !== 'none').map((o) => o.label), karats: (fs.karat || []).map((o) => o.label), coverages: (fs.coverage || []).map((o) => o.value).filter((v) => LEVELS.includes(v)), metals: (fs.metal || []).map((o) => o.label) },
+    opts: {
+      coverage: (fs.coverage || []).filter((o) => LEVELS.includes(o.value)).map((o) => [o.value, o.label]),
+      clarity: (fs.clarity || []).map((o) => o.label), cut: (fs.cut || []).map((o) => o.label),
+    },
+  };
+}
+
+
+export const isGold = (m) => /gold|two.?tone/i.test(m || '') && !/dental/i.test(m || '');
+export const isDental = (m) => /dental/i.test(m || '');
+export const rowsOf = (teeth) => { const t = String(teeth || '').split(',').filter(Boolean); const top = t.filter((x) => x[0] === 'T'); return { top: top.length, bottom: t.length - top.length, topIds: top, bottomIds: t.filter((x) => x[0] === 'B') }; };
+export const coverLabel = (v, ls) => (!v ? 'Not iced' : ls.opts.coverage.find(([x]) => x === v)?.[1] || ({ accents: 'Accents', half: 'Half iced', full: 'Fully iced' }[v] || v));
+
+// Šta se razlikuje od kupčevog izbora (za tagove i za poruku).
+export function specDiff(ls, spec) {
+  const a = ls.spec;
+  const out = [];
+  const add = (what, from, to) => { if (String(from || '') !== String(to || '')) out.push({ what, from: from || 'none', to: to || 'none' }); };
+  add('Metal', a.metal, spec.metal);
+  if (isGold(a.metal) || isGold(spec.metal)) add('Karat', isGold(a.metal) ? a.karat : '', isGold(spec.metal) ? spec.karat : '');
+  add('Ice', coverLabel(a.coverage, ls), coverLabel(spec.coverage, ls));
+  if (a.coverage || spec.coverage) add('Stones', a.coverage ? a.stones : '', spec.coverage ? spec.stones : '');
+  if (/natural/i.test(spec.stones) || /natural/i.test(a.stones)) add('Clarity', /natural/i.test(a.stones) && a.coverage ? a.clarity : '', /natural/i.test(spec.stones) && spec.coverage ? spec.clarity : '');
+  if (a.type === 'grillz') {
+    const ra = rowsOf(a.teeth), rb = rowsOf(spec.teeth);
+    add('Teeth', `${ra.top} top + ${ra.bottom} bottom`, `${rb.top} top + ${rb.bottom} bottom`);
+    add('Cut', a.coverage ? '' : a.cut, spec.coverage ? '' : spec.cut);
+  }
+  return out;
+}
+
+// Tijelo zahtjeva za quote poruku iz konačnih izbora i procjene.
+export function quoteBody(ls, spec, est) {
+  const r = rowsOf(spec.teeth);
+  return {
+    piece: spec.type, metal: spec.metal, karat: isGold(spec.metal) ? spec.karat : '',
+    ice: spec.coverage ? coverLabel(spec.coverage, ls) : '', stones: spec.coverage ? spec.stones : '', clarity: spec.coverage && /natural/i.test(spec.stones) ? spec.clarity : '',
+    cut: spec.type === 'grillz' && !spec.coverage ? spec.cut : '', teeth: spec.type === 'grillz' ? { top: r.top, bottom: r.bottom } : null,
+    total: Math.round(est.total), lines: est.lines.map((x) => ({ label: x.label, amount: Math.round(x.amount) })),
+    budget: ls.budgetLabel, changes: specDiff(ls, spec),
+  };
+}

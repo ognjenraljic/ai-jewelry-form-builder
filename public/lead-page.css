@@ -1,0 +1,162 @@
+/* Stranica kupca /p/<key>: luksuzni juvelir, mirno, tipografija i svjetlo (19.11.2026). Boje dolaze iz teme forme. */
+:root { color-scheme: dark; }
+body {
+  --accent: #d9c3a0; --accent-ink: #14100a; --bg: #070b0c; --surface: #10171a; --surface-2: #152024;
+  --line: #1f2c30; --line-strong: #34464b; --ink: #eef6f5; --ink-soft: #a3b6b4; --ink-faint: #80928f;
+  --serif: 'Cormorant Garamond', Georgia, serif; --sans: 'Manrope', system-ui, -apple-system, sans-serif;
+  margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+  background-image: radial-gradient(1200px 700px at 78% -10%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%);
+}
+* { box-sizing: border-box; }
+img, video { display: block; max-width: 100%; }
+.wrap { width: min(1180px, 100% - 32px); margin-inline: auto; }
+.eyebrow { margin: 0 0 14px; font-size: 11.5px; font-weight: 600; letter-spacing: .24em; text-transform: uppercase; color: var(--accent); }
+h1, h2, h3 { font-family: var(--serif); font-weight: 500; letter-spacing: -.01em; margin: 0; }
+h2 { font-size: clamp(32px, 4.4vw, 48px); line-height: 1.05; }
+
+/* Zaglavlje */
+.top { border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
+.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 76px; }
+.brand img { height: 46px; width: auto; object-fit: contain; }
+.brand-name { font-family: var(--serif); font-size: 26px; }
+.private { margin: 0; font-size: 12.5px; color: var(--ink-soft); letter-spacing: .04em; text-align: right; }
+.private b { color: var(--ink); font-weight: 600; }
+
+/* Hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: clamp(28px, 5vw, 72px); align-items: center; padding: clamp(28px, 5vw, 64px) 0 clamp(40px, 6vw, 80px); }
+.media { min-width: 0; }
+.stage-img { display: block; width: 100%; padding: 0; border: 1px solid var(--line); border-radius: 26px; overflow: hidden; cursor: zoom-in;
+  background: radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--surface-2) 90%, #fff 4%), var(--bg) 72%); aspect-ratio: 1; }
+.stage-img img { width: 100%; height: 100%; object-fit: contain; transition: opacity .5s ease; }
+.stage-img img.swap { opacity: 0; }
+.stage-empty { aspect-ratio: 1; border-radius: 26px; border: 1px dashed var(--line-strong); display: grid; place-items: center; color: var(--ink-soft); }
+.thumbs { display: flex; gap: 10px; margin-top: 14px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.thumb { position: relative; flex: 0 0 auto; width: 84px; padding: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink-soft); cursor: pointer; overflow: hidden; transition: border-color .25s; }
+.thumb img, .thumb video { width: 100%; aspect-ratio: 1; object-fit: cover; }
+.thumb-l { display: block; padding: 5px 6px 6px; font-size: 10.5px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.thumb.on, .thumb:hover, .thumb:focus-visible { border-color: color-mix(in srgb, var(--accent) 70%, transparent); color: var(--ink); outline: none; }
+.thumb .play { position: absolute; top: 28px; left: 50%; width: 28px; height: 28px; margin-left: -14px; border-radius: 50%; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.5); }
+.thumb .play::after { content: ''; position: absolute; left: 11px; top: 8px; border-left: 8px solid #fff; border-top: 5.5px solid transparent; border-bottom: 5.5px solid transparent; }
+.stage-img video { width: 100%; height: 100%; object-fit: contain; }
+.intro h1 { font-size: clamp(44px, 6.2vw, 76px); line-height: .98; margin-bottom: 22px; }
+.intro h1 em { font-style: italic; color: color-mix(in srgb, var(--accent) 85%, var(--ink)); }
+.lead-text { color: var(--ink-soft); font-size: 16.5px; max-width: 46ch; margin: 0 0 26px; }
+.details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; margin: 0 0 30px; border-top: 1px solid var(--line); }
+.details div { padding: 11px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.details dt { font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-faint); }
+.details dd { margin: 2px 0 0; font-size: 14.5px; color: var(--ink); overflow-wrap: anywhere; }
+
+/* Dugmad */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 50px; padding: 0 24px; border-radius: 999px; font: 600 14px/1 var(--sans); letter-spacing: .02em; text-decoration: none; cursor: pointer; transition: background .25s, color .25s, border-color .25s, transform .25s; border: 1px solid transparent; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { background: color-mix(in srgb, var(--accent) 86%, #fff); }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line-strong); }
+.btn.ghost:hover { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.btn:active { transform: translateY(1px); }
+.cta-row { display: flex; flex-direction: column; gap: 10px; margin-top: 26px; }
+.cta-row .btn { width: 100%; }
+.cta-row.compact { margin-top: 20px; }
+
+/* Video */
+.film { width: min(1180px, 100% - 32px); margin: 0 auto clamp(56px, 8vw, 110px); display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: clamp(24px, 5vw, 64px); align-items: center;
+  padding: clamp(18px, 3vw, 28px); border: 1px solid var(--line); border-radius: 28px; background: linear-gradient(140deg, var(--surface), var(--bg)); }
+.film-media video { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 20px; background: #000; }
+.film-copy h2 { margin-bottom: 14px; }
+.film-copy p:last-child { color: var(--ink-soft); max-width: 44ch; margin: 0; }
+
+/* Ponude */
+.options { width: min(1180px, 100% - 32px); margin: 0 auto clamp(64px, 9vw, 120px); scroll-margin-top: 24px; }
+.sec-head { text-align: center; max-width: 640px; margin: 0 auto clamp(28px, 4vw, 48px); }
+.sec-head > p:not(.eyebrow) { color: var(--ink-soft); margin: 12px 0 0; }
+.budget-line b { color: var(--ink); font-weight: 600; }
+.offers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(16px, 2.4vw, 28px); align-items: start; }
+.offers.one { grid-template-columns: minmax(0, 560px); justify-content: center; }
+.offer { position: relative; padding: clamp(24px, 3.2vw, 38px); border: 1px solid var(--line); border-radius: 26px; background: linear-gradient(180deg, var(--surface), color-mix(in srgb, var(--surface) 40%, var(--bg))); min-width: 0; }
+.offer.fit { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow: 0 30px 80px -40px color-mix(in srgb, var(--accent) 35%, transparent); }
+.offer header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 26px; }
+.tag { font-size: 11px; font-weight: 600; letter-spacing: .2em; text-transform: uppercase; color: var(--ink-faint); }
+.badge { font-size: 11px; font-weight: 600; letter-spacing: .08em; padding: 5px 11px; border-radius: 999px; color: var(--accent-ink); background: var(--accent); }
+.offer h3 { font-size: clamp(30px, 3.2vw, 38px); margin: 14px 0 4px; }
+.offer .sub { margin: 0; color: var(--ink-soft); font-size: 14px; }
+.price { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin: 26px 0 4px; }
+.amount { font-family: var(--serif); font-weight: 500; font-size: clamp(54px, 6vw, 72px); line-height: 1; letter-spacing: -.02em; }
+.from { font-family: var(--serif); font-size: 26px; color: var(--ink-faint); text-decoration: line-through; text-decoration-thickness: 1px; }
+.price-note { margin: 0 0 24px; font-size: 13px; color: var(--ink-soft); }
+.price-note b { color: var(--accent); font-weight: 600; }
+.specs { margin: 0; border-top: 1px solid var(--line); }
+.specs div { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.specs dt { color: var(--ink-faint); font-size: 13px; }
+.specs dd { margin: 0; text-align: right; font-size: 14px; overflow-wrap: anywhere; }
+.changes { margin-top: 20px; padding: 16px 18px; border-radius: 16px; background: color-mix(in srgb, var(--accent) 6%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent); }
+.mini { margin: 0 0 8px; font-size: 10.5px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-faint); }
+.changes ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.changes li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 14px; }
+.changes .was { color: var(--ink-faint); text-decoration: line-through; text-decoration-thickness: 1px; }
+.changes i { font-style: normal; color: var(--ink-faint); }
+.changes b { font-weight: 600; }
+.fine { text-align: center; color: var(--ink-faint); font-size: 12.5px; margin: 22px auto 0; max-width: 60ch; }
+
+/* Stilovi i obrade */
+.showcase { width: min(1180px, 100% - 32px); margin: 0 auto clamp(64px, 9vw, 120px); }
+.row-title { font-family: var(--sans); font-size: 12px; font-weight: 600; letter-spacing: .2em; text-transform: uppercase; color: var(--ink-soft); margin: 30px 0 14px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+.tile { margin: 0; min-width: 0; }
+.tile-img { aspect-ratio: 1; border-radius: 18px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
+.tile-img img { width: 100%; height: 100%; object-fit: cover; transition: transform 1.2s ease; }
+.tile:hover .tile-img img { transform: scale(1.03); }
+.tile.mine .tile-img { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
+.tile figcaption { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; padding: 9px 2px 0; font-size: 13.5px; }
+.tile figcaption span { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); white-space: nowrap; }
+
+/* Posjeta */
+.visit { width: min(1180px, 100% - 32px); margin: 0 auto 64px; }
+.visit-card { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); border: 1px solid var(--line); border-radius: 28px; overflow: hidden; background: var(--surface); }
+.visit-info { padding: clamp(26px, 4vw, 48px); }
+.visit-info h2 { margin-bottom: 18px; }
+.info p { margin: 0; color: var(--ink-soft); font-size: 15px; }
+.info p.gap { height: 12px; }
+.visit-cta { padding: clamp(26px, 4vw, 48px); background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 9%, var(--surface-2)), var(--bg)); border-left: 1px solid var(--line); display: flex; flex-direction: column; justify-content: center; }
+.visit-cta h3 { font-size: 32px; margin-bottom: 8px; }
+.visit-cta p { margin: 0; color: var(--ink-soft); }
+
+.foot { padding: 28px 0 120px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; color: var(--ink-faint); font-size: 12.5px; }
+.foot p { margin: 0; }
+
+/* Telefon: dugmad uvijek pri ruci */
+.dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-top: 1px solid var(--line); transform: translateY(110%); transition: transform .45s ease; }
+.dock.show { transform: none; }
+.dock .cta-row { flex-direction: row; margin: 0; max-width: 640px; margin-inline: auto; }
+.dock .btn { flex: 1 1 0; min-height: 46px; padding: 0 12px; font-size: 13px; white-space: nowrap; }
+
+/* Potvrda i uvećanje */
+.sheet { border: 1px solid var(--line-strong); border-radius: 24px; background: var(--surface); color: var(--ink); padding: 30px; width: min(440px, 100% - 32px); text-align: center; }
+.sheet::backdrop { background: rgba(0,0,0,.6); backdrop-filter: blur(4px); }
+.sheet h2 { font-size: 34px; margin-bottom: 10px; }
+.sheet p { color: var(--ink-soft); margin: 0 0 22px; }
+.lightbox { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(0,0,0,.92); cursor: zoom-out; }
+.lightbox[hidden] { display: none; }
+.lightbox img { max-height: 92vh; border-radius: 18px; }
+
+/* Tiho pojavljivanje sekcija pri skrolu */
+html.js .rv { opacity: 0; transform: translateY(18px); transition: opacity .9s ease, transform .9s ease; }
+html.js .rv.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { html.js .rv { opacity: 1; transform: none; transition: none; } .stage-img img, .tile-img img { transition: none; } }
+
+@media (max-width: 900px) {
+  .hero, .film, .visit-card { grid-template-columns: minmax(0, 1fr); }
+  .offers { grid-template-columns: minmax(0, 1fr); }
+  .visit-cta { border-left: 0; border-top: 1px solid var(--line); }
+  .intro h1 br { display: none; }
+}
+@media (max-width: 520px) {
+  body { font-size: 14.5px; }
+  .top .wrap { min-height: 64px; }
+  .brand img { height: 36px; }
+  .private { font-size: 11.5px; }
+  .details { gap: 0 16px; }
+  .details dd { font-size: 13.5px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .offer { border-radius: 22px; }
+}
+@media (min-width: 901px) { .dock { display: none; } }
