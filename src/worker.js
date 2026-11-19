@@ -1503,7 +1503,7 @@ async function portalApi(request, env, p, secure) {
       where.push('l.created_at >= ? AND l.created_at < ?');
       args.push(from, from + 864e5);
     }
-    const leads = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note
+    const leads = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all()).results;
     const more = leads.length > PAGE_SIZE;
     const pageLeads = leads.slice(0, PAGE_SIZE);
@@ -1535,7 +1535,7 @@ async function portalApi(request, env, p, secure) {
         try { files = JSON.parse(l.files || '{}'); } catch {}
         return {
           id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
-          status: l.status || 'new', note: l.note || '',
+          status: l.status || 'new', note: l.note || '', quotes: leadQuotes(l.quotes),
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a), answers: pricingAnswers(a),
           photos: [
             ...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []),
@@ -1574,7 +1574,26 @@ async function portalApi(request, env, p, secure) {
     facts.footer = !!info;
     const message = await quoteByAI(env, facts);
     const body = info ? dropSignature(message || quoteTemplate(facts), facts.store, info) : message || quoteTemplate(facts);
-    return json({ message: info ? `${body}\n\n${info}` : body, source: message ? 'ai' : 'template' });
+    const out = { message: info ? `${body}\n\n${info}` : body, source: message ? 'ai' : 'template' };
+    // Poruka ostaje zabilježena za taj lead (Ognjen 19.11.2026): poslije izlaska ili osvježavanja je ista, nova je zamjenjuje.
+    const slot = QUOTE_SLOTS.includes(b.slot) ? b.slot : null;
+    if (slot) {
+      const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), edited: false, at: Date.now() };
+      await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(saved), lead.id).run();
+      out.saved = saved;
+    }
+    return json(out);
+  }
+  // Izmjena poruke (zlatar je uredi u polju): čuva se najnovija verzija, izbori i izvor ostaju.
+  if ((qm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/quote$/)) && request.method === 'PUT') {
+    const b = await request.json().catch(() => ({}));
+    const slot = QUOTE_SLOTS.includes(b.slot) ? b.slot : null;
+    const msg = quoteMessageText(b.message);
+    if (!slot || msg == null) return json({ error: 'Nothing to save.' }, 400);
+    const at = Date.now();
+    const r = await env.DB.prepare(`UPDATE leads SET quotes = json_set(quotes, '$.${slot}.msg', ?, '$.${slot}.edited', json('true'), '$.${slot}.at', ?)
+      WHERE id = ? AND json_type(quotes, '$.${slot}') = 'object' AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`).bind(msg, at, qm[1], client.id).run();
+    return r.meta.changes ? json({ ok: true, at }) : json({ error: 'Generate the message first.' }, 404);
   }
   // Status i bilješka upita (zlatar prati šta je uradio); admin pregled ne mijenja podatke klijenta.
   let lm;
@@ -1591,6 +1610,28 @@ async function portalApi(request, env, p, secure) {
 }
 
 // ---------- Quote poruka (portal) ----------
+// Sačuvane poruke po leadu: picked = Estimated price, fit = Fits the budget (vidi migraciju 0023).
+const QUOTE_SLOTS = ['picked', 'fit'];
+function quoteMessageText(v) {
+  if (typeof v !== 'string') return null;
+  return v.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').slice(0, 4000);
+}
+// Izbori za koje je poruka napisana (da se radni sto vrati na njih): samo kratki tekstovi i brojevi.
+function quoteSpecToSave(s) {
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(s).slice(0, 20)) {
+    if (!/^[a-z]{1,20}$/i.test(k)) continue;
+    if (typeof v === 'string') out[k] = v.slice(0, 200);
+    else if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
+}
+function leadQuotes(raw) {
+  let q = {};
+  try { q = JSON.parse(raw || '{}') || {}; } catch {}
+  return Object.fromEntries(QUOTE_SLOTS.filter((k) => q[k] && typeof q[k].msg === 'string').map((k) => [k, { msg: q[k].msg, source: q[k].source === 'ai' ? 'ai' : 'template', spec: q[k].spec || null, edited: !!q[k].edited, at: q[k].at || null }]));
+}
 // Store info zlatara (adresa, radno vrijeme, rokovi izrade, uslovi): ide doslovno na kraj SVAKE quote poruke
 // (Ognjen 19.11.2026, District). Čuva se uz cijene (pricing.quoteInfo); emoji i novi redovi ostaju kako su upisani.
 function quoteInfoText(v) {

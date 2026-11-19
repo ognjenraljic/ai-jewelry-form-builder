@@ -35,7 +35,12 @@ function sequence(nums, upper) {
   const which = upper ? 'upper' : 'lower';
   const list = nums.map((i, k) => `${k + 1}) ${which} ${NAMES[i <= 5 ? i - 1 : 10 - i]}`).join(', ');
   const gaps = nums.some((x, k) => k && x - nums[k - 1] > 1) ? ' Leave the unselected positions between them empty.' : '';
-  return `Caps left to right as seen from the front: ${list}. The row starts at cap 1 and ends at cap ${nums.length}; nothing beyond them on either side.${gaps}`;
+  // Sredina reda je spoj između centralnih sjekutića (5 i 6), nikad zub: model je donjih 10 pravio kao 11 sa zubom na
+  // sredini (District 19.11.2026). Zato broj kapa po strani i tačan spoj.
+  const left = nums.filter((i) => i <= 5).length;
+  const right = nums.length - left;
+  const mid = left && right ? ` The middle of the face is the seam between cap ${left} and cap ${left + 1}: exactly ${left} ${left === 1 ? 'cap' : 'caps'} on the viewer's left of it and exactly ${right} on the right, no cap centered on the middle.` : '';
+  return `Caps left to right as seen from the front: ${list}. The row starts at cap 1 and ends at cap ${nums.length}; nothing beyond them on either side.${mid}${gaps}`;
 }
 
 // Redovi za grillzPlan + rečenice za prompt.

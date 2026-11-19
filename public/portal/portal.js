@@ -119,9 +119,19 @@ function quoteState(l, ls) {
     const high = ls.budget?.high;
     const mg = Number.isFinite(high) && P.me.pricing ? middleGround(P.me.pricing, ls.spec, high, ls.choices) : null;
     q.suggested = { ...(mg?.spec || ls.spec) };
-    q.spec = { ...q.suggested };
+    // Sačuvana poruka (19.11.2026): radni sto se vraća na izbore za koje je napisana.
+    const saved = l.quotes?.fit;
+    q.spec = saved?.spec && saved.spec.type === ls.spec.type ? { ...ls.spec, ...saved.spec } : { ...q.suggested };
+    restoreQuote(q, saved, q.spec);
   }
   return q;
+}
+// Poruka iz baze ide u stanje samo jednom (dok se stranica ne osvježi važi ono što je u polju).
+function restoreQuote(q, saved, spec) {
+  if (q.restored) return;
+  q.restored = true;
+  if (!saved?.msg || q.msg != null) return;
+  Object.assign(q, { msg: saved.msg, source: saved.source, edited: saved.edited, savedAt: saved.at, msgFor: JSON.stringify(saved.spec ? { ...spec, ...saved.spec } : spec) });
 }
 // Šta se razlikuje od kupčevog izbora (za tagove i za poruku).
 function specDiff(ls, spec) {
@@ -196,11 +206,11 @@ function quoteMessageView(l, q, key) {
   const stale = q.msgFor && q.msgFor !== JSON.stringify(q.spec);
   const words = q.reveal ? q.msg.split(/(\s+)/).map((w, k) => (/^\s+$/.test(w) ? w.replace(/\n/g, '<br>') : `<span class="qw" style="--d:${Math.min(k, 160) * 14}ms">${esc(w)}</span>`)).join('') : '';
   return `<div class="qout ${q.reveal ? 'revealing' : ''}" data-qk="${esc(key)}">
-    <div class="qout-head"><span>Quote message</span>${q.source === 'template' ? '<em title="The AI writer was not available, so this is the standard message.">standard</em>' : '<em>written by AI</em>'}</div>
+    <div class="qout-head"><span>Quote message</span>${q.edited ? '<em>edited</em>' : q.source === 'template' ? '<em title="The AI writer was not available, so this is the standard message.">standard</em>' : '<em>written by AI</em>'}</div>
     ${q.reveal ? `<div class="qreveal" aria-hidden="true">${words}</div>` : ''}
     <textarea class="in qtext" data-qmsg="${esc(key)}" rows="7" ${q.reveal ? 'hidden' : ''} aria-label="Quote message for ${esc(l.name)}">${esc(q.msg)}</textarea>
     ${stale ? '<p class="qstale">Specs changed after this message. Generate again to update it.</p>' : ''}
-    <div class="qacts"><button type="button" class="btn small" data-act="quote-copy" data-qk="${esc(key)}">Copy</button><span class="qcopied" role="status"></span></div>
+    <div class="qacts"><button type="button" class="btn small" data-act="quote-copy" data-qk="${esc(key)}">Copy</button><span class="qcopied" role="status"></span><span class="qsaved" data-qsaved="${esc(key)}" aria-live="polite">${esc(savedLabel(q))}</span></div>
   </div>`;
 }
 
@@ -217,6 +227,7 @@ function calcView(l) {
   const pk = `${l.id}|p`;
   const pq = (Q[pk] ||= {});
   pq.spec = ls.spec;
+  restoreQuote(pq, l.quotes?.picked, ls.spec);
   // Poruka za tačno ono što je kupac izabrao postoji uvijek, i kad je iznad budžeta (District 19.11.2026: prva poruka je
   // ponuda za izabrano, druga "Fits the budget" sa poređenjem; najčešće se šalje samo druga).
   const pgen = est.total != null || pq.msg != null || pq.busy
@@ -348,6 +359,7 @@ async function quoteGenerate(key) {
     cut: spec.type === 'grillz' && !spec.coverage ? spec.cut : '', teeth: spec.type === 'grillz' ? { top: r.top, bottom: r.bottom } : null,
     total: Math.round(est.total), lines: est.lines.map((x) => ({ label: x.label, amount: Math.round(x.amount) })),
     budget: ls.budgetLabel, changes: specDiff(ls, spec),
+    slot: key.endsWith('|p') ? 'picked' : 'fit', spec,
   };
   // "Fits the budget" sa izmjenama: poruka kaže šta se mijenja (od-do) i novu cijenu naspram cijene izabranog.
   const orig = estimate(P.me.pricing, ls.spec).total;
@@ -356,7 +368,8 @@ async function quoteGenerate(key) {
   try {
     const res = await api(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'POST', body: JSON.stringify(body), json: true });
     await new Promise((ok) => setTimeout(ok, Math.max(0, 1400 - (Date.now() - t0))));
-    Object.assign(q, { msg: res.message, source: res.source, msgFor: JSON.stringify(spec), reveal: true });
+    Object.assign(q, { msg: res.message, source: res.source, msgFor: JSON.stringify(spec), reveal: true, edited: false, savedAt: res.saved?.at || null, saveError: '' });
+    if (res.saved) rememberQuote(id, key.endsWith('|p') ? 'picked' : 'fit', res.saved);
   } catch (err) {
     q.error = err.message || 'Could not write the message. Try again.';
   } finally {
@@ -365,6 +378,66 @@ async function quoteGenerate(key) {
     renderCalc(id);
   }
 }
+
+// ---------- Čuvanje izmjena poruke (19.11.2026) ----------
+// Svaka izmjena u polju se sačuva sama (pola sekunde poslije kucanja, odmah kad polje izgubi fokus ili se stranica zatvori).
+const SAVE_DELAY = 600;
+const saveTimers = {};
+function savedLabel(q) {
+  if (q.saving) return 'Saving…';
+  if (q.saveError) return q.saveError;
+  if (!q.savedAt) return '';
+  return `${q.edited ? 'Edited' : 'Saved'} ${new Date(q.savedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+}
+function showSaved(key) {
+  const el = app.querySelector(`[data-qsaved="${CSS.escape(key)}"]`);
+  if (el && Q[key]) el.textContent = savedLabel(Q[key]);
+}
+function rememberQuote(id, slot, saved) {
+  const l = P.leads.find((x) => x.id === id);
+  if (!l) return;
+  l.quotes = { ...(l.quotes || {}), [slot]: { ...(l.quotes?.[slot] || {}), ...saved } };
+  leadStore.update(id, { quotes: l.quotes }, P.counts);
+}
+function queueQuoteSave(key) {
+  const q = Q[key];
+  if (!q) return;
+  q.dirty = true;
+  clearTimeout(saveTimers[key]);
+  saveTimers[key] = setTimeout(() => saveQuoteNow(key), SAVE_DELAY);
+}
+async function saveQuoteNow(key, { keepalive = false } = {}) {
+  clearTimeout(saveTimers[key]);
+  const q = Q[key];
+  if (!q || !q.dirty || q.msg == null || !q.savedAt) return;
+  const id = qkLead(key);
+  const slot = key.endsWith('|p') ? 'picked' : 'fit';
+  const msg = q.msg;
+  q.dirty = false;
+  q.saving = true;
+  showSaved(key);
+  try {
+    const res = await fetch(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'PUT', credentials: 'same-origin', keepalive, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slot, message: msg }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Could not save');
+    Object.assign(q, { edited: true, savedAt: data.at, saveError: '' });
+    rememberQuote(id, slot, { msg, edited: true, at: data.at });
+  } catch (err) {
+    q.dirty = true;
+    q.saveError = 'Not saved, retrying…';
+    clearTimeout(saveTimers[key]);
+    saveTimers[key] = setTimeout(() => saveQuoteNow(key), 4000);
+  } finally {
+    q.saving = false;
+    showSaved(key);
+    const head = app.querySelector(`.qout[data-qk="${CSS.escape(key)}"] .qout-head em`);
+    if (head && q.edited) head.textContent = 'edited';
+  }
+}
+// Zatvaranje taba ili odlazak sa stranice: nesačuvana izmjena ide odmah (keepalive preživi zatvaranje).
+const flushQuotes = () => { for (const k of Object.keys(Q)) if (Q[k]?.dirty) saveQuoteNow(k, { keepalive: true }); };
+addEventListener('pagehide', flushQuotes);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushQuotes(); });
 
 // ---------- Tab Pricing: tabela cijena zlatara ----------
 function pricingView() {
@@ -703,7 +776,7 @@ app.addEventListener('mouseout', (e) => {
 let searchTimer;
 app.addEventListener('input', (e) => {
   const el = e.target;
-  if (el.dataset.qmsg && Q[el.dataset.qmsg]) { Q[el.dataset.qmsg].msg = el.value; el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; return; }
+  if (el.dataset.qmsg && Q[el.dataset.qmsg]) { Q[el.dataset.qmsg].msg = el.value; el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; queueQuoteSave(el.dataset.qmsg); return; }
   if (el.dataset.search !== undefined) {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(async () => { P.q = el.value.trim(); if (!await loadLeads()) return; render(); const s = app.querySelector('[data-search]'); s?.focus(); s?.setSelectionRange(s.value.length, s.value.length); }, 350);
@@ -711,6 +784,7 @@ app.addEventListener('input', (e) => {
 });
 app.addEventListener('change', async (e) => {
   const el = e.target;
+  if (el.dataset.qmsg) { saveQuoteNow(el.dataset.qmsg); return; }
   if (el.dataset.q && el.dataset.qf) { quoteEdit(el.dataset.q, el.dataset.qf, el.value); return; }
   if (el.dataset.pickDay !== undefined) { P.day = el.value || ''; if (await loadLeads()) render(); return; }
   if (el.dataset.leadStatus) {

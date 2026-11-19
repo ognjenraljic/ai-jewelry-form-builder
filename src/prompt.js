@@ -67,7 +67,12 @@ export const placeholderWord = (style) => LETTER_REFS[String(style?.image || '')
 const GRILLZ_ARCH = (both) =>
   'Shape of the grill (important): the caps sit exactly as they would on real teeth and form a natural curved dental arch, never a flat straight strip of equal blocks. ' +
   'Seen from the front at eye level with real perspective: the front teeth are closest to the camera, the side teeth curve back along the arch, so they look narrower and slightly turned away. ' +
-  'Every cap has real tooth anatomy: wide central incisors, slightly narrower lateral incisors, longer pointed canines, shorter rounded premolars, each with a softly domed front, rounded corners and a natural biting edge; the edge at the gum line follows a gentle scalloped curve. ' +
+  // Donji red ima četiri uska sjekutića skoro iste širine; "široki centralni" je važio samo za gornji red i model je dole
+  // dodao jedan širok zub na sredinu (District 19.11.2026: 11 kapa dole umjesto 10).
+  'Every cap has real tooth anatomy. Upper row: two wide central incisors side by side in the middle, slightly narrower lateral incisors, longer pointed canines, shorter rounded premolars. ' +
+  'Lower row: four small narrow incisors of almost equal width in the middle, then pointed canines and rounded premolars; no lower tooth is wider than the others in the middle. ' +
+  'Each cap has a softly domed front, rounded corners and a natural biting edge; the edge at the gum line follows a gentle scalloped curve. ' +
+  'MIDLINE: the center of every row is the seam BETWEEN two teeth, never a tooth. No cap ever sits centered on the middle of a row; both halves of a row are mirror images with the same number of caps. ' +
   'Caps on neighboring selected teeth touch side by side like a real one-piece grill, with a fine groove marking each tooth; they are not spaced apart.' +
   (both ? ' The top row sits above the bottom row like a slightly open smile, the lower arch nested just beneath the upper one, with a small dark gap between the rows.' : '');
 
