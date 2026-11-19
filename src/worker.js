@@ -271,17 +271,17 @@ async function createLead(request, env, ctx) {
 // video prvog rendera ako ga nema; 3) videi "u toku" se preuzmu u R2. Po krugu ograničeno, da cron ostane kratak.
 const CATCHUP_RENDERS = 6;
 const CATCHUP_FILMS = 10;
-const CATCHUP_QUOTES = 5;
+const CATCHUP_QUOTES = 8;
 const ORIGIN = 'https://jewelrylead.com/';
 async function catchUp(env) {
   const now = Date.now();
   const leads = (await env.DB.prepare(`SELECT l.* FROM leads l WHERE l.created_at < ? AND l.created_at > ?
       AND NOT EXISTS (SELECT 1 FROM renders r WHERE r.lead_id = l.id AND r.kind IS NULL) ORDER BY l.created_at LIMIT ${CATCHUP_RENDERS}`).bind(now - 3 * 60_000, now - 864e5).all()).results;
   for (const lead of leads) await serverFirstRender(env, lead).catch((e) => console.error('catch-up render', lead.id, e.message));
-  // Prva quote poruka za upite koji je još nemaju (zadnjih 30 dana, zlatar ima cijene); svaki upit samo jednom ($.auto).
+  // Prva quote poruka za SVAKI upit koji je još nema (Ognjen 19.11.2026), ako zlatar ima cijene; svaki upit samo jednom ($.auto), najnoviji prvi.
   const noQuote = await (async () => (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
-      WHERE l.created_at > ? AND l.created_at < ? AND json_type(COALESCE(l.quotes, '{}'), '$.picked') IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.auto') IS NULL
-      AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' ORDER BY l.created_at DESC LIMIT ${CATCHUP_QUOTES}`).bind(now - 30 * 864e5, now - 60_000).all()).results)().catch((e) => { console.error('catch-up quotes', e.message); return []; });
+      WHERE l.created_at < ? AND json_type(COALESCE(l.quotes, '{}'), '$.picked') IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.auto') IS NULL
+      AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' ORDER BY l.created_at DESC LIMIT ${CATCHUP_QUOTES}`).bind(now - 60_000).all()).results)().catch((e) => { console.error('catch-up quotes', e.message); return []; });
   for (const q of noQuote) await autoQuote(env, q.id, ORIGIN.replace(/\/$/, '')).catch((e) => console.error('catch-up quote', q.id, e.message));
   if (pikaOn(env)) {
     const need = (await env.DB.prepare(`SELECT l.* FROM leads l JOIN renders r ON r.lead_id = l.id AND r.n = 1 AND r.kind IS NULL AND r.status = 'ok' AND (r.checking IS NULL)
