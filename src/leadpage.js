@@ -118,16 +118,16 @@ export function leadPageHtml(d) {
   const details = heroDetails(d.details);
   const show = showcase(form, answers);
   const main = renders[renders.length - 1];
-  const media = [...renders.map((r) => ({ kind: 'img', src: r.url, label: r.label })), ...(film ? [{ kind: 'video', src: film, label: 'In motion' }] : [])];
+  const media = [...renders.map((r) => ({ kind: 'img', src: r.url, label: r.label })), ...(film ? [{ kind: 'video', src: film, label: 'In motion', poster: main?.url || '' }] : [])];
   const budget = d.ls?.budgetLabel ? `<p class="budget-line">Your budget: <b>${esc(d.ls.budgetLabel)}</b></p>` : '';
   const year = new Date(lead.createdAt || Date.now()).getFullYear();
   const infoLines = store.info ? store.info.split('\n') : [];
 
   const stage = main
-    ? `<button type="button" class="stage-img" data-zoom aria-label="Enlarge your design"><img id="stage" src="${esc(main.url)}" alt="Your custom ${esc(piece.toLowerCase())}" width="1024" height="1024" fetchpriority="high" /></button>`
+    ? `<div class="stage-img"><button type="button" class="stage-zoom" aria-label="Enlarge your design"><img id="stage" src="${esc(main.url)}" alt="Your custom ${esc(piece.toLowerCase())}" width="1024" height="1024" fetchpriority="high" /></button></div>`
     : `<div class="stage-empty"><p>Your design preview is being finished.</p></div>`;
   const thumbs = media.length > 1
-    ? `<div class="thumbs" role="list">${media.map((m, k) => `<button type="button" role="listitem" class="thumb${m.kind === 'video' ? ' is-video' : ''}${k === renders.length - 1 ? ' on' : ''}" data-${m.kind === 'video' ? 'video' : 'src'}="${esc(m.src)}" aria-label="${esc(m.label)}">${m.kind === 'video' ? `<video src="${esc(m.src)}#t=0.1" muted playsinline preload="metadata" aria-hidden="true" tabindex="-1"></video><span class="play" aria-hidden="true"></span>` : `<img src="${esc(m.src)}" alt="" loading="lazy" width="96" height="96" />`}<span class="thumb-l">${esc(m.label)}</span></button>`).join('')}</div>`
+    ? `<div class="thumbs" role="list">${media.map((m, k) => `<button type="button" role="listitem" class="thumb${m.kind === 'video' ? ' is-video' : ''}${k === renders.length - 1 ? ' on' : ''}" data-${m.kind === 'video' ? 'video' : 'src'}="${esc(m.src)}"${m.poster ? ` data-poster="${esc(m.poster)}"` : ''} aria-label="${esc(m.label)}">${m.kind === 'video' ? `<img src="${esc(m.poster)}" alt="" loading="lazy" width="96" height="96" /><span class="play" aria-hidden="true"></span>` : `<img src="${esc(m.src)}" alt="" loading="lazy" width="96" height="96" />`}<span class="thumb-l">${esc(m.label)}</span></button>`).join('')}</div>`
     : '';
 
   const offerSection = offers.length
@@ -135,7 +135,7 @@ export function leadPageHtml(d) {
     : `<div class="offers one"><article class="offer single"><header><span class="tag">Your quote</span></header><h3>Your price is being prepared</h3><p class="sub">${esc(store.name)} is finalizing the price for your design and will send it to you shortly.</p>${CTA('picked')}</article></div>`;
 
   const filmSection = film
-    ? `<section class="film rv" aria-label="Your piece in motion"><div class="film-media"><video src="${esc(film)}" autoplay muted loop playsinline preload="metadata"></video></div>
+    ? `<section class="film rv" aria-label="Your piece in motion"><div class="film-media"><video src="${esc(film)}" ${main ? `poster="${esc(main.url)}"` : ''} autoplay muted loop playsinline preload="metadata"></video></div>
         <div class="film-copy"><p class="eyebrow">In motion</p><h2>See the light move across your design</h2><p>A short preview of your ${esc(piece.toLowerCase())}, made from your choices. Your final piece is handcrafted by ${esc(store.name)}.</p></div></section>`
     : '';
 

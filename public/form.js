@@ -645,7 +645,8 @@ function resultView() {
 // Prvi kadar filma je sama slika, pa se video pojavi preko nje bez skoka, a zadnji kadar je isti
 // kao prvi, pa se vrti u krug. Traka je samo CSS: ne crta se ponovo stranica dok kupac kuca doradu.
 const filmPlays = (r) => !!r?.film?.url && S.watch && !S.mask.on && !S.busy;
-const filmVideo = (r) => `<video class="film" src="${esc(r.film.url)}" muted playsinline preload="auto" aria-label="Highlight video of your custom piece"></video>`;
+// Safari (19.11.2026): poster je slika tog rendera, pa se nikad ne vidi crn kvadrat dok video ne krene.
+const filmVideo = (r) => `<video class="film" src="${esc(r.film.url)}" poster="${esc(r.url || '')}" muted playsinline preload="auto" aria-label="Highlight video of your custom piece"></video>`;
 
 function filmBar() {
   const r = S.renders[S.shown];
@@ -684,7 +685,8 @@ function wireFilm(v) {
   v.muted = true; // video je bez zvuka (16.11)
   if (reduceMotion()) { v.controls = true; return; }
   v.loop = true; // zadnji kadar je isti kao prvi, pa krug nema šav
-  v.play().catch(() => {});
+  // iPhone u Low Power Mode ne pušta video sam ni bez zvuka: tada se pokažu kontrole da kupac pusti dodirom.
+  v.play().catch(() => { v.controls = true; });
 }
 
 // Osvježi samo film, bez ponovnog crtanja cijele stranice (kupac možda kuca doradu).

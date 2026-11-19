@@ -6,25 +6,32 @@ const store = document.body.dataset.store || 'Our team';
 const stageBox = document.querySelector('.stage-img');
 
 // Verzije dizajna i video u istom velikom prikazu.
+// Video ide u veliki prikaz kao običan element (ne unutar dugmeta: Safari tada ne da kontrolama da rade), sa posterom.
+const playOrControls = (v) => { const p = v.play?.(); if (p?.catch) p.catch(() => { v.controls = true; }); };
+const ZOOM_BTN = (src) => `<button type="button" class="stage-zoom" aria-label="Enlarge your design"><img id="stage" alt="Your design" src="${src}" /></button>`;
 document.querySelectorAll('.thumb').forEach((t) => t.addEventListener('click', () => {
   document.querySelectorAll('.thumb').forEach((x) => x.classList.toggle('on', x === t));
   if (!stageBox) return;
   if (t.dataset.video) {
-    stageBox.innerHTML = `<video src="${t.dataset.video}" autoplay muted loop playsinline controls></video>`;
-    stageBox.removeAttribute('data-zoom');
+    const v = document.createElement('video');
+    Object.assign(v, { src: t.dataset.video, muted: true, loop: true, playsInline: true, controls: true, autoplay: true });
+    if (t.dataset.poster) v.poster = t.dataset.poster;
+    v.setAttribute('playsinline', '');
+    stageBox.replaceChildren(v);
+    playOrControls(v);
     return;
   }
   let img = stageBox.querySelector('img');
-  if (!img) { stageBox.innerHTML = '<img id="stage" alt="Your design" />'; img = stageBox.querySelector('img'); }
-  stageBox.setAttribute('data-zoom', '');
+  if (!img) { stageBox.innerHTML = ZOOM_BTN(t.dataset.src); return; }
   img.classList.add('swap');
   setTimeout(() => { img.src = t.dataset.src; img.onload = () => img.classList.remove('swap'); }, 180);
 }));
+document.querySelectorAll('video[autoplay]').forEach(playOrControls);
 
 const box = document.getElementById('lightbox');
-stageBox?.addEventListener('click', () => {
-  const img = stageBox.querySelector('img');
-  if (!img || !stageBox.hasAttribute('data-zoom')) return;
+stageBox?.addEventListener('click', (e) => {
+  const img = e.target.closest('.stage-zoom')?.querySelector('img');
+  if (!img) return;
   box.querySelector('img').src = img.src;
   box.hidden = false;
 });

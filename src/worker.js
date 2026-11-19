@@ -2051,6 +2051,7 @@ async function media(request, env, key) {
   if (!obj) return json({ error: 'Not found' }, 404);
   const headers = { 'content-type': obj.httpMetadata?.contentType || 'application/octet-stream', 'x-content-type-options': 'nosniff', etag: obj.httpEtag };
   if (video) headers['accept-ranges'] = 'bytes';
+  if (!part && obj.size != null) headers['content-length'] = String(obj.size);
   // Ključevi se ne mijenjaju (nova slika = nov ključ), pa se javne slike keširaju dugo; privatne kratko i samo u browseru.
   headers['cache-control'] = priv ? 'private, max-age=600' : 'public, max-age=31536000, immutable';
   if (part && obj.range) {

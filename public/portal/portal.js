@@ -645,7 +645,7 @@ function leadsView() {
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
           <div class="thumbs">${strip}${photos}</div>
           ${changes ? `<div class="changes"><p class="changes-title">Changes the customer asked for</p><ol>${changes}</ol></div>` : ''}
-          ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><button type="button" class="film-tile" data-film="${esc(f.url)}" aria-label="Play the highlight video of ${esc(l.name)}"><video src="${esc(f.url)}" muted loop playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video><span class="film-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span></button><figcaption>Highlight video · <a href="${esc(f.url)}" download>Download</a></figcaption>${genTime(f.ms, 'Video made in')}</figure>` : '<p class="film-wait">Highlight video is being made. It appears here in a few minutes.</p>')).join('')}</div>` : ''}
+          ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><button type="button" class="film-tile" data-film="${esc(f.url)}" data-poster="${esc(last?.url || '')}" aria-label="Play the highlight video of ${esc(l.name)}"><video src="${esc(f.url)}" ${last ? `poster="${esc(last.url)}"` : ''} muted loop playsinline preload="none" tabindex="-1" aria-hidden="true"></video><span class="film-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span></button><figcaption>Highlight video · <a href="${esc(f.url)}" download>Download</a></figcaption>${genTime(f.ms, 'Video made in')}</figure>` : '<p class="film-wait">Highlight video is being made. It appears here in a few minutes.</p>')).join('')}</div>` : ''}
           <label class="lead-note"><span class="sr-only">Note</span><textarea class="in" rows="1" data-lead-note="${esc(l.id)}" placeholder="Add a note (quote sent, follow up Friday…)" ${readOnly() ? 'disabled' : ''}>${esc(l.note)}</textarea></label>
         </div>
         ${calcView(l)}
@@ -717,13 +717,13 @@ function zoom(src, caption = '') {
 
 // Video komada (19.11.2026): u listi je mala pločica (na prelaz mišem se pusti), klik ga otvara veliko i pušta u petlji.
 // Ranije je bio mali <video controls> od 160 px, pa se pokret skoro nije vidio ("slika stoji").
-function zoomVideo(src) {
+function zoomVideo(src, poster = '') {
   const box = document.createElement('div');
   box.className = 'lightbox';
   box.setAttribute('role', 'dialog');
   box.setAttribute('aria-label', 'Highlight video');
   box.tabIndex = -1;
-  box.innerHTML = `<figure><video src="${esc(src)}" autoplay muted loop playsinline controls></video><figcaption>Highlight video · <a href="${esc(src)}" download>Download</a></figcaption></figure>`;
+  box.innerHTML = `<figure><video src="${esc(src)}" ${poster ? `poster="${esc(poster)}"` : ''} autoplay muted loop playsinline controls preload="auto"></video><figcaption>Highlight video · <a href="${esc(src)}" download>Download</a></figcaption></figure>`;
   const close = () => { box.querySelector('video')?.pause(); box.remove(); document.removeEventListener('keydown', onKey); };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
   box.onclick = (e) => { if (!e.target.closest('video, a')) close(); };
@@ -778,7 +778,7 @@ app.addEventListener('keydown', (e) => {
 
 app.addEventListener('click', async (e) => {
   const t = e.target.closest('button, img[data-zoom]') || e.target;
-  if (t.dataset?.film) { zoomVideo(t.dataset.film); return; }
+  if (t.dataset?.film) { zoomVideo(t.dataset.film, t.dataset.poster); return; }
   if (t.dataset?.copy != null) { copyText(t, t.dataset.copy); return; }
   // Quote radni sto (Fits the budget): izbori, reset, poruka.
   if (t.tagName === 'BUTTON' && t.dataset.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
