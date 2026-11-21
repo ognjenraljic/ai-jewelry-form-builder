@@ -11,6 +11,7 @@ import { teethMapImage } from './teethmap.js';
 import { estimate, leadSpecFrom, quoteBody } from '../public/pricing.js';
 import { leadPageHtml, PAGE_ACTIONS } from './leadpage.js';
 import { stripAudio } from './mp4.js';
+import { mailOn, sendMail, validEmail, emailList } from './mail.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, FILM_API, FILM_EST_USD } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
@@ -258,8 +259,12 @@ async function createLead(request, env, ctx) {
   if (refKey || Object.keys(files).length) {
     await env.DB.prepare('UPDATE leads SET ref_key = ?, files = ? WHERE id = ?').bind(refKey, Object.keys(files).length ? JSON.stringify(files) : null, id).run();
   }
+  await logEvent(env, id, 'created', { piece: typeof answers.type === 'string' ? answers.type.slice(0, 40) : null });
   // Prva quote poruka (Estimated price) se napiše odmah sa upitom (Ognjen 19.11.2026); cron je mreža sigurnosti.
-  ctx?.waitUntil?.(autoQuote(env, id, new URL(request.url).origin).catch((e) => console.error('auto quote', id, e.message)));
+  // Poslije nje radnja dobija mejl sa leadom i gotovom porukom (21.11.2026), ako ima upisane adrese za obavještenja.
+  const origin = new URL(request.url).origin;
+  ctx?.waitUntil?.(autoQuote(env, id, origin).catch((e) => console.error('auto quote', id, e.message))
+    .then(() => alertShop(env, id, origin)).catch((e) => console.error('lead alert', id, e.message)));
   return json({ leadId: id, token, maxRenders: form.maxRenders });
 }
 
@@ -283,6 +288,8 @@ async function catchUp(env) {
       WHERE l.created_at < ? AND json_type(COALESCE(l.quotes, '{}'), '$.picked') IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.auto') IS NULL
       AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' ORDER BY l.created_at DESC LIMIT ${CATCHUP_QUOTES}`).bind(now - 60_000).all()).results)().catch((e) => { console.error('catch-up quotes', e.message); return []; });
   for (const q of noQuote) await autoQuote(env, q.id, ORIGIN.replace(/\/$/, '')).catch((e) => console.error('catch-up quote', q.id, e.message));
+  // Obavještenja radnji koja nisu stigla odmah i automatska prva poruka kupcu (21.11.2026).
+  await notifySweep(env).catch((e) => console.error('notify sweep', e.message));
   if (pikaOn(env)) {
     const need = (await env.DB.prepare(`SELECT l.* FROM leads l JOIN renders r ON r.lead_id = l.id AND r.n = 1 AND r.kind IS NULL AND r.status = 'ok' AND (r.checking IS NULL)
         WHERE l.created_at > ? AND r.created_at < ? AND NOT EXISTS (SELECT 1 FROM films f WHERE f.lead_id = l.id) ORDER BY l.created_at LIMIT ${CATCHUP_FILMS}`).bind(now - 864e5, now - 60_000).all()).results;
@@ -1477,6 +1484,8 @@ async function portalApi(request, env, p, secure) {
     const ob = await pickOnboarding(request, env, client.id);
     return json({
       session: { kind: sess.kind, expiresAt: sess.expires_at || null },
+      mail: mailOn(env),
+      speed: await replySpeed(env, client.id),
       client: { id: client.id, name: client.name, logo: d.logo || null, website: d.website || '' },
       onboarding: ob ? { id: ob.id, status: ob.status, rev: ob.rev, data: JSON.parse(ob.data || '{}'), updatedAt: ob.updated_at, submittedAt: ob.submitted_at } : null,
       ...(ob && ob.status === 'draft' ? { onboardingDefaults: ONBOARDING_DEFAULTS, onboardingSuggestions: await onboardingSuggestions(env, client.id) } : {}),
@@ -1525,7 +1534,8 @@ async function portalApi(request, env, p, secure) {
       where.push('l.created_at >= ? AND l.created_at < ?');
       args.push(from, from + 864e5);
     }
-    const leads = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page
+    const leads = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page,
+        l.alerted_at, l.auto_sent_at, l.first_reply_at
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all()).results;
     const more = leads.length > PAGE_SIZE;
     const pageLeads = leads.slice(0, PAGE_SIZE);
@@ -1558,6 +1568,7 @@ async function portalApi(request, env, p, secure) {
         return {
           id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
           status: l.status || 'new', note: l.note || '', quotes: leadQuotes(l.quotes), page: pageInfo(l),
+          alertedAt: l.alerted_at || null, autoSentAt: l.auto_sent_at || null, firstReplyAt: l.first_reply_at || null,
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a), answers: pricingAnswers(a),
           photos: [
             ...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []),
@@ -1576,7 +1587,10 @@ async function portalApi(request, env, p, secure) {
     const b = await request.json().catch(() => ({}));
     const pricing = cleanPricing(b.pricing);
     const d = JSON.parse(client.data || '{}');
-    d.pricing = { ...pricing, updatedAt: Date.now() };
+    // Automatska prva poruka važi samo za leadove poslije uključenja (stari leadovi ne dobijaju mejl naknadno).
+    const prev = d.pricing || {};
+    const autoSendSince = pricing.autoSend ? (prev.autoSend === true && Number(prev.autoSendSince) > 0 ? prev.autoSendSince : Date.now()) : null;
+    d.pricing = { ...pricing, autoSendSince, updatedAt: Date.now() };
     await env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify(d), client.id).run();
     return json({ pricing: d.pricing });
   }
@@ -1601,16 +1615,37 @@ async function portalApi(request, env, p, secure) {
       WHERE id = ? AND json_type(quotes, '$.${slot}') = 'object' AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`).bind(msg, at, qm[1], client.id).run();
     return r.meta.changes ? json({ ok: true, at }) : json({ error: 'Generate the message first.' }, 404);
   }
-  // Status i bilješka upita (zlatar prati šta je uradio); admin pregled ne mijenja podatke klijenta.
   let lm;
+  // Koraci iz portala koje server inače ne vidi (21.11.2026): Copy poruke i Copy mejla/telefona. Admin pregled se ne broji.
+  if ((lm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/events$/)) && request.method === 'POST') {
+    if (sess.kind === 'view-as') return json({ ok: true, readOnly: true });
+    const b = await request.json().catch(() => ({}));
+    const type = ['quote_copied', 'contact_copied'].includes(b.type) ? b.type : null;
+    if (!type) return json({ error: 'Unknown event.' }, 400);
+    const lead = await env.DB.prepare('SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(lm[1], client.id).first();
+    if (!lead) return json({ error: 'Not found' }, 404);
+    const meta = type === 'quote_copied' ? { slot: QUOTE_SLOTS.includes(b.slot) ? b.slot : null } : { what: ['email', 'phone'].includes(b.what) ? b.what : null };
+    await logEvent(env, lead.id, type, meta);
+    if (type === 'quote_copied') await markReply(env, lead.id);
+    return json({ ok: true });
+  }
+  // Status i bilješka upita (zlatar prati šta je uradio); admin pregled ne mijenja podatke klijenta.
   if ((lm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)$/)) && request.method === 'PATCH') {
     if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
     const b = await request.json().catch(() => ({}));
     const st = b.status != null ? String(b.status) : null;
     if (st != null && !LEAD_STATUSES.includes(st)) return json({ error: 'Unknown status.' }, 400);
+    const before = await env.DB.prepare('SELECT l.status FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(lm[1], client.id).first();
+    if (!before) return json({ error: 'Not found' }, 404);
     const r = await env.DB.prepare(`UPDATE leads SET status = COALESCE(?, status), note = COALESCE(?, note), status_at = ? WHERE id = ? AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`)
       .bind(st, b.note != null ? String(b.note).slice(0, 2000) : null, Date.now(), lm[1], client.id).run();
-    return r.meta.changes ? json({ ok: true }) : json({ error: 'Not found' }, 404);
+    if (!r.meta.changes) return json({ error: 'Not found' }, 404);
+    // Istorija statusa (status_at čuva samo zadnju promjenu); Contacted/Quoted/Won je odgovor kupcu.
+    if (st != null && st !== (before.status || 'new')) {
+      await logEvent(env, lm[1], 'status', { from: before.status || 'new', to: st });
+      if (REPLY_STATUSES.includes(st)) await markReply(env, lm[1]);
+    }
+    return json({ ok: true });
   }
   return json({ error: 'Not found' }, 404);
 }
@@ -1618,7 +1653,7 @@ async function portalApi(request, env, p, secure) {
 // ---------- Quote poruka (portal) ----------
 // Piše poruku iz konačnih izbora (portal ili automatski) i čuva je uz lead. Ispod teksta ide link stranice kupca
 // (19.11.2026: kupcu se šalje link sa njegovim dizajnom i ponudama), pa store info zlatara.
-async function writeQuote(env, client, lead, b, origin) {
+async function writeQuote(env, client, lead, b, origin, { auto = false } = {}) {
   let store = client.name;
   try { store = JSON.parse(lead.form_data || '{}').brand?.name || client.name; } catch {}
   const facts = quoteFacts(b, lead, store);
@@ -1636,6 +1671,7 @@ async function writeQuote(env, client, lead, b, origin) {
     const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, edited: false, at: Date.now() };
     await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(saved), lead.id).run();
     out.saved = saved;
+    await logEvent(env, lead.id, 'quote_generated', { slot, source: out.source, auto });
   }
   return out;
 }
@@ -1657,8 +1693,154 @@ async function autoQuote(env, leadId, origin) {
   if (!est || est.total == null) { await mark(); return null; }
   await mark();
   const client = { id: row.client_id, name: row.client_name, data: row.client_data };
-  return writeQuote(env, client, { id: row.id, name: row.name, page_key: row.page_key, form_data: row.form_data }, { ...quoteBody(ls, ls.spec, est), slot: 'picked', spec: ls.spec }, origin);
+  return writeQuote(env, client, { id: row.id, name: row.name, page_key: row.page_key, form_data: row.form_data }, { ...quoteBody(ls, ls.spec, est), slot: 'picked', spec: ls.spec }, origin, { auto: true });
 }
+// ---------- Dnevnik koraka, obavještenje radnji i prva poruka kupcu (21.11.2026) ----------
+// Dokaz za zlatara (vrijeme do prvog odgovora, kopirane ponude, statusi) i brzina: radnja dobija mejl čim lead stigne,
+// a kupac, ako je radnja to uključila, prvu poruku sa cijenom i linkom svoje stranice za par minuta, i u 11 uveče.
+// Ništa se ne šalje bez RESEND_API_KEY + MAIL_FROM (vidi src/mail.js) i bez adresa koje radnja upiše u Pricing tabu.
+const REPLY_STATUSES = ['contacted', 'quoted', 'won'];
+const EVENTS_SINCE = Date.UTC(2026, 10, 21); // statistika odgovora samo od uvođenja dnevnika (stari leadovi nemaju korake)
+const ALERT_WINDOW_MS = 30 * 60_000; // cron dopunjava obavještenja samo za svježe leadove (uključenje ne šalje staru gomilu)
+const AUTO_SEND_DELAY_MS = 2 * 60_000; // kupac prvo stigne da vidi sliku; bez slike najkasnije poslije 6 min
+const AUTO_SEND_NO_RENDER_MS = 6 * 60_000;
+const AUTO_SEND_WINDOW_MS = 2 * 3600_000;
+const NOTIFY_PER_RUN = 10;
+const ORIGIN_BASE = ORIGIN.replace(/\/$/, '');
+
+async function logEvent(env, leadId, type, meta = null, at = Date.now()) {
+  try {
+    await env.DB.prepare(`INSERT INTO lead_events (lead_id, client_id, type, at, meta) SELECT l.id, f.client_id, ?, ?, ? FROM leads l LEFT JOIN forms f ON f.id = l.form_id WHERE l.id = ?`)
+      .bind(type, at, meta ? JSON.stringify(meta).slice(0, 1000) : null, leadId).run();
+  } catch (e) { console.error('event', type, leadId, e.message); }
+}
+async function markReply(env, leadId, at = Date.now()) {
+  try { await env.DB.prepare('UPDATE leads SET first_reply_at = ? WHERE id = ? AND first_reply_at IS NULL').bind(at, leadId).run(); } catch (e) { console.error('reply', leadId, e.message); }
+}
+function notifySettings(clientData) {
+  let p = {};
+  try { p = JSON.parse(clientData || '{}').pricing || {}; } catch {}
+  return { alertEmails: emailList(p.alertEmails), replyTo: validEmail(p.replyTo), autoSend: p.autoSend === true, autoSendSince: Number(p.autoSendSince) || 0 };
+}
+function notifyRow(env, leadId) {
+  return env.DB.prepare(`SELECT l.*, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data
+      FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id WHERE l.id = ?`).bind(leadId).first();
+}
+function storeName(row) {
+  try { return JSON.parse(row.form_data || '{}').brand?.name || row.client_name || 'Your jeweler'; } catch { return row.client_name || 'Your jeweler'; }
+}
+const pieceName = (a) => (typeof a?.type === 'string' && a.type ? a.type.replace(/[-_]+/g, ' ') : 'custom piece');
+const escHtml = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Jednostavan HTML iz teksta: pasusi, prelomi i klikabilni https linkovi (mejl klijenti bolje prikazuju nego čist tekst).
+function textToHtml(text) {
+  const body = String(text).split(/\n{2,}/).map((par) => `<p style="margin:0 0 14px">${escHtml(par).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}">${u}</a>`).replace(/\n/g, '<br>')}</p>`).join('');
+  return `<div style="font:15px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;color:#15181d;max-width:600px">${body}</div>`;
+}
+
+function leadAlertMail(row, origin) {
+  const form = JSON.parse(row.form_data || '{}');
+  const a = JSON.parse(row.answers || '{}');
+  let quotes = {};
+  try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
+  const piece = pieceName(a);
+  const first = String(row.name || '').split(/\s+/)[0] || 'the customer';
+  const lines = [
+    `New ${piece} lead from ${row.name}`,
+    [`Email: ${row.email}`, row.phone ? `Phone: ${row.phone}` : ''].filter(Boolean).join('\n'),
+    a.vision ? `What they want:\n"${String(a.vision).slice(0, 600)}"` : '',
+    leadDetails(form, a).slice(0, 14).map((d) => `${d.label}: ${d.value}`).join('\n'),
+    quotes.picked?.msg ? `Ready-to-send quote message:\n\n${quotes.picked.msg}` : '',
+    row.page_key ? `Their design and quote page: ${origin}/p/${row.page_key}?preview=1` : '',
+    `Open your portal: ${origin}/portal`,
+    `Reply to this email to answer ${first} directly.`,
+  ].filter(Boolean);
+  const text = lines.join('\n\n');
+  return { subject: `New lead: ${row.name}, ${piece}`, text, html: textToHtml(text) };
+}
+
+async function alertShop(env, leadId, origin = ORIGIN_BASE) {
+  if (!mailOn(env)) return null;
+  const row = await notifyRow(env, leadId);
+  if (!row || row.alerted_at) return null;
+  const s = notifySettings(row.client_data);
+  if (!s.alertEmails.length) return null;
+  const claim = await env.DB.prepare('UPDATE leads SET alerted_at = ? WHERE id = ? AND alerted_at IS NULL').bind(Date.now(), leadId).run();
+  if (!claim.meta.changes) return null;
+  const mail = leadAlertMail(row, origin);
+  try {
+    const r = await sendMail(env, { to: s.alertEmails, subject: mail.subject, text: mail.text, html: mail.html, replyTo: row.email, fromName: `${storeName(row)} leads` });
+    await logEvent(env, leadId, 'alert_sent', { to: s.alertEmails.length, id: r.id || null });
+    return r;
+  } catch (e) {
+    // Pokušava se ponovo u sljedećem krugu crona, dok je lead svjež (ALERT_WINDOW_MS).
+    await env.DB.prepare('UPDATE leads SET alerted_at = NULL WHERE id = ?').bind(leadId).run();
+    await logEvent(env, leadId, 'alert_failed', { error: String(e.message).slice(0, 200) });
+    console.error('lead alert', leadId, e.message);
+    return null;
+  }
+}
+
+// Prva poruka kupcu mejlom: sačuvana Estimated price poruka (sa linkom stranice i store infom), odgovor ide radnji.
+// Samo kad je radnja uključila, upisala adresu za odgovore, lead je poslije uključenja, nov i niko mu još nije odgovorio.
+async function autoSendFirst(env, leadId) {
+  if (!mailOn(env)) return null;
+  const row = await notifyRow(env, leadId);
+  if (!row || row.auto_sent_at || row.first_reply_at || (row.status && row.status !== 'new')) return null;
+  const s = notifySettings(row.client_data);
+  if (!s.autoSend || !s.replyTo || !s.autoSendSince || row.created_at < s.autoSendSince) return null;
+  let quotes = {};
+  try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
+  const msg = typeof quotes.picked?.msg === 'string' ? quotes.picked.msg.trim() : '';
+  if (!msg) return null;
+  const at = Date.now();
+  const claim = await env.DB.prepare('UPDATE leads SET auto_sent_at = ? WHERE id = ? AND auto_sent_at IS NULL AND first_reply_at IS NULL').bind(at, leadId).run();
+  if (!claim.meta.changes) return null;
+  const store = storeName(row);
+  const a = JSON.parse(row.answers || '{}');
+  const text = `${msg}\n\nYou are getting this email because you asked ${store} for a custom design. Just reply to talk to us.`;
+  try {
+    const r = await sendMail(env, { to: row.email, subject: `Your custom ${pieceName(a)} design from ${store}`, text, html: textToHtml(text), replyTo: s.replyTo, fromName: store });
+    await logEvent(env, leadId, 'auto_sent', { id: r.id || null }, at);
+    await markReply(env, leadId, at);
+    return r;
+  } catch (e) {
+    // Ne šalje se ponovo (ako je mejl ipak otišao, kupac ne smije dobiti dva); zlatar odgovara ručno kao i do sada.
+    await logEvent(env, leadId, 'auto_send_failed', { error: String(e.message).slice(0, 200) });
+    console.error('auto send', leadId, e.message);
+    return null;
+  }
+}
+
+async function notifySweep(env) {
+  if (!mailOn(env)) return;
+  const now = Date.now();
+  // Lokalne provjere (DEV_MODE): NOTIFY_TEST_DELAY_MS skraćuje čekanja da test ne traje minutima.
+  const test = env.DEV_MODE === '1' && env.NOTIFY_TEST_DELAY_MS != null ? Number(env.NOTIFY_TEST_DELAY_MS) : null;
+  const alertDelay = test ?? 60_000;
+  const sendDelay = test ?? AUTO_SEND_DELAY_MS;
+  const noRender = test ?? AUTO_SEND_NO_RENDER_MS;
+  const alerts = (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
+      WHERE l.alerted_at IS NULL AND l.created_at < ? AND l.created_at > ? AND json_array_length(COALESCE(json_extract(c.data, '$.pricing.alertEmails'), '[]')) > 0
+      ORDER BY l.created_at LIMIT ${NOTIFY_PER_RUN}`).bind(now - alertDelay, now - ALERT_WINDOW_MS).all()).results;
+  for (const r of alerts) await alertShop(env, r.id, ORIGIN_BASE).catch((e) => console.error('sweep alert', r.id, e.message));
+  const sends = (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
+      WHERE l.auto_sent_at IS NULL AND l.first_reply_at IS NULL AND COALESCE(l.status, 'new') = 'new' AND json_extract(c.data, '$.pricing.autoSend') = 1
+        AND json_type(COALESCE(l.quotes, '{}'), '$.picked') = 'object' AND l.created_at > ? AND l.created_at < ?
+        AND (l.created_at < ? OR EXISTS (SELECT 1 FROM renders r WHERE r.lead_id = l.id AND r.kind IS NULL AND r.status = 'ok'))
+      ORDER BY l.created_at LIMIT ${NOTIFY_PER_RUN}`).bind(now - AUTO_SEND_WINDOW_MS, now - sendDelay, now - noRender).all()).results;
+  for (const r of sends) await autoSendFirst(env, r.id).catch((e) => console.error('sweep send', r.id, e.message));
+}
+
+// Vrijeme do prvog odgovora za portal: zadnjih 30 dana (od uvođenja dnevnika), medijana u minutama.
+async function replySpeed(env, clientId) {
+  const since = Math.max(EVENTS_SINCE, Date.now() - 30 * 864e5);
+  const rows = (await env.DB.prepare(`SELECT l.created_at, l.first_reply_at, l.auto_sent_at FROM leads l JOIN forms f ON f.id = l.form_id
+      WHERE f.client_id = ? AND l.created_at >= ? ORDER BY l.created_at DESC LIMIT 1000`).bind(clientId, since).all()).results;
+  const mins = rows.filter((r) => r.first_reply_at).map((r) => Math.max(0, (r.first_reply_at - r.created_at) / 60_000)).sort((x, y) => x - y);
+  const mid = mins.length ? (mins.length % 2 ? mins[(mins.length - 1) / 2] : (mins[mins.length / 2 - 1] + mins[mins.length / 2]) / 2) : null;
+  return { since, leads: rows.length, replied: mins.length, auto: rows.filter((r) => r.auto_sent_at).length, medianMin: mid == null ? null : Math.round(mid * 10) / 10 };
+}
+
 // Sačuvane poruke po leadu: picked = Estimated price, fit = Fits the budget (vidi migraciju 0023).
 const QUOTE_SLOTS = ['picked', 'fit'];
 function quoteMessageText(v) {
@@ -1813,7 +1995,9 @@ function cleanPricing(p) {
   const map = (o, depth = 1) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), depth > 1 ? map(v, depth - 1) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
   // Grillz cjenovnik (18.11.2026): brojevi ili ugniježđene tabele do 3 nivoa (grillz.sets.6.10k).
   const tree = (o, depth) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), v && typeof v === 'object' ? (depth > 1 ? tree(v, depth - 1) : undefined) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
-  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo), depositUrl: httpsUrl(p?.depositUrl), bookingUrl: httpsUrl(p?.bookingUrl) };
+  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo), depositUrl: httpsUrl(p?.depositUrl), bookingUrl: httpsUrl(p?.bookingUrl),
+    // Obavještenja i prva poruka (21.11.2026): kome ide mejl o leadu, na koju adresu kupac odgovara, da li prva poruka ide sama.
+    alertEmails: emailList(p?.alertEmails), replyTo: validEmail(p?.replyTo) || undefined, autoSend: p?.autoSend === true };
 }
 
 async function demoHandled(request, env, id) {
@@ -2201,6 +2385,9 @@ async function leadPage(request, env, ctx, key, url) {
   if (request.method === 'GET' && url.searchParams.get('preview') !== '1' && !BOT_UA.test(request.headers.get('user-agent') || '')) {
     const now = Date.now();
     ctx.waitUntil(env.DB.prepare(`UPDATE leads SET page = json_set(COALESCE(page, '{}'), '$.views', COALESCE(json_extract(page, '$.views'), 0) + 1, '$.lastView', ?, '$.firstView', COALESCE(json_extract(page, '$.firstView'), ?)) WHERE id = ?`).bind(now, now, row.id).run());
+    let seen = false;
+    try { seen = !!JSON.parse(row.page || '{}')?.firstView; } catch {}
+    if (!seen) ctx.waitUntil(logEvent(env, row.id, 'page_view', null, now));
   }
   const res = new Response(request.method === 'HEAD' ? null : html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
   return withSecurity(res, { page: true, ancestors: "'none'" });
@@ -2217,6 +2404,7 @@ async function pageAction(request, env, key) {
   try { pg = JSON.parse(row.page || '{}') || {}; } catch {}
   const actions = [...(Array.isArray(pg.actions) ? pg.actions : []), { action, option, at: Date.now() }].slice(-30);
   await env.DB.prepare(`UPDATE leads SET page = json_set(COALESCE(page, '{}'), '$.actions', json(?)) WHERE id = ?`).bind(JSON.stringify(actions), row.id).run();
+  await logEvent(env, row.id, 'page_action', { action, option });
   let pricing = {};
   try { pricing = JSON.parse(row.client_data || '{}').pricing || {}; } catch {}
   return json({ ok: true, redirect: httpsUrl(action === 'deposit' ? pricing.depositUrl : pricing.bookingUrl) || null });

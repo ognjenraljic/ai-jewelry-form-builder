@@ -436,7 +436,7 @@ function bookingsView() {
       <div class="bk-img">${x.img ? `<img src="${esc(x.img)}" alt="" width="96" height="96" loading="lazy" data-zoom tabindex="0" />` : '<span>No picture</span>'}</div>
       <div class="bk-main">
         <div class="bk-top"><h3>${esc(x.name)}</h3><span class="pill">${esc(x.piece ? x.piece[0].toUpperCase() + x.piece.slice(1) : 'Piece')}</span><span class="pill s-${esc(x.status)}">${esc((STATUSES.find(([v]) => v === x.status) || [, x.status])[1])}</span></div>
-        <div class="contact"><span class="cpair"><a href="mailto:${esc(x.email)}">${esc(x.email)}</a>${copyBtn(x.email, 'email')}</span><span class="cpair"><a href="tel:${esc(String(x.phone).replace(/[^\d+]/g, ''))}">${esc(x.phone)}</a>${copyBtn(x.phone, 'phone number')}</span></div>
+        <div class="contact"><span class="cpair"><a href="mailto:${esc(x.email)}">${esc(x.email)}</a>${copyBtn(x.email, 'email', x.id, 'email')}</span><span class="cpair"><a href="tel:${esc(String(x.phone).replace(/[^\d+]/g, ''))}">${esc(x.phone)}</a>${copyBtn(x.phone, 'phone number', x.id, 'phone')}</span></div>
         <ul class="bk-acts">${acts}</ul>
         <div class="bk-links"><button type="button" class="btn small" data-see-lead="${esc(x.email)}">See lead</button>${x.page ? `<a class="btn small ghost" href="${esc(x.page)}?preview=1" target="_blank" rel="noopener">Open their page ↗</a>` : ''}<span class="bk-views">${x.views ? `Page viewed ${x.views}×` : ''}</span></div>
       </div>
@@ -500,7 +500,13 @@ function pricingView() {
       <h3 class="plinks-h">Buttons on customer pages</h3><p class="hint">Where "Reserve with a deposit" and "Book an appointment" go (for example a payment link or your booking page). Leave empty and the customer's request shows on the lead, so you can contact them.</p>
       <label class="prow"><span>Deposit link</span><input class="in" type="url" data-link="depositUrl" placeholder="https://" value="${esc(pr.depositUrl || '')}" /></label>
       <label class="prow"><span>Booking link</span><input class="in" type="url" data-link="bookingUrl" placeholder="https://" value="${esc(pr.bookingUrl || '')}" /></label></div>
-    <div class="pfoot"><button class="btn gold" data-act="save-pricing">Save prices</button><span class="psaved" role="status"></span></div>
+    <div class="pcard2 pwide pinfo palerts"><h3>New lead alerts and first message</h3>
+      ${P.me.mail ? '' : '<p class="hint pwarn">Email sending is not switched on yet. Your JewelryLead team turns it on; what you save here starts working then.</p>'}
+      <label class="prow"><span>Email me about every new lead</span><input class="in" type="text" data-notify="alertEmails" placeholder="you@store.com, sales@store.com" value="${esc((pr.alertEmails || []).join(', '))}" /></label>
+      <p class="hint">Up to 5 addresses, separated by commas. Each alert has the customer's details, their design page and the ready quote message. Reply to the alert to answer the customer directly.</p>
+      <label class="prow"><span>Customer replies go to</span><input class="in" type="email" data-notify="replyTo" placeholder="you@store.com" value="${esc(pr.replyTo || '')}" /></label>
+      <label class="pcheck"><input type="checkbox" data-notify="autoSend" ${pr.autoSend ? 'checked' : ''} /><span>Email the Estimated price message to every new customer automatically, a few minutes after they send the form, nights and weekends included. Only new leads nobody has answered yet. Needs the reply address above.</span></label></div>
+    <div class="pfoot"><button class="btn gold" data-act="save-pricing">Save changes</button><span class="psaved" role="status"></span></div>
   </section>`;
 }
 function readPricing() {
@@ -515,6 +521,13 @@ function readPricing() {
   const info = app.querySelector('[data-quote-info]');
   out.quoteInfo = info ? info.value : P.me.pricing?.quoteInfo || '';
   for (const el of app.querySelectorAll('[data-link]')) out[el.dataset.link] = el.value.trim();
+  // Obavještenja i prva poruka (21.11.2026); bez kartice (npr. drugi tab) ostaju sačuvana podešavanja.
+  const ae = app.querySelector('[data-notify="alertEmails"]');
+  out.alertEmails = ae ? ae.value.split(/[\s,;]+/).filter(Boolean) : P.me.pricing?.alertEmails || [];
+  const rt = app.querySelector('[data-notify="replyTo"]');
+  out.replyTo = rt ? rt.value.trim() : P.me.pricing?.replyTo || '';
+  const as = app.querySelector('[data-notify="autoSend"]');
+  out.autoSend = as ? as.checked : P.me.pricing?.autoSend === true;
   return out;
 }
 
@@ -641,6 +654,7 @@ function render() {
         <div class="stat">Videos<b>${stats.films || 0}</b></div>
         <div class="stat">Avg picture time<b>${secs(stats.renderMs)}</b></div>
         <div class="stat">Avg video time<b>${secs(stats.filmMs)}</b></div>
+        ${speedTile(P.me.speed)}
       </div>
       ${usageView()}
       ${P.me.onboarding?.status === 'submitted' || P.me.onboarding?.status === 'building' ? `<div class="ob-sent"><b>Thank you, we have your answers.</b> We are building your form now and it will appear under Forms. Your leads will show up here as soon as customers use it.</div>` : ''}
@@ -699,7 +713,8 @@ function leadsView() {
         <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}${pageBox(l)}</div>
         <div>
           <div class="lead-top"><h2>${esc(l.name)}</h2><span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
-          <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number')}</span></div>
+          <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span></div>
+          ${replyLine(l)}
           <div class="tags">${l.details.map((d) => `<span class="tag">${esc(d.label)}: <b>${esc(d.value)}</b></span>`).join('')}</div>
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
           <div class="thumbs">${strip}${photos}</div>
@@ -733,7 +748,23 @@ function pageBox(l) {
 // Copy pored mejla i telefona (District 19.11.2026): jedan klik kopira, ikonica se na trenutak pretvori u kvačicu.
 const COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" fill="none" stroke="currentColor" stroke-width="2"/></svg>';
 const DONE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const copyBtn = (v, what) => (v ? `<button type="button" class="copy-btn" data-copy="${esc(v)}" data-label="Copy ${what}" aria-label="Copy ${what}" title="Copy ${what}">${COPY_ICON}</button>` : '');
+// lead + kind: kopiranje mejla ili telefona se bilježi kao korak (21.11.2026, dokaz brzine odgovora).
+const copyBtn = (v, what, lead = '', kind = '') => (v ? `<button type="button" class="copy-btn" data-copy="${esc(v)}" ${lead ? `data-copy-lead="${esc(lead)}" data-copy-what="${esc(kind)}"` : ''} data-label="Copy ${what}" aria-label="Copy ${what}" title="Copy ${what}">${COPY_ICON}</button>` : '');
+// Korak iz portala za dnevnik leada; admin pregled se ne broji, greška ne smeta zlataru.
+const track = (id, body) => { if (readOnly() || !id) return; api(`/api/portal/leads/${encodeURIComponent(id)}/events`, { method: 'POST', body: JSON.stringify(body), json: true }).catch(() => {}); };
+// Vrijeme do prvog odgovora (statistika na vrhu i red na kartici leada).
+const mins = (m) => (m < 1 ? '< 1 min' : m < 60 ? `${Math.round(m)} min` : m < 48 * 60 ? `${Math.round((m / 60) * 10) / 10} h` : `${Math.round(m / 1440)} days`);
+function speedTile(sp) {
+  if (!sp) return '';
+  return `<div class="stat" title="Time from a new lead to the first reply: a copied quote message, status Contacted, Quoted or Won, or the automatic first email. Last 30 days.">First reply, median<b>${esc(sp.medianMin == null ? 'Not yet' : mins(sp.medianMin))}</b><small class="stat-sub">${sp.replied} of ${sp.leads} lead${sp.leads === 1 ? '' : 's'} answered${sp.auto ? ` · ${sp.auto} automatically` : ''}</small></div>`;
+}
+function replyLine(l) {
+  const bits = [];
+  if (l.autoSentAt) bits.push(`First message emailed automatically ${when(l.autoSentAt)}`);
+  else if (l.firstReplyAt) bits.push(`First reply ${when(l.firstReplyAt)} (${mins((l.firstReplyAt - l.created_at) / 60_000)} after the lead)`);
+  if (l.alertedAt) bits.push(`Alert emailed to you ${when(l.alertedAt)}`);
+  return bits.length ? `<p class="reply-line">${bits.map(esc).join(' · ')}</p>` : '';
+}
 async function copyText(btn, text) {
   let ok = false;
   try { await navigator.clipboard.writeText(text); ok = true; } catch {
@@ -743,10 +774,11 @@ async function copyText(btn, text) {
     try { ok = document.execCommand('copy'); } catch {}
     ta.remove();
   }
-  if (!ok) return;
+  if (!ok) return false;
   clearTimeout(btn._t);
   btn.classList.add('done'); btn.innerHTML = DONE_ICON; btn.setAttribute('aria-label', 'Copied'); btn.title = 'Copied';
   btn._t = setTimeout(() => { btn.classList.remove('done'); btn.innerHTML = COPY_ICON; btn.setAttribute('aria-label', btn.dataset.label || 'Copy'); btn.title = btn.dataset.label || 'Copy'; }, 1400);
+  return true;
 }
 
 function formsView() {
@@ -838,7 +870,7 @@ app.addEventListener('keydown', (e) => {
 app.addEventListener('click', async (e) => {
   const t = e.target.closest('button, img[data-zoom]') || e.target;
   if (t.dataset?.film) { zoomVideo(t.dataset.film, t.dataset.poster); return; }
-  if (t.dataset?.copy != null) { copyText(t, t.dataset.copy); return; }
+  if (t.dataset?.copy != null) { if ((await copyText(t, t.dataset.copy)) && t.dataset.copyLead) track(t.dataset.copyLead, { type: 'contact_copied', what: t.dataset.copyWhat }); return; }
   // Quote radni sto (Fits the budget): izbori, reset, poruka.
   if (t.tagName === 'BUTTON' && t.dataset.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
   if (t.dataset?.act === 'quote-reset') { const q = Q[t.dataset.q]; if (q) { const prev = estimate(P.me.pricing, q.spec).total; if (prev != null) q.animFrom = Math.round(prev); q.spec = { ...q.suggested }; renderCalc(t.dataset.q); } return; }
@@ -850,7 +882,7 @@ app.addEventListener('click', async (e) => {
     if (!l || !msg) return;
     {
       const note = t.parentElement.querySelector('.qcopied');
-      try { await navigator.clipboard.writeText(msg); if (note) { note.textContent = 'Copied'; setTimeout(() => { note.textContent = ''; }, 1600); } }
+      try { await navigator.clipboard.writeText(msg); track(l.id, { type: 'quote_copied', slot: id.includes('|') ? 'picked' : 'fit' }); if (note) { note.textContent = 'Copied'; setTimeout(() => { note.textContent = ''; }, 1600); } }
       catch { const ta = app.querySelector(`[data-qmsg="${CSS.escape(id)}"]`); ta?.select(); if (note) note.textContent = 'Press Cmd+C to copy'; }
     }
     return;
@@ -875,7 +907,7 @@ app.addEventListener('click', async (e) => {
   }
   if (t.dataset.act === 'save-pricing') {
     const note = app.querySelector('.psaved');
-    try { const r = await api('/api/portal/pricing', { method: 'PUT', body: JSON.stringify({ pricing: readPricing() }), json: true }); P.me.pricing = r.pricing; if (note) note.textContent = 'Saved'; }
+    try { const r = await api('/api/portal/pricing', { method: 'PUT', body: JSON.stringify({ pricing: readPricing() }), json: true }); P.me.pricing = r.pricing; if (note) note.textContent = r.pricing.autoSend && !r.pricing.replyTo ? 'Saved. Add the reply address to start the automatic first message.' : 'Saved'; }
     catch (err) { if (note) note.textContent = err.message || 'Could not save.'; }
   }
   if (t.dataset.see) { P.tab = 'leads'; P.form = t.dataset.see; render(); }
