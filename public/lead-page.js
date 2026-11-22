@@ -87,17 +87,33 @@ document.addEventListener('click', async (e) => {
 const two = (n) => String(n).padStart(2, '0');
 const clock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${two(Math.floor(s / 3600))}:${two(Math.floor((s % 3600) / 60))}:${two(s % 60)}`; };
 const timers = [...document.querySelectorAll('[data-deadline]')];
+// Faze roka, iste kao validityStage u src/leadpage.js.
+function vstage(left, total, hours) {
+  if (left <= 0) return ['expired', 'This offer has expired', 'Reply to your quote and we will refresh your price.'];
+  if (left <= 3600000) return ['last', 'Last hour to keep this price', 'Reserve now, before the timer runs out.'];
+  if (left <= Math.max(total * 0.25, 3600000)) return ['urgent', 'Final hours on your price', 'When the timer ends, your price has to be refreshed.'];
+  if (left <= total * 0.75) return ['steady', 'Your price is still on hold', 'Reserve while your price and design are held.'];
+  return ['fresh', `Reserved for you for ${hours} hours`, 'Your price and design are held until the timer ends.'];
+}
 function tickOffers() {
   const now = Date.now();
   for (const el of timers) {
     const left = Number(el.dataset.deadline) - now;
     if (el.dataset.mini) { el.textContent = left > 0 ? `Your price is held for ${clock(left)}` : 'This offer has expired. Reply to your quote and we will refresh it.'; continue; }
-    const t = el.querySelector('time');
-    if (t) t.textContent = clock(left);
-    if (left <= 0 && !el.classList.contains('expired')) {
-      el.classList.add('expired');
-      el.querySelector('.v-label').textContent = 'This offer has expired';
-      el.querySelector('.v-sub').textContent = 'Reply to your quote and we will refresh your price.';
+    const s = Math.max(0, Math.floor(left / 1000));
+    const vals = { h: Math.floor(s / 3600), m: Math.floor((s % 3600) / 60), s: s % 60 };
+    for (const b of el.querySelectorAll('[data-u]')) {
+      const v = two(vals[b.dataset.u]);
+      if (b.textContent !== v) { b.textContent = v; b.classList.remove('tick'); void b.offsetWidth; b.classList.add('tick'); }
+    }
+    const total = Number(el.dataset.total) || 1;
+    const bar = el.querySelector('.v-bar span');
+    if (bar) bar.style.width = `${Math.max(0, Math.min(100, (left / total) * 100)).toFixed(2)}%`;
+    const [k, label, sub] = vstage(left, total, el.dataset.hours);
+    if (!el.classList.contains(`v-${k}`)) {
+      el.className = el.className.replace(/\bv-(fresh|steady|urgent|last|expired)\b/g, '').trim() + ` v-${k}`;
+      el.querySelector('.v-label').textContent = label;
+      el.querySelector('.v-sub').textContent = sub;
     }
   }
 }

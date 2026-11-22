@@ -163,12 +163,33 @@ html.js .rv.in { opacity: 1; transform: none; }
 }
 @media (min-width: 901px) { .dock { display: none; } }
 
-/* Rok ponude (22.11.2026): mirno, tipografski, bez blještanja (luksuzni juvelir). */
-.validity { margin: 18px auto 0; display: inline-grid; justify-items: center; gap: 4px; padding: 14px 26px 12px; border: 1px solid color-mix(in srgb, var(--accent, #c9a46a) 45%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--accent, #c9a46a) 7%, transparent); }
-.validity .v-label { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft, #b9b2a6); }
-.validity .v-clock { font-family: "Cormorant Garamond", Georgia, serif; font-size: 34px; line-height: 1.1; letter-spacing: .06em; color: var(--ink, #f3eee6); font-variant-numeric: tabular-nums; }
-.validity .v-sub { font-size: 12.5px; color: var(--ink-faint, #8f887d); }
-.validity.expired { border-color: color-mix(in srgb, var(--ink-faint, #8f887d) 45%, transparent); background: none; }
-.validity.expired .v-clock { color: var(--ink-faint, #8f887d); }
+/* Rok ponude (22.11.2026): pločice Hours / Minutes / Seconds, traka koja se prazni i faza po preostalom vremenu
+   (fresh, steady = zlato; urgent = toplo narandžasto; last = koralno sa blagim pulsom; expired = sivo). */
+.validity { --v-c: var(--accent, #c9a46a); position: relative; margin: 22px auto 0; display: inline-grid; justify-items: center; gap: 10px;
+  padding: 18px 26px 16px; border: 1px solid color-mix(in srgb, var(--v-c) 50%, transparent); border-radius: 24px;
+  background: radial-gradient(120% 140% at 50% 0%, color-mix(in srgb, var(--v-c) 16%, transparent), color-mix(in srgb, var(--v-c) 4%, transparent) 70%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--v-c) 10%, transparent), 0 18px 50px -18px color-mix(in srgb, var(--v-c) 55%, transparent);
+  animation: v-pop .9s cubic-bezier(.2,.9,.25,1.15) both; transition: border-color .8s, box-shadow .8s, background .8s; }
+.validity.v-urgent { --v-c: #f0a24e; }
+.validity.v-last { --v-c: #ff7a5c; animation: v-pop .9s cubic-bezier(.2,.9,.25,1.15) both, v-glow 2.4s ease-in-out 1s infinite; }
+.validity.v-expired { --v-c: var(--ink-faint, #8f887d); box-shadow: none; background: none; }
+.validity .v-label { font-size: 12px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--v-c); }
+.validity .v-clock time { display: flex; align-items: flex-start; gap: 8px; }
+.validity .v-unit { display: grid; justify-items: center; gap: 6px; min-width: 78px; padding: 10px 8px 8px; border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-2, #152024) 85%, transparent); border: 1px solid color-mix(in srgb, var(--v-c) 28%, var(--line, #1f2c30)); }
+.validity .v-unit b { display: block; font-family: var(--serif, "Cormorant Garamond", Georgia, serif); font-weight: 500; font-size: 46px; line-height: 1;
+  color: var(--ink, #f3eee6); font-variant-numeric: lining-nums tabular-nums; font-feature-settings: "lnum" 1, "tnum" 1; letter-spacing: .02em; }
+.validity .v-unit b.tick { animation: v-tick .45s cubic-bezier(.2,.8,.3,1); }
+.validity .v-unit small { font-size: 10px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-faint, #8f887d); }
+.validity .v-colon { font-style: normal; font-family: var(--serif, Georgia, serif); font-size: 38px; line-height: 1.25; color: color-mix(in srgb, var(--v-c) 70%, transparent); animation: v-blink 1s steps(2, start) infinite; }
+.validity .v-bar { width: 100%; height: 4px; border-radius: 4px; overflow: hidden; background: color-mix(in srgb, var(--v-c) 14%, transparent); }
+.validity .v-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, color-mix(in srgb, var(--v-c) 55%, transparent), var(--v-c)); transition: width 1s linear, background .8s; }
+.validity .v-sub { font-size: 12.5px; color: var(--ink-soft, #b9b2a6); }
+.validity.v-expired .v-unit b, .validity.v-expired .v-colon { color: var(--ink-faint, #8f887d); animation: none; }
+@keyframes v-pop { 0% { opacity: 0; transform: translateY(10px) scale(.94); } 100% { opacity: 1; transform: none; } }
+@keyframes v-tick { 0% { opacity: .2; transform: translateY(-40%); } 100% { opacity: 1; transform: none; } }
+@keyframes v-blink { 50% { opacity: .35; } }
+@keyframes v-glow { 50% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--v-c) 35%, transparent), 0 18px 60px -12px color-mix(in srgb, var(--v-c) 80%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .validity, .validity .v-unit b.tick, .validity .v-colon { animation: none !important; } }
 .valid-mini { margin: 10px 0 0; font-size: 13px; color: var(--ink-soft, #b9b2a6); font-variant-numeric: tabular-nums; }
-@media (max-width: 600px) { .validity { padding: 12px 18px 10px; border-radius: 22px; } .validity .v-clock { font-size: 28px; } }
+@media (max-width: 600px) { .validity { padding: 14px 14px 12px; gap: 8px; } .validity .v-unit { min-width: 62px; padding: 8px 6px 7px; } .validity .v-unit b { font-size: 36px; } .validity .v-colon { font-size: 30px; } .validity .v-clock time { gap: 5px; } .validity .v-label { font-size: 11px; letter-spacing: .12em; } }

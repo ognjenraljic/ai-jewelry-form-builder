@@ -30,6 +30,7 @@ let row;
 for (let i = 0; i < 20 && !row?.quotes?.picked?.msg; i++) { await sleep(500); row = (await list()).find((x) => x.id === l1.leadId); }
 ok(/\$7,900/.test(row?.quotes?.picked?.msg || ''), 'prva poruka: $7,900 iz cjenovnika');
 const url = `${BASE}${row.page.url}`;
+if (process.env.SHOW_URL) console.log("PAGE", url);
 
 // 1) Estimated price: zlatar spusti cijenu sliderom; stranica kupca pokazuje novu cijenu, poruka ostaje.
 const put = (b) => fetch(`${BASE}/api/portal/leads/${l1.leadId}/quote`, { method: 'PUT', headers: P, body: JSON.stringify(b) }).then(j);
@@ -53,7 +54,8 @@ row = (await list()).find((x) => x.id === l1.leadId);
 ok(s1.status === 200 && row.quotes.fit.show === true, '"Show on sales page" sačuvan');
 html = await (await fetch(url)).text();
 ok(html.includes('Option 2') && html.includes('$2,400') && /You save \$5,000/.test(html), 'stranica: Option 2 $2,400, ušteda od $7,400 = $5,000');
-ok(/data-deadline="\d+"/.test(html) && /reserved for you for 48 hours/.test(html), 'stranica ima rok ponude od 48 h sa odbrojavanjem');
+ok(/class="validity v-fresh"/.test(html) && /<small>Hours<\/small>/.test(html) && /<small>Minutes<\/small>/.test(html) && /<small>Seconds<\/small>/.test(html) && /class="v-bar"/.test(html), 'odbrojavanje: pločice Hours/Minutes/Seconds, traka i faza fresh');
+ok(/data-deadline="\d+"/.test(html) && /Reserved for you for 48 hours/.test(html), 'stranica ima rok ponude od 48 h sa odbrojavanjem');
 
 // 3) Izmjena teksta poruke traži da poruka postoji; generisana poruka čuva cijenu i izbore.
 ok((await put({ slot: 'fit', message: 'Hi' })).status === 404, 'tekst bez generisane poruke se ne čuva');

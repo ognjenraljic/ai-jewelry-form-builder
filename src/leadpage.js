@@ -127,13 +127,27 @@ function remainingText(deadline) {
   const left = deadline - Date.now();
   return left > 0 ? `Your price is held for ${clock(left)}` : 'This offer has expired. Reply to your quote and we will refresh it.';
 }
+// Faza roka (22.11.2026, Ognjen: "dinamično u zavisnosti koliko je vremena prošlo"): tekst i boja prate koliko je ostalo.
+// Ista pravila su u /lead-page.js (VSTAGE) da se faza mijenja uživo.
+function validityStage(left, total, hours) {
+  if (left <= 0) return { k: 'expired', label: 'This offer has expired', sub: 'Reply to your quote and we will refresh your price.' };
+  if (left <= 3600_000) return { k: 'last', label: 'Last hour to keep this price', sub: 'Reserve now, before the timer runs out.' };
+  if (left <= Math.max(total * 0.25, 3600_000)) return { k: 'urgent', label: 'Final hours on your price', sub: 'When the timer ends, your price has to be refreshed.' };
+  if (left <= total * 0.75) return { k: 'steady', label: 'Your price is still on hold', sub: 'Reserve while your price and design are held.' };
+  return { k: 'fresh', label: `Reserved for you for ${hours} hours`, sub: 'Your price and design are held until the timer ends.' };
+}
 function validityHtml(deadline, hours) {
+  const total = hours * 3600_000;
   const left = deadline - Date.now();
-  const ends = new Date(deadline).toISOString();
-  return `<div class="validity${left > 0 ? '' : ' expired'}" data-deadline="${deadline}">
-    <span class="v-label">${left > 0 ? `This offer is reserved for you for ${hours} hours` : 'This offer has expired'}</span>
-    <span class="v-clock" aria-label="Time left on this offer"><time datetime="${ends}">${left > 0 ? clock(left) : '00:00:00'}</time></span>
-    <span class="v-sub">${left > 0 ? 'Your price and design are held until the timer ends.' : 'Reply to your quote and we will refresh your price.'}</span></div>`;
+  const st = validityStage(left, total, hours);
+  const s = Math.max(0, Math.floor(left / 1000));
+  const unit = (u, v, l) => `<span class="v-unit"><b data-u="${u}">${two(v)}</b><small>${l}</small></span>`;
+  const pct = Math.max(0, Math.min(100, (left / total) * 100));
+  return `<div class="validity v-${st.k}" data-deadline="${deadline}" data-total="${total}" data-hours="${hours}">
+    <span class="v-label">${st.label}</span>
+    <div class="v-clock" role="timer" aria-label="Time left on this offer"><time datetime="${new Date(deadline).toISOString()}">${unit('h', Math.floor(s / 3600), 'Hours')}<i class="v-colon" aria-hidden="true">:</i>${unit('m', Math.floor((s % 3600) / 60), 'Minutes')}<i class="v-colon" aria-hidden="true">:</i>${unit('s', s % 60, 'Seconds')}</time></div>
+    <div class="v-bar" aria-hidden="true"><span style="width:${pct.toFixed(2)}%"></span></div>
+    <span class="v-sub">${st.sub}</span></div>`;
 }
 
 export function leadPageHtml(d) {
