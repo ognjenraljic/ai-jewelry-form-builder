@@ -221,18 +221,29 @@ function offerBox(l, ls, key) {
   const changed = JSON.stringify(q.spec) !== JSON.stringify(q.suggested) || q.price != null;
   const title = picked ? 'Estimated price' : Number.isFinite(ls.budget?.high) ? 'Fits the budget' : 'Your quote';
   const badge = picked ? (diff.length ? 'Adjusted' : '') : diff.length ? 'Suggested' : 'As picked';
-  const head = `<div class="calc-head"><p class="calc-title">${title}</p>${changed ? `<button type="button" class="qreset" data-act="quote-reset" data-q="${esc(key)}">Reset</button>` : badge ? `<span class="qbadge">${badge}</span>` : ''}</div>${picked ? `<p class="calc-sub">${diff.length ? 'Adjusted from what the customer picked' : 'What the customer picked'}</p>` : ''}`;
+  const sub = picked ? (diff.length ? 'Adjusted from what the customer picked' : 'What the customer picked') : diff.length ? `${diff.length} change${diff.length === 1 ? '' : 's'} from the customer's picks` : 'Same as the customer picked';
+  const head = `<div class="calc-head"><p class="calc-sub">${sub}</p>${changed ? `<button type="button" class="qreset" data-act="quote-reset" data-q="${esc(key)}">Reset</button>` : badge ? `<span class="qbadge">${badge}</span>` : ''}</div>`;
   const num = est.total == null
     ? `<p class="calc-empty">Missing in your prices: ${est.missing.map(esc).join(', ')}.</p>${picked ? '<button type="button" class="btn small" data-tab="pricing">Set prices</button>' : ''}`
     : `<p class="calc-num" data-qk="${esc(key)}" data-count="${Math.round(fin)}" data-from="${Math.round(q.animFrom ?? fin)}">${money(q.animFrom ?? fin)}</p><div class="bm-wrap">${budgetMeter(fin, ls.budget, ls.budgetLabel) || (ls.budgetLabel ? `<p class="calc-diff">Budget ${esc(ls.budgetLabel)}</p>` : '')}</div>${priceControl(key, q, est)}`;
   const tags = diff.length ? `<ul class="qdiff" aria-label="Changed from the customer's picks">${diff.map((c) => `<li><span>${esc(c.what)}</span>${esc(c.from)} <i aria-hidden="true">→</i> <b>${esc(c.to)}</b></li>`).join('')}</ul>` : '';
-  // Izbori su sklopljeni u obje kartice (Ognjen 22.11.2026); otvaraju se na klik i ostaju otvoreni dok se mijenjaju.
-  // Šta je promijenjeno se vidi u tagovima i kad su sklopljeni.
-  const controls = `<details class="qadj" ${q.adjOpen ? 'open' : ''} data-qadj="${esc(key)}"><summary>Adjust specs</summary>${quoteControls(key, ls, q.spec)}</details>`;
+  const controls = quoteControls(key, ls, q.spec);
   const gen = est.total != null || q.msg != null || q.busy
     ? `<button type="button" class="btn qgo" data-act="quote-gen" data-qk="${esc(key)}" ${est.total == null || q.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${q.msg != null ? 'Generate again' : 'Generate quote message'}</button><div class="qmsg-wrap" data-qk="${esc(key)}">${quoteMessageView(l, q, key)}</div>`
     : '';
-  return `<div class="calc-box${picked ? '' : ' quote'}">${head}${num}${tags}${controls}${est.total != null ? breakdown(adjusted(est, q)) : ''}${gen}</div>`;
+  // Cijela kartica je sklopljena (Ognjen 22.11.2026): u zaglavlju naslov, cijena i stanje budžeta, klik je otvara.
+  // Otvorena ostaje otvorena dok se stranica ne osvježi (i kroz ponovno crtanje kartice).
+  const bn = fin == null ? null : budgetNote(fin, ls.budget);
+  const sum = `<summary class="calc-fold-sum"><span class="calc-fold-t"><span class="calc-title">${title}</span>${q.msg != null ? '<span class="calc-fold-tag">Message ready</span>' : ''}</span>
+    <span class="calc-fold-r">${fin == null ? '<em>Missing prices</em>' : `<b>${money(fin)}</b>${bn ? `<em class="${bn.cls}">${bn.text}</em>` : ''}`}</span><i class="calc-fold-x" aria-hidden="true"></i></summary>`;
+  return `<details class="calc-box calc-fold${picked ? '' : ' quote'}" data-qbox="${esc(key)}" ${q.boxOpen ? 'open' : ''}>${sum}<div class="calc-fold-body">${head}${num}${tags}${controls}${est.total != null ? breakdown(adjusted(est, q)) : ''}${gen}</div></details>`;
+}
+// Stanje budžeta za zaglavlje sklopljene kartice (isti račun kao traka budžeta).
+function budgetNote(total, b) {
+  if (!b) return null;
+  if (Number.isFinite(b.high) && total > b.high) return { cls: 'is-over', text: `${money(total - b.high)} over` };
+  if (total < b.low) return { cls: 'is-under', text: `${money(b.low - total)} under` };
+  return { cls: 'is-in', text: 'In budget' };
 }
 
 function calcView(l) {
@@ -327,7 +338,6 @@ function quoteEdit(key, field, value, delta) {
   q.spec = s;
   // Nove specifikacije = nova izračunata cijena; ručna cijena se ne prenosi na drugi komad.
   q.price = null;
-  q.adjOpen = true;
   queueAdjSave(key);
   renderCalc(id);
 }
@@ -529,8 +539,8 @@ const flushQuotes = () => {
   for (const k of Object.keys(Q)) if (Q[k]?.dirty) saveQuoteNow(k, { keepalive: true });
   for (const k of Object.keys(adjTimers)) saveAdjNow(k, { keepalive: true });
 };
-// "Adjust specs" ostaje otvoren kroz ponovno crtanje kartice kad ga zlatar otvori.
-app.addEventListener('toggle', (e) => { const k = e.target.dataset?.qadj; if (k && Q[k]) Q[k].adjOpen = e.target.open; }, true);
+// Otvorena kartica ponude ostaje otvorena kroz ponovno crtanje.
+app.addEventListener('toggle', (e) => { const k = e.target.dataset?.qbox; if (k && Q[k]) Q[k].boxOpen = e.target.open; }, true);
 addEventListener('pagehide', flushQuotes);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushQuotes(); });
 

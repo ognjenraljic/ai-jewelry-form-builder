@@ -504,13 +504,26 @@ button.dbar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 .qprice-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink-faint); min-height: 18px; }
 .qlink { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; padding: 2px 0; }
 .qlink:hover { text-decoration: underline; text-underline-offset: 3px; }
-.qadj { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
-.qadj > summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--ink-soft); list-style: none; display: flex; align-items: center; gap: 6px; }
-.qadj > summary::-webkit-details-marker { display: none; }
-.qadj > summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; margin-right: 2px; }
-.qadj[open] > summary::before { transform: rotate(45deg); }
-.qadj > summary:hover { color: var(--ink); }
-.qadj .qgrid { margin-top: 10px; }
+.calc-fold > .calc-fold-sum { list-style: none; display: flex; align-items: center; gap: 12px; cursor: pointer; margin: -2px 0; padding: 2px 0; user-select: none; }
+.calc-fold > .calc-fold-sum::-webkit-details-marker { display: none; }
+.calc-fold-t { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.calc-fold-t .calc-title { margin: 0; }
+.calc-fold-tag { font-size: 10.5px; font-weight: 700; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 999px; padding: 2px 8px; }
+.calc-fold-r { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; text-align: right; }
+.calc-fold-r b { font-family: var(--serif); font-size: 22px; font-weight: 500; line-height: 1.1; color: var(--ink); font-variant-numeric: tabular-nums; }
+.calc-fold-r em { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--ink-faint); white-space: nowrap; }
+.calc-fold-r em.is-in { color: var(--ok); }
+.calc-fold-r em.is-over { color: var(--over); }
+.calc-fold-r em.is-under { color: var(--under); }
+.calc-fold-x { width: 26px; height: 26px; flex: none; border-radius: 50%; border: 1px solid var(--line-strong); position: relative; transition: transform .2s, border-color .15s; }
+.calc-fold-x::before { content: ""; position: absolute; left: 50%; top: 45%; width: 7px; height: 7px; border-right: 2px solid var(--ink-soft); border-bottom: 2px solid var(--ink-soft); transform: translate(-50%, -50%) rotate(45deg); }
+.calc-fold-sum:hover .calc-fold-x { border-color: var(--accent); }
+.calc-fold[open] .calc-fold-x { transform: rotate(180deg); }
+.calc-fold[open] .calc-fold-r { display: none; }
+.calc-fold-body { margin-top: 8px; }
+.calc-fold-body > .calc-head { margin-bottom: 2px; }
+.calc-fold-body > .calc-head .calc-sub { margin: 0; }
+.calc-fold-sum:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; }
 .qrow2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .qstepper { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line-strong); border-radius: 12px; padding: 3px; background: color-mix(in srgb, var(--bg) 40%, transparent); }
 .qstepper button { width: 32px; height: 30px; border: 0; border-radius: 9px; background: var(--surface-2); color: var(--ink); font-size: 16px; cursor: pointer; }
