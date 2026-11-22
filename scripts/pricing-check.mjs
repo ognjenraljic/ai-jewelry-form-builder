@@ -133,6 +133,14 @@ ok(middleGround(G, { ...spec, stones: '', coverage: '', karat: '10K', teeth: 'T5
   const mg = middleGround(PS, full.spec, 9000, full.choices);
   ok(mg && mg.total < estimate(PS, full.spec).total && (mg.spec.ice || mg.spec.coverage), `middle ground za sat bira jeftiniji izbor (${mg?.spec.ice || mg?.spec.coverage}, ${mg?.spec.stones}, $${Math.round(mg?.total)})`);
 }
+{
+  // Sat bez grama = kupčev sat: nema metala ni "missing", samo rad + kamenje + ugradnja (+ markup).
+  const PW = { goldSpot: 110, markup: 10, grams: {}, labor: { watch: 450 }, stones: { 'lab-grown diamonds': { ct: 150 } }, setting: 1.5 };
+  const ew = estimate(PW, { type: 'watch', metal: 'Yellow Gold', karat: '14K', stones: 'Lab-grown diamonds', coverage: 'half', ice: 'half', iceParts: 'bezel', caseMm: 40 });
+  ok(ew.total != null && !ew.lines.some((x) => /^Metal/.test(x.label)) && ew.notes.some((n) => /own watch/.test(n)), `sat bez grama: kupčev sat, bez metala ($${Math.round(ew.total)})`);
+  ok(estimate({ ...PW, grams: { watch: 60 } }, { type: 'watch', metal: 'Yellow Gold', karat: '14K', stones: '', coverage: '', caseMm: 40 }).lines.some((x) => /^Metal: 60 g/.test(x.label)), 'sat sa gramima: novo kućište, metal se računa');
+  ok(estimate({ ...PW, labor: {} }, { type: 'watch', metal: 'Yellow Gold', karat: '14K', stones: '', coverage: '' }).missing.some((m) => /labor/.test(m)), 'sat bez rada: piše da fali rad');
+}
 // ---------- 22.11.2026: žive cijene metala, Live / Custom ----------
 {
   const { applyMarket } = await import('../public/pricing.js');

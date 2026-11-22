@@ -46,7 +46,8 @@ export const SUGGESTED_PRICING = {
   goldSpot: 124, markup: 30,
   metals: { platinum: 50, silver: 2, 'sterling silver': 2, 'dental gold': 45 },
   grams: { pendant: 12, ring: 6, chain: 25, bracelet: 20, earrings: 4 },
-  labor: { pendant: 250, ring: 200, chain: 150, bracelet: 150, earrings: 120 },
+  // Sat: rad za bust-down (otvaranje, priprema površine za kamenje, poliranje, sklapanje); kamenje i ugradnja posebno.
+  labor: { pendant: 250, ring: 200, chain: 150, bracelet: 150, earrings: 120, watch: 450 },
   // Kamenje van grillza (22.11.2026): $ po karatu za sitno kamenje i za centralni kamen, ugradnja po kamenu.
   stones: {
     moissanite: { ct: 40, center: 150 },
@@ -275,13 +276,16 @@ export function estimate(pricing, spec) {
   const per = spec.type === 'grillz' ? ' per tooth' : '';
   const grams = num(pricing?.grams?.[spec.type]);
   const ppg = metalPerGram(pricing, spec.metal, spec.karat);
-  if (!grams) missing.push(`grams${per} for ${spec.type}`);
-  if (!ppg) missing.push(`price per gram of ${spec.metal || 'the metal'}${spec.karat ? ` ${spec.karat}` : ''}`);
+  // Sat (22.11.2026): bez grama se okiva kupčev sat, pa nema metala; grami se upisuju samo za novo kućište ili narukvicu.
+  const ownWatch = spec.type === 'watch' && !grams;
+  if (!grams && !ownWatch) missing.push(`grams${per} for ${spec.type}`);
+  if (!ppg && !ownWatch) missing.push(`price per gram of ${spec.metal || 'the metal'}${spec.karat ? ` ${spec.karat}` : ''}`);
   if (grams && ppg) lines.push({ label: `Metal: ${+(grams * units).toFixed(1)} g × ${money(ppg)}/g`, amount: grams * units * ppg });
   const labor = num(pricing?.labor?.[spec.type]);
   if (labor) lines.push({ label: `Labor${units > 1 ? `: ${units} × ${money(labor)}` : ''}`, amount: labor * units });
   else missing.push(`labor${per} for ${spec.type}`);
   const notes = [];
+  if (ownWatch) notes.push("Customer's own watch: no metal included. Add grams for watches in Weight and labor to price a new case or bracelet.");
   if (spec.stones && spec.coverage) {
     const row = pricing?.stones?.[key(spec.stones)];
     const perCt = num(row?.ct);
