@@ -646,3 +646,25 @@ button.dbar.future { opacity: .35; cursor: default; }
 .pcheck input { margin-top: 3px; flex: none; }
 .pwarn { color: var(--ink-soft); }
 @media (max-width: 640px) { .palerts .prow { flex-direction: column; align-items: stretch; gap: 6px; } .palerts .prow .in { max-width: none; width: 100%; } }
+
+/* Pricing → Stones preko cijele širine: tabela lijevo, živi primjer računa desno (22.11.2026). */
+.pst-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 20px; align-items: start; }
+.pst-table .ptable { max-width: 520px; }
+.pex { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: color-mix(in srgb, var(--bg) 35%, transparent); }
+.pex-title { margin: 0 0 10px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+.pex-chips { margin-bottom: 8px; }
+.pex-steps { list-style: none; counter-reset: pex; margin: 12px 0 0; padding: 0; display: grid; gap: 0; }
+.pex-steps li { counter-increment: pex; display: grid; grid-template-columns: 22px minmax(0, 150px) minmax(0, 1fr) auto; gap: 4px 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+.pex-steps li::before { content: counter(pex); font-size: 11px; font-weight: 700; color: var(--accent); }
+.pex-a { color: var(--ink); font-weight: 600; }
+.pex-b { color: var(--ink-soft); }
+.pex-steps b { font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+.pex-steps b i { font-style: normal; font-weight: 600; color: var(--under); }
+.pex-total { display: flex; justify-content: space-between; align-items: baseline; margin: 2px 0 8px; padding-top: 10px; border-top: 1px solid var(--line-strong); font-size: 13px; color: var(--ink-soft); }
+.pex-total b { font-family: var(--serif); font-size: 24px; font-weight: 500; color: var(--ink); }
+.pex .hint { margin: 0; }
+@media (max-width: 860px) {
+  .pst-grid { grid-template-columns: 1fr; }
+  .pex-steps li { grid-template-columns: 22px minmax(0, 1fr) auto; }
+  .pex-b { grid-column: 2 / 4; grid-row: 2; }
+}
