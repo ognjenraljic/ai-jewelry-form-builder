@@ -4,21 +4,27 @@ const API = 'https://api.dev.pika.art';
 const IMAGE_WAIT_MS = 150_000; // manje od STALE_PENDING_MS u workeru
 const POLL_MS = 2000;
 
-// Tri video modela po slici (Ognjen 22.11.2026, sva tri oko $0,20): kupac dobija samo prvi (H3 Flex, najbrži), a zlatar u portalu
-// vidi sva tri sa oznakom modela, da se uporedi kvalitet za cijenu. Svi kreću od iste slike.
+// Tri video modela po slici (Ognjen 22.11.2026): kupac dobija samo prvi (H3 Flex, najbrži, $0,20), a zlatar u portalu
+// vidi sva tri sa oznakom modela, da se uporedi kvalitet za cijenu. Svi kreću od iste slike i završavaju na njoj (petlja):
+// dodatni su dva najjeftinija modela sa završnim kadrom, Wan 3.0 480p ($0,33) i Seedance 2.0 Mini 480p ($0,39).
+// Hailuo 2.3 Fast i Pika 2.5 su jeftiniji, ali bez završnog kadra; ostaju u katalogu za FILM_MODELS.
 // Cijene za 10 s provjerene preko besplatnog Pika quote-a 22.11. (procjena; pravi iznos stiže sa poslom).
 // FILM_MODELS (Worker variable, npr. "flex" ili "flex,pika25") bira koji se prave; prvi u listi je uvijek kupčev.
 export const FILM_SECONDS = 10;
 export const VIDEO_MODELS = {
   flex: { api: 'pika/pika-h3-flex/image-to-video', label: 'Pika H3 Flex', est: 0.2,
     body: (img, prompt) => ({ image: img, last_frame_image: img, prompt, duration: FILM_SECONDS, resolution: '768p', rewrite: false }) },
+  wan3: { api: 'alibaba/wan3.0-video/image-to-video', label: 'Wan 3.0', est: 0.325,
+    body: (img, prompt) => ({ first_frame_url: img, last_frame_url: img, prompt, duration: FILM_SECONDS, resolution: '480p', ratio: '1:1', audio: false }) },
+  seedmini: { api: 'bytedance/seedance-2.0-mini/image-to-video', label: 'Seedance 2.0 Mini', est: 0.388,
+    body: (img, prompt) => ({ image_url: img, end_image_url: img, prompt, duration: FILM_SECONDS, resolution: '480p', ratio: '1:1', generate_audio: false }) },
   // Hailuo 2.3 Fast i Pika 2.5 nemaju zadnji kadar: komad se njiše i vraća po promptu, ali šav petlje nije zagarantovan.
   hailuo: { api: 'minimax/hailuo-2.3-fast/image-to-video', label: 'Hailuo 2.3 Fast', est: 0.192,
     body: (img, prompt) => ({ first_frame_image: img, prompt, duration: FILM_SECONDS, resolution: '768p', prompt_optimizer: false }) },
   pika25: { api: 'pika/pika-2.5/image-to-video', label: 'Pika 2.5', est: 0.2,
     body: (img, prompt) => ({ image: img, prompt, duration_s: FILM_SECONDS, resolution: '480p' }) },
 };
-export const DEFAULT_FILM_MODELS = ['flex', 'hailuo', 'pika25'];
+export const DEFAULT_FILM_MODELS = ['flex', 'wan3', 'seedmini'];
 export const filmModels = (env) => {
   const list = String(env.FILM_MODELS || '').split(',').map((x) => x.trim()).filter((x) => VIDEO_MODELS[x]);
   return [...new Set(list.length ? list : DEFAULT_FILM_MODELS)];

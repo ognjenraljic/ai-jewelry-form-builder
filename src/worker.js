@@ -71,9 +71,8 @@ const EXTRA_FILMS_PER_LEAD = 1;
 const STALE_FILM_MS = 10 * 60_000;
 // Skuplji modeli znaju čekati u redu kod provajdera duže od H3 Flexa, pa im se daje više vremena.
 const STALE_EXTRA_FILM_MS = 25 * 60_000;
-const extraApis = (env) => extraFilms(env).map((k) => VIDEO_MODELS[k].api);
-// Kupac vidi samo svoj (prvi) model; dodatni modeli su samo za zlatara u portalu.
-const customerFilm = (env, f) => !extraApis(env).includes(f.model);
+// Kupac vidi samo svoj (prvi) model; svi ostali (i oni koji više nisu u FILM_MODELS) su samo za zlatara u portalu.
+const customerFilm = (env, f) => f.model === VIDEO_MODELS[primaryFilm(env)].api;
 const staleFor = (env, f) => (customerFilm(env, f) ? STALE_FILM_MS : STALE_EXTRA_FILM_MS);
 const MAX_VERSIONS = 50;
 

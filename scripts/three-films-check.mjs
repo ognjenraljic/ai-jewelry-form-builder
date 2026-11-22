@@ -39,11 +39,11 @@ let jobs = [];
 for (let i = 0; i < 20 && jobs.length < 3; i++) { await sleep(300); jobs = (await videoJobs()).slice(before); }
 check(jobs.length === 3, `prva slika pokrene tri videa (${jobs.length})`);
 const by = (s) => jobs.find((j) => j.path.includes(s));
-const flex = by('pika/pika-h3-flex/'), hailuo = by('minimax/hailuo-2.3-fast/'), p25 = by('pika/pika-2.5/');
+const flex = by('pika/pika-h3-flex/'), wan = by('alibaba/wan3.0-video/'), seed = by('bytedance/seedance-2.0-mini/');
 check(flex && flex.body.duration === 10 && flex.body.resolution === '768p' && flex.body.last_frame_image === flex.body.image, 'H3 Flex: 10 s, 768p, petlja');
-check(hailuo && hailuo.body.duration === 10 && hailuo.body.resolution === '768p' && hailuo.body.first_frame_image && hailuo.body.prompt_optimizer === false, 'Hailuo 2.3 Fast: 10 s, 768p, bez prepisivanja prompta');
-check(p25 && p25.body.duration_s === 10 && p25.body.resolution === '480p' && p25.body.image, 'Pika 2.5: 10 s, 480p');
-check(flex.body.prompt === hailuo.body.prompt && flex.body.prompt === p25.body.prompt, 'isti prompt za sva tri');
+check(wan && wan.body.duration === 10 && wan.body.resolution === '480p' && wan.body.ratio === '1:1' && wan.body.audio === false && wan.body.first_frame_url && wan.body.last_frame_url === wan.body.first_frame_url, 'Wan 3.0: 10 s, 480p, kvadrat, završni kadar = prvi (petlja)');
+check(seed && seed.body.duration === 10 && seed.body.resolution === '480p' && seed.body.ratio === '1:1' && seed.body.generate_audio === false && seed.body.end_image_url === seed.body.image_url, 'Seedance 2.0 Mini: 10 s, 480p, kvadrat, završni kadar = prvi (petlja)');
+check(flex.body.prompt === wan.body.prompt && flex.body.prompt === seed.body.prompt, 'isti prompt za sva tri');
 check(jobs.indexOf(flex) === 0, 'kupčev video kreće prvi');
 
 // Kupac: samo H3 Flex.
@@ -64,16 +64,16 @@ const leadsOf = async (qs = '') => (await (await fetch(`${base}/api/portal/leads
 let mine;
 for (let i = 0; i < 4; i++) { mine = (await leadsOf()).leads.find((l) => l.id === lead.leadId); if (mine.films.every((f) => f.url)) break; await sleep(200); }
 check(mine.films.length === 3 && mine.films.every((f) => f.url), 'portal: sva tri videa gotova');
-check(JSON.stringify(mine.films.map((f) => f.label).sort()) === JSON.stringify(['Hailuo 2.3 Fast', 'Pika 2.5', 'Pika H3 Flex']), 'portal: oznake modela');
+check(JSON.stringify(mine.films.map((f) => f.label).sort()) === JSON.stringify(['Pika H3 Flex', 'Seedance 2.0 Mini', 'Wan 3.0']), 'portal: oznake modela');
 check(mine.films.filter((f) => f.customer).length === 1 && mine.films.find((f) => f.customer).model === 'flex', 'portal: samo H3 Flex je označen kao kupčev');
 check(st.renders[0].film.url === mine.films.find((f) => f.model === 'flex').url, 'kupac ima baš H3 Flex video');
 const all = await leadsOf();
-check(all.videoModels?.length === 3 && all.videoModels.find((m) => m.key === 'hailuo').count >= 1, 'portal: lista modela za filter sa brojem');
-const onlyH = await leadsOf('?video=hailuo');
+check(all.videoModels?.length === 3 && all.videoModels.find((m) => m.key === 'wan3').count >= 1, 'portal: lista modela za filter sa brojem');
+const onlyH = await leadsOf('?video=wan3');
 const mh = onlyH.leads.find((l) => l.id === lead.leadId);
-check(mh && mh.films.length === 1 && mh.films[0].model === 'hailuo', 'filter Hailuo: samo Hailuo video');
-check(onlyH.leads.every((l) => l.films.every((f) => f.model === 'hailuo')), 'filter Hailuo: nijedan drugi model');
-check((await leadsOf('?video=pika25')).leads.find((l) => l.id === lead.leadId)?.films[0].model === 'pika25', 'filter Pika 2.5');
+check(mh && mh.films.length === 1 && mh.films[0].model === 'wan3', 'filter Wan 3.0: samo Wan video');
+check(onlyH.leads.every((l) => l.films.every((f) => f.model === 'wan3')), 'filter Wan 3.0: nijedan drugi model');
+check((await leadsOf('?video=seedmini')).leads.find((l) => l.id === lead.leadId)?.films[0].model === 'seedmini', 'filter Seedance 2.0 Mini');
 check((await leadsOf('?video=nepostoji')).leads.length === all.leads.length, 'nepoznat model ne filtrira');
 
 // Stranica kupca (/p/<key>): samo kupčev video.
