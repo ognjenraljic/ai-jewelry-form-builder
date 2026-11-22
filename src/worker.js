@@ -2089,7 +2089,9 @@ function pricingSpec(form) {
   // Veličina komada (22.11.2026) za kamenje po površini: ključ bez prefiksa komada (chain_length -> length).
   const dims = {};
   for (const f of fields) { const k = dimKey(f.id); if (k) dims[k] = [...(dims[k] || []), ...opts(f)]; }
-  return { type: opts(by('type')), metal: opts(by('metal')), karat: opts(by('karat')), stones: opts(by('stones')), coverage: opts(by('coverage')), clarity: opts(by('clarity')), budget: opts(by('budget')), cut: fields.filter((f) => CUT_FIELD.test(f.id)).flatMap(opts), dims };
+  // Izbori po komadu (perPiece): radni sto nudi samo ono što taj komad ima u formi.
+  const per = Object.fromEntries(['metal', 'karat', 'stones', 'coverage', 'clarity'].map((k) => [k, by(k)?.perPiece || null]).filter(([, v]) => v));
+  return { type: opts(by('type')), metal: opts(by('metal')), karat: opts(by('karat')), stones: opts(by('stones')), coverage: opts(by('coverage')), clarity: opts(by('clarity')), budget: opts(by('budget')), cut: fields.filter((f) => CUT_FIELD.test(f.id)).flatMap(opts), dims, per };
 }
 function pricingAnswers(a) {
   const out = {};

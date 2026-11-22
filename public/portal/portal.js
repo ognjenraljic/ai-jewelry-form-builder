@@ -1,5 +1,5 @@
 import { createLeadStore } from './leads.js';
-import { estimate, stoneLayout, applyMarket, isLive, MARKET_METALS, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody } from '/pricing.js';
+import { estimate, stoneLayout, applyMarket, isLive, MARKET_METALS, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody, iceKey, iceFields } from '/pricing.js';
 import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
 import { SUGGESTED, suggestOptions } from '/option-suggestions.js';
@@ -190,7 +190,7 @@ function quoteControls(key, ls, spec) {
     ${qChips(key, 'metal', 'Metal', metals, spec.metal)}
     ${isGold(spec.metal) ? qChips(key, 'karat', 'Karat', karats, spec.karat) : ''}
     ${grillz ? `<div class="qrow2">${qStepper(key, 'top', 'Top', r.top)}${qStepper(key, 'bottom', 'Bottom', r.bottom)}</div>` : ''}
-    ${!isDental(spec.metal) && ls.opts.coverage.length ? qChips(key, 'coverage', 'How iced', iceOpts, spec.coverage || '') : ''}
+    ${!isDental(spec.metal) && ls.opts.coverage.length ? qChips(key, 'coverage', 'How iced', iceOpts, iceKey(spec)) : ''}
     ${spec.coverage && stones.length ? qChips(key, 'stones', 'Stones', stones, spec.stones) : ''}
     ${spec.coverage && /natural/i.test(spec.stones) && clar.length ? qChips(key, 'clarity', 'Clarity', clar, spec.clarity) : ''}
     ${grillz && !spec.coverage && cuts.length ? qChips(key, 'cut', 'Cut', cuts, spec.cut || cuts[0][0]) : ''}
@@ -330,6 +330,9 @@ function quoteEdit(key, field, value, delta) {
     else if (!isGold(value)) s.karat = '';
   }
   if (field === 'coverage') {
+    // Izbor leda iz forme: nivo za račun + dijelovi sata (bezel, face, bracelet) i tačan naziv za poruku.
+    const o = ls.opts.ice?.[value];
+    Object.assign(s, value ? (o ? iceFields(o) : { coverage: value, ice: '', iceParts: '' }) : { coverage: '', ice: '', iceParts: '' });
     if (value && !s.stones) s.stones = ls.choices.stones[0] || 'default';
     if (!value) { s.stones = ''; s.clarity = ''; }
   }

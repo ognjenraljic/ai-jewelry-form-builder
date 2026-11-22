@@ -2,7 +2,7 @@
 // Njegov dizajn (sve verzije i video), ponude (kako je izabrao + "Fits the budget" kad je zlatar napravi), dugmad
 // Deposit i Book appointment, stilovi i završne obrade radnje, adresa i radno vrijeme. Izgled: luksuzni juvelir,
 // mirno i tipografski (vidi feedback_jewelrylead_premium_restraint): bez varnica i efekata, samo svjetlo i slova.
-import { estimate, specDiff, coverLabel, isGold, rowsOf, money } from '../public/pricing.js';
+import { estimate, specDiff, coverLabel, iceKey, isGold, rowsOf, money } from '../public/pricing.js';
 import { withArt, styleImage, metalFamily, artCategory } from '../public/option-art.js';
 
 export const PAGE_ACTIONS = ['deposit', 'appointment'];
@@ -28,7 +28,7 @@ function specRows(spec, ls) {
     const r = rowsOf(spec.teeth);
     rows.push(['Teeth', [r.top ? `${r.top} top` : '', r.bottom ? `${r.bottom} bottom` : ''].filter(Boolean).join(' + ') || '–']);
   }
-  rows.push(['Ice', coverLabel(spec.coverage, ls)]);
+  rows.push(['Ice', coverLabel(iceKey(spec), ls)]);
   if (spec.coverage) rows.push(['Stones', `${/natural/i.test(spec.stones) && spec.clarity ? `${spec.clarity} ` : ''}${/^default$/i.test(spec.stones) ? 'Diamonds' : spec.stones}`]);
   if (spec.type === 'grillz' && !spec.coverage && spec.cut && !/^(polished|solid)$/i.test(spec.cut)) rows.push(['Finish', spec.cut]);
   return rows;

@@ -360,9 +360,16 @@ export function stoneLayout(spec) {
     const dial = Math.PI * (r - 4.5) ** 2 * 0.6;
     const metalBand = !/leather|rubber|strap/i.test(spec.band || def.band);
     const band = metalBand ? 160 * r * 0.7 : 0;
-    area = spec.coverage === 'accents' ? bezel * 0.5 : spec.coverage === 'half' ? bezel + sides : bezel + sides + dial + band;
+    const parts = String(spec.iceParts || '').split(',').filter(Boolean);
+    if (parts.length) {
+      // Izbor po dijelu sata: bezel = prsten oko stakla, face = brojčanik, bracelet = metalna narukvica.
+      area = (parts.includes('bezel') ? bezel : 0) + (parts.includes('face') ? Math.PI * (r - 4.5) ** 2 * 0.85 : 0) + (parts.includes('bracelet') ? (band || 160 * r * 0.7) : 0);
+      what = `${c} mm watch, ${parts.map((x) => (x === 'face' ? 'dial' : x)).join(' + ')} only`;
+    } else {
+      area = spec.coverage === 'accents' ? bezel * 0.5 : spec.coverage === 'half' ? bezel + sides : bezel + sides + dial + band;
+      what = `${c} mm watch${metalBand ? ' with metal bracelet' : ''}`;
+    }
     d = 1.4;
-    what = `${c} mm watch${metalBand ? ' with metal bracelet' : ''}`;
   } else if (t === 'earrings') {
     const one = { small: 35, medium: 80, statement: 180 }[String(v('earSize')).toLowerCase()] || 80;
     area = 2 * one * share;
@@ -374,7 +381,8 @@ export function stoneLayout(spec) {
   const pitch = d + 0.25;
   const count = Math.max(1, Math.round(area / (0.866 * pitch * pitch)));
   const ct = round2(count * 0.0042 * d ** 3);
-  return { area: Math.round(area), d, count, ct, note: `Stone count estimated from the surface of a ${what}, ${COVER_NAME[spec.coverage] || 'iced'} (about ${Math.round(area).toLocaleString('en-US')} mm²); adjust the price per carat or the final price if your setting differs.` };
+  const coverName = t === 'watch' && spec.iceParts ? 'iced' : COVER_NAME[spec.coverage] || 'iced';
+  return { area: Math.round(area), d, count, ct, note: `Stone count estimated from the surface of a ${what}, ${coverName} (about ${Math.round(area).toLocaleString('en-US')} mm²); adjust the price per carat or the final price if your setting differs.` };
 }
 // Prirodni dijamanti: čistoća podiže cijenu po karatu (SI osnova).
 function clarityFactor(spec) {
@@ -407,7 +415,8 @@ export function middleGround(pricing, spec, budgetHigh, choices = {}) {
   const steps = [
     () => cur.stones && (choices.stones || []).filter((x) => key(x) !== key(cur.stones)).map((x) => ({ ...cur, stones: x })),
     () => cur.karat && (choices.karats || []).filter((x) => PURITY[key(x)] && PURITY[key(x)] < (PURITY[key(cur.karat)] || 0)).map((x) => ({ ...cur, karat: x })),
-    () => cur.coverage && LEVELS.slice(0, LEVELS.indexOf(cur.coverage)).filter((x) => !choices.coverages || choices.coverages.includes(x)).map((x) => ({ ...cur, coverage: x })),
+    () => cur.coverage && (choices.ices || LEVELS.slice(0, LEVELS.indexOf(cur.coverage)).filter((x) => !choices.coverages || choices.coverages.includes(x)).map((x) => ({ value: x, level: x, parts: '', custom: false })))
+      .filter((o) => o.value !== iceKey(cur)).map((o) => ({ ...cur, ...iceFields(o) })),
     () => (choices.metals || []).filter((x) => key(x) !== key(cur.metal)).map((x) => (/dental/i.test(x) ? { ...cur, metal: x, karat: '', stones: '', coverage: '' } : { ...cur, metal: x })),
   ];
   const label = { stones: 'Stones', karat: 'Karat', coverage: 'How iced', metal: 'Metal' };
@@ -417,7 +426,8 @@ export function middleGround(pricing, spec, budgetHigh, choices = {}) {
     const opts = (step() || []).map((s) => ({ s, t: priced(s) })).filter((o) => o.t != null && o.t < total);
     if (!opts.length) continue;
     const fit = opts.filter((o) => o.t <= budgetHigh).sort((a, b) => b.t - a.t)[0] || opts.sort((a, b) => a.t - b.t)[0];
-    for (const f of ['stones', 'karat', 'coverage', 'metal']) if (key(fit.s[f]) !== key(cur[f])) changes.push({ what: label[f], from: cur[f] || 'none', to: fit.s[f] || 'none' });
+    const val = (s, f) => (f === 'coverage' ? iceKey(s) : s[f]);
+    for (const f of ['stones', 'karat', 'coverage', 'metal']) if (key(val(fit.s, f)) !== key(val(cur, f))) changes.push({ what: label[f], from: val(cur, f) || 'none', to: val(fit.s, f) || 'none' });
     cur = fit.s;
     total = fit.t;
   }
@@ -430,24 +440,50 @@ export function middleGround(pricing, spec, budgetHigh, choices = {}) {
 export function leadSpecFrom(fs, a = {}) {
   if (!fs || !a?.type) return null;
   const lab = (list, v) => (list || []).find((o) => o.value === v)?.label || '';
-  const iced = LEVELS.includes(a.coverage);
+  // Izbori koje taj komad stvarno nudi (perPiece u formi, 22.11.2026: District nudi bezel / face / bracelet samo za sat).
+  const pick = (k) => { const allow = fs.per?.[k]?.[a.type]; return Array.isArray(allow) ? (fs[k] || []).filter((o) => allow.includes(o.value)) : fs[k] || []; };
+  const covOpts = pick('coverage').filter((o) => o.value !== 'none');
+  const ices = covOpts.map((o) => ({ value: o.value, label: o.label, ...iceInfo(o.value, o.label) }));
+  const covOpt = (fs.coverage || []).find((o) => o.value === a.coverage);
+  const ice = a.coverage && a.coverage !== 'none' ? (covOpt ? iceInfo(covOpt.value, covOpt.label) : LEVELS.includes(a.coverage) ? { level: a.coverage, parts: '', custom: false } : null) : null;
+  const iced = !!ice;
   return {
     spec: {
       type: a.type, metal: lab(fs.metal, a.metal) || a.metal || '', karat: lab(fs.karat, a.karat) || a.karat || '',
-      stones: iced ? (a.stones && a.stones !== 'none' ? lab(fs.stones, a.stones) || a.stones : 'default') : '', coverage: iced ? a.coverage : '',
+      stones: iced ? (a.stones && a.stones !== 'none' ? lab(fs.stones, a.stones) || a.stones : 'default') : '',
+      ...(iced ? iceFields({ value: a.coverage, ...ice }) : { coverage: '', ice: '', iceParts: '' }),
       cut: iced ? '' : lab(fs.cut, a.cut) || a.cut || '', units: String(a.teeth || '').split(',').filter(Boolean).length || 1,
       teeth: a.teeth || '', clarity: a.clarity || '', style: a.style || '',
       ...dimsFrom(fs.dims, a),
     },
     budget: parseBudget(lab(fs.budget, a.budget) || a.budget),
     budgetLabel: lab(fs.budget, a.budget) || a.budget || '',
-    choices: { stones: (fs.stones || []).filter((o) => o.value !== 'none').map((o) => o.label), karats: (fs.karat || []).map((o) => o.label), coverages: (fs.coverage || []).map((o) => o.value).filter((v) => LEVELS.includes(v)), metals: (fs.metal || []).map((o) => o.label) },
+    choices: { stones: pick('stones').filter((o) => o.value !== 'none').map((o) => o.label), karats: pick('karat').map((o) => o.label), coverages: covOpts.map((o) => o.value).filter((v) => LEVELS.includes(v)), ices, metals: pick('metal').map((o) => o.label) },
     opts: {
-      coverage: (fs.coverage || []).filter((o) => LEVELS.includes(o.value)).map((o) => [o.value, o.label]),
-      clarity: (fs.clarity || []).map((o) => o.label), cut: (fs.cut || []).map((o) => o.label),
+      coverage: covOpts.map((o) => [o.value, o.label]),
+      ice: Object.fromEntries(ices.map((o) => [o.value, o])),
+      clarity: pick('clarity').map((o) => o.label), cut: (fs.cut || []).map((o) => o.label),
     },
   };
 }
+
+// ---------- Izbori leda po dijelu komada (22.11.2026) ----------
+// Forma može nuditi i "Bezel iced-out", "Face iced-out", "Bracelet iced-out" (sat). Iz vrijednosti i natpisa se
+// izvede nivo (accents / half / full, za grillz i stari račun) i dijelovi (bezel, face, bracelet) za račun kamenja.
+// spec.coverage ostaje nivo; spec.ice = vrijednost izbora kad nije običan nivo; spec.iceParts = dijelovi.
+export function iceInfo(value, label) {
+  const t = `${value} ${label}`.toLowerCase();
+  const parts = [/bezel/.test(t) && 'bezel', /face|dial/.test(t) && 'face', /bracelet|band|strap|link/.test(t) && 'bracelet'].filter(Boolean);
+  const level = /full|fully|entire|bust/.test(t) && !parts.length ? 'full'
+    : LEVELS.includes(value) && !parts.length ? value
+    : /accent/.test(t) ? 'accents' : parts.length ? 'half' : /half/.test(t) ? 'half' : 'full';
+  return { level, parts: parts.join(','), custom: !!parts.length || !LEVELS.includes(value) };
+}
+export function iceFields(o) {
+  return { coverage: o.level, ice: o.custom ? o.value : '', iceParts: o.parts || '' };
+}
+// Izbor leda kako ga forma zove (za natpis, čipove i poređenje).
+export const iceKey = (s) => s?.ice || s?.coverage || '';
 
 
 // Veličina komada iz odgovora (22.11.2026): polja forme sa prefiksom komada (chain_length, ring_ring_size...) se
@@ -491,7 +527,7 @@ export function specDiff(ls, spec) {
   const add = (what, from, to) => { if (String(from || '') !== String(to || '')) out.push({ what, from: from || 'none', to: to || 'none' }); };
   add('Metal', a.metal, spec.metal);
   if (isGold(a.metal) || isGold(spec.metal)) add('Karat', isGold(a.metal) ? a.karat : '', isGold(spec.metal) ? spec.karat : '');
-  add('Ice', coverLabel(a.coverage, ls), coverLabel(spec.coverage, ls));
+  add('Ice', coverLabel(iceKey(a), ls), coverLabel(iceKey(spec), ls));
   if (a.coverage || spec.coverage) add('Stones', a.coverage ? a.stones : '', spec.coverage ? spec.stones : '');
   if (/natural/i.test(spec.stones) || /natural/i.test(a.stones)) add('Clarity', /natural/i.test(a.stones) && a.coverage ? a.clarity : '', /natural/i.test(spec.stones) && spec.coverage ? spec.clarity : '');
   if (a.type === 'grillz') {
@@ -507,7 +543,7 @@ export function quoteBody(ls, spec, est) {
   const r = rowsOf(spec.teeth);
   return {
     piece: spec.type, metal: spec.metal, karat: isGold(spec.metal) ? spec.karat : '',
-    ice: spec.coverage ? coverLabel(spec.coverage, ls) : '', stones: spec.coverage ? spec.stones : '', clarity: spec.coverage && /natural/i.test(spec.stones) ? spec.clarity : '',
+    ice: spec.coverage ? coverLabel(iceKey(spec), ls) : '', stones: spec.coverage ? spec.stones : '', clarity: spec.coverage && /natural/i.test(spec.stones) ? spec.clarity : '',
     cut: spec.type === 'grillz' && !spec.coverage ? spec.cut : '', teeth: spec.type === 'grillz' ? { top: r.top, bottom: r.bottom } : null,
     total: Math.round(est.total), lines: est.lines.map((x) => ({ label: x.label, amount: Math.round(x.amount) })),
     budget: ls.budgetLabel, changes: specDiff(ls, spec),

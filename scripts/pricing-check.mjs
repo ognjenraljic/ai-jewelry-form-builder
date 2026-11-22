@@ -110,6 +110,29 @@ ok(middleGround(G, { ...spec, stones: '', coverage: '', karat: '10K', teeth: 'T5
   ok(raw.spec.lengthIn === 20 && raw.spec.widthMm === 10 && clean.spec.lengthIn === 20 && clean.spec.widthMm === 10, 'dužina i širina lanca iz odgovora');
   ok(dimKey('ring_ring_size') === 'ring_size' && dimKey('earrings_stone_size_for_stud_and_drop_ea') === 'stone_size' && dimKey('grillz_grill_cut') === null, 'ključevi veličine bez prefiksa komada');
 }
+// ---------- 22.11.2026: Districtovi izbori leda po dijelu sata, izbori po komadu ----------
+{
+  const { coverLabel, quoteBody, iceKey } = await import('../public/pricing.js');
+  const o = (value, label) => ({ value, label });
+  const only = { grillz: ['full', 'none'], earrings: ['full', 'none'], bracelet: ['full', 'none'], chain: ['full', 'none'], ring: ['full', 'none'], pendant: ['full', 'none'] };
+  const fs = { type: [o('grillz', 'Grillz'), o('watch', 'Watch')], metal: [o('yellow-gold', 'Yellow Gold'), o('silver', 'Silver')], karat: [o('14K', '14K')],
+    stones: [o('moissanite', 'Moissanite'), o('lab', 'Lab-grown diamonds')], clarity: [], budget: [o('b', '$5,000 - $10,000')], cut: [],
+    coverage: [o('full', 'Fully iced'), o('half', 'Bezel iced-out'), o('face-iced-out', 'Face iced-out'), o('bracelet-iced-out', 'Bracelet iced-out'), o('face-bezel-iced-out', 'Face + Bezel iced-out'), o('none', 'None')],
+    dims: { case_size: [o('40-mm', '40 mm')], band: [o('bracelet', 'Metal bracelet')] }, per: { coverage: only } };
+  const g = leadSpecFrom(fs, { type: 'grillz', metal: 'silver', coverage: 'full', stones: 'moissanite', teeth: 'T5,T6' });
+  ok(JSON.stringify(g.opts.coverage) === '[["full","Fully iced"]]', 'grillz nudi samo Fully iced (Bezel iced-out je samo za sat)');
+  const w = (cov) => leadSpecFrom(fs, { type: 'watch', metal: 'yellow-gold', karat: '14K', coverage: cov, stones: 'lab', budget: 'b', watch_case_size: '40-mm', watch_band: 'bracelet' });
+  const fb = w('face-bezel-iced-out');
+  ok(fb.opts.coverage.length === 5 && fb.spec.coverage === 'half' && fb.spec.ice === 'face-bezel-iced-out' && fb.spec.iceParts === 'bezel,face', 'sat: Face + Bezel = dijelovi bezel i brojčanik');
+  ok(coverLabel(iceKey(fb.spec), fb) === 'Face + Bezel iced-out' && quoteBody(fb, fb.spec, { total: 1, lines: [] }).ice === 'Face + Bezel iced-out', 'poruka i oznake pišu tačan naziv izbora');
+  const n = (cov) => stoneLayout(w(cov).spec).count;
+  ok(n('half') < n('face-bezel-iced-out') && n('face-iced-out') < n('face-bezel-iced-out') && n('bracelet-iced-out') > n('half') && n('full') > n('face-bezel-iced-out'), `sat: bezel ${n('half')}, face ${n('face-iced-out')}, face+bezel ${n('face-bezel-iced-out')}, bracelet ${n('bracelet-iced-out')}, full ${n('full')} kamenova`);
+  ok(w('half').spec.ice === 'half' && coverLabel(iceKey(w('half').spec), w('half')) === 'Bezel iced-out', '"Bezel iced-out" (vrijednost half) ide kao bezel, ne kao pola sata');
+  const PS = { goldSpot: 110, grams: { watch: 120 }, labor: { watch: 300 }, stones: { 'lab-grown diamonds': { ct: 150 }, moissanite: { ct: 40 } }, setting: 1.5 };
+  const full = w('full');
+  const mg = middleGround(PS, full.spec, 9000, full.choices);
+  ok(mg && mg.total < estimate(PS, full.spec).total && (mg.spec.ice || mg.spec.coverage), `middle ground za sat bira jeftiniji izbor (${mg?.spec.ice || mg?.spec.coverage}, ${mg?.spec.stones}, $${Math.round(mg?.total)})`);
+}
 // ---------- 22.11.2026: žive cijene metala, Live / Custom ----------
 {
   const { applyMarket } = await import('../public/pricing.js');
