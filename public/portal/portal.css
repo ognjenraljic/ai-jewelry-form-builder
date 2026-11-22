@@ -475,7 +475,42 @@ button.dbar:focus-visible { outline: 2px solid var(--accent); outline-offset: 2p
 .qchip:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong)); color: var(--ink); }
 .qchip:active { transform: scale(.96); }
 .qchip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.qsel { width: 100%; padding: 7px 10px; font-size: 13px; border-radius: 10px; }
+.qsel { width: 100%; padding: 9px 38px 9px 13px; font-size: 13px; font-weight: 600; color: var(--ink); border-radius: 12px; cursor: pointer;
+  -webkit-appearance: none; appearance: none; border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--bg) 40%, transparent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2393a9a6' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center / 14px;
+  transition: border-color .15s, background-color .15s; }
+.qsel:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong)); }
+.qsel:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+
+/* Konačna cijena ponude (22.11.2026): upis + slider, natpis koliko je odstupanje od izračunate. */
+.qprice { margin-top: 12px; padding: 12px 12px 10px; border: 1px solid var(--line); border-radius: 14px; background: color-mix(in srgb, var(--bg) 35%, transparent); }
+.qprice-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.qprice-in { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line-strong); border-radius: 10px; padding: 0 4px 0 10px; background: var(--surface); transition: border-color .15s; }
+.qprice-in:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.qprice-in span { color: var(--ink-faint); font-weight: 600; font-size: 13px; }
+.qprice-in input { width: 92px; border: 0; background: none; color: var(--ink); font: 600 14px/1 inherit; font-family: inherit; padding: 8px 4px; text-align: right; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
+.qprice-in input::-webkit-outer-spin-button, .qprice-in input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.qprice-in input:focus { outline: none; }
+.qrange { --p: 50%; width: 100%; height: 24px; margin: 10px 0 4px; background: none; -webkit-appearance: none; appearance: none; cursor: pointer; }
+.qrange:disabled { cursor: default; opacity: .5; }
+.qrange::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: linear-gradient(90deg, var(--accent) 0 var(--p), color-mix(in srgb, var(--line) 85%, transparent) var(--p) 100%); }
+.qrange::-moz-range-track { height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--line) 85%, transparent); }
+.qrange::-moz-range-progress { height: 6px; border-radius: 999px; background: var(--accent); }
+.qrange::-webkit-slider-thumb { -webkit-appearance: none; width: 20px; height: 20px; margin-top: -7px; border-radius: 50%; background: var(--ink); border: 3px solid var(--accent); box-shadow: 0 3px 10px rgba(0,0,0,.45); transition: transform .12s; }
+.qrange::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--ink); border: 3px solid var(--accent); box-shadow: 0 3px 10px rgba(0,0,0,.45); }
+.qrange:active::-webkit-slider-thumb { transform: scale(1.12); }
+.qrange:focus-visible { outline: none; }
+.qrange:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+.qprice-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink-faint); min-height: 18px; }
+.qlink { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; padding: 2px 0; }
+.qlink:hover { text-decoration: underline; text-underline-offset: 3px; }
+.qadj { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.qadj > summary { cursor: pointer; font-size: 12px; font-weight: 700; color: var(--ink-soft); list-style: none; display: flex; align-items: center; gap: 6px; }
+.qadj > summary::-webkit-details-marker { display: none; }
+.qadj > summary::before { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; margin-right: 2px; }
+.qadj[open] > summary::before { transform: rotate(45deg); }
+.qadj > summary:hover { color: var(--ink); }
+.qadj .qgrid { margin-top: 10px; }
 .qrow2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .qstepper { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line-strong); border-radius: 12px; padding: 3px; background: color-mix(in srgb, var(--bg) 40%, transparent); }
 .qstepper button { width: 32px; height: 30px; border: 0; border-radius: 9px; background: var(--surface-2); color: var(--ink); font-size: 16px; cursor: pointer; }

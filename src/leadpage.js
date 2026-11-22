@@ -39,16 +39,24 @@ const moldingIncluded = (est) => (est?.lines || []).some((l) => /molding/i.test(
 function offersOf({ ls, pricing, quotes }) {
   if (!ls || !pricing) return [];
   const out = [];
-  const a = estimate(pricing, ls.spec);
-  if (a.total == null) return [];
-  out.push({ slot: 'picked', tag: 'Option 1', title: 'Your design', sub: 'Exactly as you created it', total: a.total, rows: specRows(ls.spec, ls), molding: moldingIncluded(a) });
-  const fitSpec = quotes?.fit?.spec && quotes.fit.spec.type === ls.spec.type ? { ...ls.spec, ...quotes.fit.spec } : null;
+  // Zlatar može podesiti obje ponude u portalu (22.11.2026): izbore (quotes.<slot>.spec) i konačnu cijenu
+  // (quotes.<slot>.price); stranica pokazuje tačno to, a bez podešavanja računa iz cjenovnika.
+  const specOf = (slot) => (quotes?.[slot]?.spec && quotes[slot].spec.type === ls.spec.type ? { ...ls.spec, ...quotes[slot].spec } : null);
+  const finalOf = (slot, est) => (Number(quotes?.[slot]?.price) > 0 ? Number(quotes[slot].price) : est.total);
+  const pickedSpec = specOf('picked') || ls.spec;
+  const a = estimate(pricing, pickedSpec);
+  const aTotal = finalOf('picked', a);
+  if (aTotal == null) return [];
+  const adjusted = specDiff(ls, pickedSpec).length > 0;
+  out.push({ slot: 'picked', tag: 'Option 1', title: 'Your design', sub: adjusted ? 'Your design, as we would make it' : 'Exactly as you created it', total: aTotal, rows: specRows(pickedSpec, ls), molding: moldingIncluded(a) });
+  const fitSpec = specOf('fit');
   if (fitSpec) {
     const b = estimate(pricing, fitSpec);
-    const changes = specDiff(ls, fitSpec).filter((c) => !(['Karat', 'Clarity'].includes(c.what) && /^(none|)$/i.test(c.to)));
-    if (b.total != null && b.total < a.total && changes.length) {
-      const inBudget = !Number.isFinite(ls.budget?.high) || b.total <= ls.budget.high;
-      out.push({ slot: 'fit', tag: 'Option 2', title: inBudget ? 'Fits your budget' : 'Closer to your budget', sub: 'Same look, smarter materials', total: b.total, rows: specRows(fitSpec, ls), changes, save: a.total - b.total, from: a.total, molding: moldingIncluded(b), best: inBudget });
+    const bTotal = finalOf('fit', b);
+    const changes = specDiff({ ...ls, spec: pickedSpec }, fitSpec).filter((c) => !(['Karat', 'Clarity'].includes(c.what) && /^(none|)$/i.test(c.to)));
+    if (bTotal != null && bTotal < aTotal && changes.length) {
+      const inBudget = !Number.isFinite(ls.budget?.high) || bTotal <= ls.budget.high;
+      out.push({ slot: 'fit', tag: 'Option 2', title: inBudget ? 'Fits your budget' : 'Closer to your budget', sub: 'Same look, smarter materials', total: bTotal, rows: specRows(fitSpec, ls), changes, save: aTotal - bTotal, from: aTotal, molding: moldingIncluded(b), best: inBudget });
     }
   }
   return out;

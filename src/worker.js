@@ -8,7 +8,7 @@ import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
-import { estimate, leadSpecFrom, quoteBody } from '../public/pricing.js';
+import { estimate, leadSpecFrom, quoteBody, dimKey } from '../public/pricing.js';
 import { leadPageHtml, PAGE_ACTIONS } from './leadpage.js';
 import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
@@ -1660,11 +1660,26 @@ async function portalApi(request, env, p, secure) {
   if ((qm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/quote$/)) && request.method === 'PUT') {
     const b = await request.json().catch(() => ({}));
     const slot = QUOTE_SLOTS.includes(b.slot) ? b.slot : null;
+    // Podešena ponuda (22.11.2026): izbori i konačna cijena koje zlatar namjesti u Estimated price / Fits the budget.
+    // Čuvaju se i bez poruke, a stranica kupca pokazuje baš njih.
+    if (slot && b.message == null && ('spec' in b || 'price' in b)) {
+      const row = await env.DB.prepare('SELECT l.quotes FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(qm[1], client.id).first();
+      if (!row) return json({ error: 'Not found' }, 404);
+      let quotes = {};
+      try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
+      const cur = quotes[slot] && typeof quotes[slot] === 'object' ? quotes[slot] : {};
+      const at = Date.now();
+      const next = { ...cur, adjAt: at };
+      if ('spec' in b) { const sp = quoteSpecToSave(b.spec); if (sp) next.spec = sp; else delete next.spec; }
+      if ('price' in b) { const pr = quotePrice(b.price); if (pr) next.price = pr; else delete next.price; }
+      await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(next), qm[1]).run();
+      return json({ ok: true, at, price: next.price ?? null });
+    }
     const msg = quoteMessageText(b.message);
     if (!slot || msg == null) return json({ error: 'Nothing to save.' }, 400);
     const at = Date.now();
     const r = await env.DB.prepare(`UPDATE leads SET quotes = json_set(quotes, '$.${slot}.msg', ?, '$.${slot}.edited', json('true'), '$.${slot}.at', ?)
-      WHERE id = ? AND json_type(quotes, '$.${slot}') = 'object' AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`).bind(msg, at, qm[1], client.id).run();
+      WHERE id = ? AND json_type(quotes, '$.${slot}.msg') = 'text' AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`).bind(msg, at, qm[1], client.id).run();
     return r.meta.changes ? json({ ok: true, at }) : json({ error: 'Generate the message first.' }, 404);
   }
   let lm;
@@ -1720,7 +1735,8 @@ async function writeQuote(env, client, lead, b, origin, { auto = false } = {}) {
   const out = { message: [body, link, info].filter(Boolean).join('\n\n'), source: message ? 'ai' : 'template' };
   // Poruka ostaje zabilježena za taj lead (Ognjen 19.11.2026): poslije izlaska ili osvježavanja je ista, nova je zamjenjuje.
   if (slot) {
-    const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, edited: false, at: Date.now() };
+    const price = quotePrice(b.price);
+    const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, ...(price ? { price } : {}), edited: false, at: Date.now() };
     await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(saved), lead.id).run();
     out.saved = saved;
     await logEvent(env, lead.id, 'quote_generated', { slot, source: out.source, auto });
@@ -1913,7 +1929,14 @@ function quoteSpecToSave(s) {
 function leadQuotes(raw) {
   let q = {};
   try { q = JSON.parse(raw || '{}') || {}; } catch {}
-  return Object.fromEntries(QUOTE_SLOTS.filter((k) => q[k] && typeof q[k].msg === 'string').map((k) => [k, { msg: q[k].msg, source: q[k].source === 'ai' ? 'ai' : 'template', spec: q[k].spec || null, edited: !!q[k].edited, at: q[k].at || null }]));
+  return Object.fromEntries(QUOTE_SLOTS.filter((k) => q[k] && (typeof q[k].msg === 'string' || q[k].spec || q[k].price)).map((k) => [k, {
+    msg: typeof q[k].msg === 'string' ? q[k].msg : null, source: q[k].source === 'ai' ? 'ai' : 'template', spec: q[k].spec || null,
+    price: quotePrice(q[k].price), edited: !!q[k].edited, at: q[k].at || null }]));
+}
+// Konačna cijena koju zlatar upiše ili namjesti sliderom (cijeli dolari).
+function quotePrice(v) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n > 0 && n <= 5e6 ? n : null;
 }
 // Store info zlatara (adresa, radno vrijeme, rokovi izrade, uslovi): ide doslovno na kraj SVAKE quote poruke
 // (Ognjen 19.11.2026, District). Čuva se uz cijene (pricing.quoteInfo); emoji i novi redovi ostaju kako su upisani.
@@ -2032,13 +2055,17 @@ function pricingSpec(form) {
   const fields = (form?.steps || []).filter((st) => st.enabled !== false).flatMap((st) => st.fields || []).filter((f) => f.enabled !== false);
   const opts = (f) => (f?.options || []).map((o) => ({ value: o.value, label: o.label }));
   const by = (id) => fields.find((f) => f.id === id);
-  return { type: opts(by('type')), metal: opts(by('metal')), karat: opts(by('karat')), stones: opts(by('stones')), coverage: opts(by('coverage')), clarity: opts(by('clarity')), budget: opts(by('budget')), cut: fields.filter((f) => CUT_FIELD.test(f.id)).flatMap(opts) };
+  // Veličina komada (22.11.2026) za kamenje po površini: ključ bez prefiksa komada (chain_length -> length).
+  const dims = {};
+  for (const f of fields) { const k = dimKey(f.id); if (k) dims[k] = [...(dims[k] || []), ...opts(f)]; }
+  return { type: opts(by('type')), metal: opts(by('metal')), karat: opts(by('karat')), stones: opts(by('stones')), coverage: opts(by('coverage')), clarity: opts(by('clarity')), budget: opts(by('budget')), cut: fields.filter((f) => CUT_FIELD.test(f.id)).flatMap(opts), dims };
 }
 function pricingAnswers(a) {
   const out = {};
   for (const k of ['type', 'metal', 'karat', 'stones', 'coverage', 'clarity', 'style', 'budget', 'teeth']) if (a[k] != null && a[k] !== '') out[k] = String(a[k]).slice(0, 200);
   const cut = Object.keys(a).find((k) => CUT_FIELD.test(k) && a[k]);
   if (cut) out.cut = String(a[cut]).slice(0, 80);
+  for (const [k, v] of Object.entries(a)) { const d = dimKey(k); if (d && v != null && v !== '' && typeof v !== 'object') out[`d_${d}`] = String(v).slice(0, 60); }
   return out;
 }
 // Tabela cijena: samo brojevi >= 0, ključevi kratki, ograničen broj stavki.
@@ -2047,7 +2074,7 @@ function cleanPricing(p) {
   const map = (o, depth = 1) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), depth > 1 ? map(v, depth - 1) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
   // Grillz cjenovnik (18.11.2026): brojevi ili ugniježđene tabele do 3 nivoa (grillz.sets.6.10k).
   const tree = (o, depth) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), v && typeof v === 'object' ? (depth > 1 ? tree(v, depth - 1) : undefined) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
-  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo), depositUrl: httpsUrl(p?.depositUrl), bookingUrl: httpsUrl(p?.bookingUrl),
+  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), setting: n(p?.setting), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo), depositUrl: httpsUrl(p?.depositUrl), bookingUrl: httpsUrl(p?.bookingUrl),
     // Obavještenja i prva poruka (21.11.2026): kome ide mejl o leadu, na koju adresu kupac odgovara, da li prva poruka ide sama.
     alertEmails: emailList(p?.alertEmails), replyTo: validEmail(p?.replyTo) || undefined, autoSend: p?.autoSend === true };
 }
@@ -2479,7 +2506,7 @@ async function portalBookings(env, client) {
     let type = '';
     try { type = JSON.parse(l.answers || '{}').type || ''; } catch {}
     const actions = (Array.isArray(pg.actions) ? pg.actions : []).filter((a) => PAGE_ACTIONS.includes(a.action))
-      .map((a) => ({ action: a.action, option: a.option || '', at: a.at, total: Number(q[a.option]?.total) || null })).sort((a, b) => b.at - a.at);
+      .map((a) => ({ action: a.action, option: a.option || '', at: a.at, total: quotePrice(q[a.option]?.price) || Number(q[a.option]?.total) || null })).sort((a, b) => b.at - a.at);
     return { id: l.id, name: l.name, email: l.email, phone: l.phone, createdAt: l.created_at, status: l.status || 'new', piece: type,
       img: l.img ? `/media/${l.img}` : '', page: l.page_key ? `/p/${l.page_key}` : '', views: pg.views || 0, lastAt: actions[0]?.at || 0,
       isNew: actions.some((a) => a.at > seenAt), actions };

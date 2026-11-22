@@ -47,12 +47,14 @@ export const SUGGESTED_PRICING = {
   metals: { platinum: 50, silver: 2, 'sterling silver': 2, 'dental gold': 45 },
   grams: { pendant: 12, ring: 6, chain: 25, bracelet: 20, earrings: 4 },
   labor: { pendant: 250, ring: 200, chain: 150, bracelet: 150, earrings: 120 },
+  // Kamenje van grillza (22.11.2026): $ po karatu za sitno kamenje i za centralni kamen, ugradnja po kamenu.
   stones: {
-    moissanite: { accents: 120, half: 300, full: 520 },
-    'lab-grown diamonds': { accents: 200, half: 500, full: 900 },
-    'natural diamonds': { accents: 300, half: 750, full: 1400 },
-    default: { accents: 200, half: 500, full: 900 },
+    moissanite: { ct: 40, center: 150 },
+    'lab-grown diamonds': { ct: 150, center: 350 },
+    'natural diamonds': { ct: 600, center: 4000 },
+    default: { ct: 150, center: 350 },
   },
+  setting: 1.5,
   grillz: DISTRICT_GRILLZ,
 };
 export const PURITY = { '10k': 10 / 24, '14k': 14 / 24, '18k': 18 / 24, '22k': 22 / 24, '24k': 1 };
@@ -151,7 +153,10 @@ function icedGrillz(g, rows, col, spec, plain) {
   const st = key(spec.stones);
   const notes = [];
   const name = COL_NAME[col] || col;
-  if (/moissanite/.test(st)) {
+  // Moissanite po zubu (22.11.2026, Ognjen): kad zlatar upiše red u tabelu zuba, ide kao ostalo kamenje po zubu;
+  // bez tog reda ostaje stari račun preko srebrnih pave setova.
+  const moissPerTooth = /moissanite/.test(st) && ICED_COLS.some((c) => num(g?.iced?.moissanite?.[c]));
+  if (/moissanite/.test(st) && !moissPerTooth) {
     const set = g?.moissanite;
     const one = (r) => { const sz = sizeUp(set, r, null); return sz ? { v: num(set[sz]) / 2, sz } : null; };
     const a = rows.top ? one(rows.top) : { v: 0 };
@@ -170,8 +175,8 @@ function icedGrillz(g, rows, col, spec, plain) {
     }
     return { amount, label, notes };
   }
-  let row = 'lab';
-  if (/natural/.test(st)) {
+  let row = moissPerTooth ? 'moissanite' : 'lab';
+  if (moissPerTooth) { /* moissanite red iz tabele zuba */ } else if (/natural/.test(st)) {
     const c = key(spec.clarity);
     row = /vvs|flawless/.test(c) ? 'natural vvs1' : 'natural si1';
     if (c === 'vs') row = 'vs';
@@ -181,7 +186,7 @@ function icedGrillz(g, rows, col, spec, plain) {
   const per = (c) => (row === 'vs'
     ? (num(g?.iced?.['natural si1']?.[c]) && num(g?.iced?.['natural vvs1']?.[c]) ? (g.iced['natural si1'][c] + g.iced['natural vvs1'][c]) / 2 : null)
     : num(g?.iced?.[row]?.[c]));
-  const rowName = row === 'lab' ? 'lab diamonds' : row === 'vs' ? 'natural VS (between SI1 and VVS1)' : row.replace('natural ', 'natural diamonds ').toUpperCase().replace('NATURAL DIAMONDS', 'natural diamonds');
+  const rowName = row === 'moissanite' ? 'moissanite' : row === 'lab' ? 'lab diamonds' : row === 'vs' ? 'natural VS (between SI1 and VVS1)' : row.replace('natural ', 'natural diamonds ').toUpperCase().replace('NATURAL DIAMONDS', 'natural diamonds');
   if (per(col)) return { amount: per(col) * n, label: `Iced, ${rowName}: ${n} × ${money(per(col))} (${name})`, notes };
   // 18K i platina nemaju led u tabeli: 14K led + razlika metala iz obične tabele.
   const plain14 = plainGrillz(g, rows, '14k', spec.style === 'fangs');
@@ -251,20 +256,116 @@ export function estimate(pricing, spec) {
   const labor = num(pricing?.labor?.[spec.type]);
   if (labor) lines.push({ label: `Labor${units > 1 ? `: ${units} × ${money(labor)}` : ''}`, amount: labor * units });
   else missing.push(`labor${per} for ${spec.type}`);
+  const notes = [];
   if (spec.stones && spec.coverage) {
-    const s = num(pricing?.stones?.[key(spec.stones)]?.[spec.coverage]);
-    if (s) lines.push({ label: `Stones: ${spec.stones}, ${spec.coverage}${units > 1 ? ` × ${units}` : ''}`, amount: s * units });
-    else missing.push(`${spec.stones} (${spec.coverage})${per}`);
+    const row = pricing?.stones?.[key(spec.stones)];
+    const perCt = num(row?.ct);
+    if (perCt) {
+      // Kamenje po površini (22.11.2026): koliko kamenova stane na taj komad te veličine, koliko je to karata, pa $/ct.
+      const lay = stoneLayout(spec);
+      const mult = clarityFactor(spec);
+      if (mult.note) notes.push(mult.note);
+      lines.push({ label: `Stones: about ${lay.count.toLocaleString('en-US')} × ${lay.d} mm ${stoneName(spec.stones)} (≈ ${lay.ct} ct) × ${money(perCt * mult.k)}/ct`, amount: lay.ct * perCt * mult.k });
+      const setting = num(pricing?.setting);
+      if (setting) lines.push({ label: `Setting: ${lay.count.toLocaleString('en-US')} stones × $${setting}`, amount: lay.count * setting });
+      notes.push(lay.note);
+    } else {
+      const s = num(row?.[spec.coverage]);
+      if (s) lines.push({ label: `Stones: ${spec.stones}, ${spec.coverage}${units > 1 ? ` × ${units}` : ''}`, amount: s * units });
+      else missing.push(`${spec.stones} ${row ? `(${spec.coverage})` : 'price per carat'}${per}`);
+    }
+  }
+  // Centralni kamen (prsten, minđuše na šraf): karati koje je kupac izabrao × $/ct za centralne kamenove.
+  const center = centerStones(spec);
+  if (center) {
+    const row = pricing?.stones?.[key(spec.stones)] || pricing?.stones?.default;
+    const perCt = num(row?.center);
+    const k = clarityFactor(spec).k;
+    if (perCt) lines.push({ label: `${center.label}: ${center.ct} ct × ${money(perCt * k)}/ct`, amount: center.ct * perCt * k });
+    else notes.push(`${center.label} (${center.ct} ct) not priced: add a center stone price per carat`);
   }
   if (spec.cut) {
     const c = pricing?.cuts?.[key(spec.cut)];
     if (num(c)) lines.push({ label: `Cut: ${spec.cut}${units > 1 ? ` × ${units}` : ''}`, amount: num(c) * units });
   }
-  if (missing.length) return { total: null, lines, missing };
+  if (missing.length) return { total: null, lines, missing, notes };
   const sub = lines.reduce((n, l) => n + l.amount, 0);
   const markup = Number(pricing?.markup) > 0 ? Number(pricing.markup) : 0;
   if (markup) lines.push({ label: `Markup ${markup}%`, amount: (sub * markup) / 100 });
-  return { total: sub * (1 + markup / 100), lines, missing };
+  return { total: sub * (1 + markup / 100), lines, missing, notes };
+}
+
+// ---------- Kamenje po površini (komadi van grillza, 22.11.2026) ----------
+// Površina koja se okiva iz veličine komada (prsten po broju, privjesak po visini, lanac i narukvica dužina × širina,
+// sat kućište + narukvica, minđuše po veličini), veličina kamena po komadu, kamenovi u gustom saću sa razmakom za
+// krapne, karati okruglog briljanta ≈ 0.0042 × prečnik³ (1.3 mm ≈ 0.01 ct, 1.8 mm ≈ 0.025 ct). Procjena za ponudu,
+// ne CAD; zlatar podešava cijenu po karatu i ugradnju.
+const IN = 25.4;
+const COVER_SHARE = { accents: 0.12, half: 0.5, full: 1 };
+const COVER_NAME = { accents: 'accents', half: 'half iced', full: 'fully iced' };
+const round2 = (x) => Math.round(x * 100) / 100;
+const stoneName = (s) => (/^default$/i.test(s || '') ? 'diamonds' : String(s).toLowerCase());
+function linkStone(w) { return w <= 4 ? 1.1 : w <= 6 ? 1.3 : w <= 9 ? 1.5 : w <= 11 ? 1.8 : 2; }
+export const DIM_DEFAULTS = { ring: { ringSize: 8 }, pendant: { sizeIn: 2 }, chain: { lengthIn: 20, widthMm: 8 }, bracelet: { lengthIn: 7.5, widthMm: 8 }, watch: { caseMm: 40, band: 'metal bracelet' }, earrings: { earSize: 'medium' } };
+export function stoneLayout(spec) {
+  const t = spec.type;
+  const def = DIM_DEFAULTS[t] || {};
+  const v = (k) => (Number(spec[k]) > 0 ? Number(spec[k]) : def[k]);
+  const share = COVER_SHARE[spec.coverage] ?? 1;
+  let area = 0; let d = 1.3; let what = '';
+  if (t === 'ring') {
+    const size = v('ringSize');
+    const inner = 11.63 + 0.8128 * size; // US veličina u unutrašnji prečnik (mm)
+    area = (Math.PI * (inner + 3) * 5 + 90) * share; // spoljašnja strana šine 5 mm + vrh
+    what = `size ${size} ring`;
+  } else if (t === 'pendant') {
+    const h = v('sizeIn');
+    area = (h * IN) ** 2 * 0.55 * share; d = 1.5;
+    what = `${h}" pendant`;
+  } else if (t === 'chain' || t === 'bracelet') {
+    const len = v('lengthIn') + (t === 'bracelet' ? 0.5 : 0);
+    const w = v('widthMm');
+    area = len * IN * w * 0.7 * share; d = linkStone(w); // gornja strana karika
+    what = `${v('lengthIn')}" × ${w} mm ${t}`;
+  } else if (t === 'watch') {
+    const c = v('caseMm');
+    const r = c / 2;
+    const bezel = Math.PI * (r * r - (r - 4.5) ** 2);
+    const sides = 2.4 * c * 7; // kućište i ušice
+    const dial = Math.PI * (r - 4.5) ** 2 * 0.6;
+    const metalBand = !/leather|rubber|strap/i.test(spec.band || def.band);
+    const band = metalBand ? 160 * r * 0.7 : 0;
+    area = spec.coverage === 'accents' ? bezel * 0.5 : spec.coverage === 'half' ? bezel + sides : bezel + sides + dial + band;
+    d = 1.4;
+    what = `${c} mm watch${metalBand ? ' with metal bracelet' : ''}`;
+  } else if (t === 'earrings') {
+    const one = { small: 35, medium: 80, statement: 180 }[String(v('earSize')).toLowerCase()] || 80;
+    area = 2 * one * share;
+    what = `pair of ${String(v('earSize')).toLowerCase()} earrings`;
+  } else {
+    area = 600 * share;
+    what = t || 'piece';
+  }
+  const pitch = d + 0.25;
+  const count = Math.max(1, Math.round(area / (0.866 * pitch * pitch)));
+  const ct = round2(count * 0.0042 * d ** 3);
+  return { area: Math.round(area), d, count, ct, note: `Stone count estimated from the surface of a ${what}, ${COVER_NAME[spec.coverage] || 'iced'} (about ${Math.round(area).toLocaleString('en-US')} mm²); adjust the price per carat or the final price if your setting differs.` };
+}
+// Prirodni dijamanti: čistoća podiže cijenu po karatu (SI osnova).
+function clarityFactor(spec) {
+  if (!/natural/i.test(spec.stones || '')) return { k: 1 };
+  const c = key(spec.clarity);
+  if (/vvs/.test(c)) return { k: 1.5, note: 'VVS clarity: price per carat × 1.5' };
+  if (/^vs/.test(c)) return { k: 1.25, note: 'VS clarity: price per carat × 1.25' };
+  if (/flawless|^if$/.test(c)) return { k: 2, note: 'Flawless: price per carat × 2' };
+  return { k: 1 };
+}
+function centerStones(spec) {
+  const ct = Number(spec.centerCt);
+  if (!(ct > 0)) return null;
+  if (spec.type === 'earrings') return { ct: round2(ct * 2), label: `Stud stones, 2 × ${ct} ct` };
+  if (spec.type === 'ring') return { ct, label: 'Center stone' };
+  return null;
 }
 
 // Middle ground: korak po korak najmanje vidljive izmjene dok cijena ne stane u gornju granicu budžeta.
@@ -311,6 +412,7 @@ export function leadSpecFrom(fs, a = {}) {
       stones: iced ? (a.stones && a.stones !== 'none' ? lab(fs.stones, a.stones) || a.stones : 'default') : '', coverage: iced ? a.coverage : '',
       cut: iced ? '' : lab(fs.cut, a.cut) || a.cut || '', units: String(a.teeth || '').split(',').filter(Boolean).length || 1,
       teeth: a.teeth || '', clarity: a.clarity || '', style: a.style || '',
+      ...dimsFrom(fs.dims, a),
     },
     budget: parseBudget(lab(fs.budget, a.budget) || a.budget),
     budgetLabel: lab(fs.budget, a.budget) || a.budget || '',
@@ -322,6 +424,35 @@ export function leadSpecFrom(fs, a = {}) {
   };
 }
 
+
+// Veličina komada iz odgovora (22.11.2026): polja forme sa prefiksom komada (chain_length, ring_ring_size...) se
+// svode na ključ (length, ring_size...) u pricingAnswers kao d_<ključ>; ovdje natpis izbora postaje broj.
+export const DIM_FIELDS = ['ring_size', 'length', 'width', 'size', 'case_size', 'band', 'carat', 'stone_size'];
+export function dimKey(id) {
+  const k = String(id || '').replace(/^(ring|chain|bracelet|pendant|earrings|watch|grillz)_/, '');
+  if (/^stone_size/.test(k)) return 'stone_size';
+  return DIM_FIELDS.includes(k) ? k : null;
+}
+function dimsFrom(dims, a) {
+  const out = {};
+  // Odgovori dolaze ili sirovi (portal: chain_length) ili očišćeni na serveru (d_length).
+  const raw = {};
+  for (const [k, v] of Object.entries(a)) { const d = k.startsWith('d_') ? k.slice(2) : dimKey(k); if (d && v != null && v !== '' && typeof v !== 'object') raw[d] = String(v); }
+  const label = (k) => { const v = raw[k]; return v == null ? '' : (dims?.[k] || []).find((o) => o.value === v)?.label || v; };
+  const n = (s) => { const x = parseFloat(String(s).replace(',', '.')); return Number.isFinite(x) && x > 0 ? x : null; };
+  const t = a.type;
+  if (t === 'ring' && n(label('ring_size'))) out.ringSize = n(label('ring_size'));
+  if (t === 'ring' && n(label('carat'))) out.centerCt = n(label('carat'));
+  if (t === 'ring' && label('band')) out.band = label('band');
+  if ((t === 'chain' || t === 'bracelet') && n(label('length'))) out.lengthIn = n(label('length'));
+  if ((t === 'chain' || t === 'bracelet') && n(label('width'))) out.widthMm = n(label('width'));
+  if (t === 'pendant' && n(label('size'))) out.sizeIn = n(label('size'));
+  if (t === 'earrings' && label('size')) out.earSize = label('size');
+  if (t === 'earrings' && n(label('stone_size'))) out.centerCt = n(label('stone_size'));
+  if (t === 'watch' && n(label('case_size'))) out.caseMm = n(label('case_size'));
+  if (t === 'watch' && label('band')) out.band = label('band');
+  return out;
+}
 
 export const isGold = (m) => /gold|two.?tone/i.test(m || '') && !/dental/i.test(m || '');
 export const isDental = (m) => /dental/i.test(m || '');

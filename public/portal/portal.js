@@ -87,27 +87,39 @@ function leadSpec(l) {
 // Broj zuba u redu: zadržava kupčeve zube kad se broj ne mijenja, inače centrirano (5 i 6 su srednji).
 const rowIds = (k, n, keep) => (keep.length === n ? keep : Array.from({ length: n }, (_, i) => `${k}${6 - Math.ceil(n / 2) + i}`));
 
-// Stanje quote radnog stola po leadu (ostaje kroz render, dok se stranica ne osvježi).
+// Stanje quote radnog stola po ključu: `${id}` = Fits the budget, `${id}|p` = Estimated price.
+// Od 22.11.2026 obje ponude se podešavaju (izbori + konačna cijena sliderom) i to se čuva uz lead, pa stranica kupca
+// pokazuje tačno ono što je zlatar namjestio.
 const Q = {};
-function quoteState(l, ls) {
-  const q = (Q[l.id] ||= {});
+const qkLead = (key) => String(key).split('|')[0];
+const slotOf = (key) => (String(key).endsWith('|p') ? 'picked' : 'fit');
+const sigOf = (q) => JSON.stringify([q.spec, q.price ?? null]);
+// Konačna cijena: zlatarova (slider ili upis) ili iz cjenovnika.
+const finalTotal = (q, est) => (q.price != null ? q.price : est.total);
+function quoteState(l, ls, key) {
+  const q = (Q[key] ||= {});
   if (!q.spec) {
-    const high = ls.budget?.high;
-    const mg = Number.isFinite(high) && P.me.pricing ? middleGround(P.me.pricing, ls.spec, high, ls.choices) : null;
-    q.suggested = { ...(mg?.spec || ls.spec) };
-    // Sačuvana poruka (19.11.2026): radni sto se vraća na izbore za koje je napisana.
-    const saved = l.quotes?.fit;
+    const slot = slotOf(key);
+    if (slot === 'picked') q.suggested = { ...ls.spec };
+    else {
+      const high = ls.budget?.high;
+      const mg = Number.isFinite(high) && P.me.pricing ? middleGround(P.me.pricing, ls.spec, high, ls.choices) : null;
+      q.suggested = { ...(mg?.spec || ls.spec) };
+    }
+    // Sačuvano (19.11 poruka, 22.11 izbori i cijena): radni sto se vraća na ono što je zlatar ostavio.
+    const saved = l.quotes?.[slot];
     q.spec = saved?.spec && saved.spec.type === ls.spec.type ? { ...ls.spec, ...saved.spec } : { ...q.suggested };
-    restoreQuote(q, saved, q.spec);
+    q.price = saved?.price ?? null;
+    restoreQuote(q, saved);
   }
   return q;
 }
 // Poruka iz baze ide u stanje samo jednom (dok se stranica ne osvježi važi ono što je u polju).
-function restoreQuote(q, saved, spec) {
+function restoreQuote(q, saved) {
   if (q.restored) return;
   q.restored = true;
   if (!saved?.msg || q.msg != null) return;
-  Object.assign(q, { msg: saved.msg, source: saved.source, edited: saved.edited, savedAt: saved.at, msgFor: JSON.stringify(saved.spec ? { ...spec, ...saved.spec } : spec) });
+  Object.assign(q, { msg: saved.msg, source: saved.source, edited: saved.edited, savedAt: saved.at, msgFor: sigOf(q) });
 }
 // Traka budžeta: raspon kupca osjenčen, tačka je cijena (ispred raspona = ispod, iza = preko).
 function budgetMeter(total, b, label) {
@@ -122,20 +134,48 @@ function budgetMeter(total, b, label) {
     <div class="bm-track"><span class="bm-band" style="left:${pct(b.low)}%;width:${Math.max(2, (Number.isFinite(b.high) ? pct(b.high) : 100) - pct(b.low))}%"></span><span class="bm-dot" style="left:${pct(total)}%"></span></div>
     <div class="bm-legend"><span>Budget ${esc(label)}</span><b>${note}</b></div></div>`;
 }
-const breakdown = (est, open = false) => `<details class="calc-more" ${open ? 'open' : ''}><summary>How it's priced</summary><ul class="calc-lines">${est.lines.map((x) => `<li><span>${esc(x.label)}</span><b>${money(x.amount)}</b></li>`).join('')}</ul>${(est.notes || []).length ? `<ul class="calc-notes">${est.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</details>`;
+// Razrada cijene; zlatarova korekcija je zaseban red, pa zbir uvijek odgovara konačnoj cijeni.
+function adjusted(est, q) {
+  if (est.total == null || q.price == null || Math.round(q.price) === Math.round(est.total)) return est;
+  return { ...est, lines: [...est.lines, { label: 'Your price adjustment', amount: q.price - est.total }], total: q.price };
+}
+const breakdown = (est, open = false) => `<details class="calc-more" ${open ? 'open' : ''}><summary>How it's priced</summary><ul class="calc-lines">${est.lines.map((x) => `<li><span>${esc(x.label)}</span><b>${x.amount < 0 ? '−' : ''}${money(Math.abs(x.amount))}</b></li>`).join('')}</ul>${(est.notes || []).length ? `<ul class="calc-notes">${est.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</details>`;
 
-// Izbori kao čipovi; mnogo opcija (rezovi) ide u padajuću listu.
-function qChips(id, field, label, options, cur) {
+// Konačna cijena: broj koji se upiše ili slider od pola do 1,6 x izračunate (korak $10 / $25 / $50 po veličini).
+const priceStep = (v) => (v < 2000 ? 10 : v < 10000 ? 25 : 50);
+function priceRange(calc, fin) {
+  const step = priceStep(calc);
+  const lo = Math.max(step, Math.floor(Math.min(calc * 0.5, fin) / step) * step);
+  const hi = Math.ceil(Math.max(calc * 1.6, fin) / step) * step;
+  return { step, lo, hi };
+}
+function priceFoot(calc, fin, q) {
+  const diff = fin - calc;
+  return `<span>${diff ? `Calculated ${money(calc)} · ${diff > 0 ? '+' : '−'}${money(Math.abs(diff))}` : 'Calculated from your price list'}</span>${q.price != null ? '<button type="button" class="qlink" data-act="price-reset">Use calculated</button>' : ''}`;
+}
+function priceControl(key, q, est) {
+  if (est.total == null) return '';
+  const calc = Math.round(est.total);
+  const fin = Math.round(finalTotal(q, est));
+  const { step, lo, hi } = priceRange(calc, fin);
+  const pct = ((fin - lo) / Math.max(1, hi - lo)) * 100;
+  return `<div class="qprice" data-qk="${esc(key)}">
+    <div class="qprice-top"><span class="qf-l">Your price</span><label class="qprice-in"><span aria-hidden="true">$</span><input type="number" inputmode="numeric" min="1" max="5000000" step="1" value="${fin}" data-qprice="${esc(key)}" aria-label="Final price in dollars" /></label></div>
+    <input type="range" class="qrange" min="${lo}" max="${hi}" step="${step}" value="${fin}" data-qrange="${esc(key)}" style="--p:${pct.toFixed(2)}%" aria-label="Adjust the final price" />
+    <div class="qprice-foot">${priceFoot(calc, fin, q)}</div></div>`;
+}
+
+// Izbori kao čipovi; mnogo opcija (metali, rezovi) ide u padajuću listu (stakleni meni ispod polja, glass-select.js).
+function qChips(key, field, label, options, cur) {
   if (!options.length) return '';
-  if (options.length > 6) return `<label class="qf"><span class="qf-l">${label}</span><select class="in qsel" data-q="${esc(id)}" data-qf="${field}">${options.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
-  return `<div class="qf" role="group" aria-label="${esc(label)}"><span class="qf-l">${label}</span><div class="qchips">${options.map(([v, t]) => `<button type="button" class="qchip ${String(v) === String(cur) ? 'on' : ''}" aria-pressed="${String(v) === String(cur)}" data-q="${esc(id)}" data-qf="${field}" data-qv="${esc(v)}">${esc(t)}</button>`).join('')}</div></div>`;
+  if (options.length > 6) return `<label class="qf"><span class="qf-l">${label}</span><select class="in qsel" data-q="${esc(key)}" data-qf="${field}">${options.map(([v, t]) => `<option value="${esc(v)}" ${String(v) === String(cur) ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>`;
+  return `<div class="qf" role="group" aria-label="${esc(label)}"><span class="qf-l">${label}</span><div class="qchips">${options.map(([v, t]) => `<button type="button" class="qchip ${String(v) === String(cur) ? 'on' : ''}" aria-pressed="${String(v) === String(cur)}" data-q="${esc(key)}" data-qf="${field}" data-qv="${esc(v)}">${esc(t)}</button>`).join('')}</div></div>`;
 }
-function qStepper(id, field, label, n) {
-  return `<div class="qf qstep"><span class="qf-l">${label}</span><div class="qstepper"><button type="button" data-q="${esc(id)}" data-qf="${field}" data-qd="-1" ${n ? '' : 'disabled'} aria-label="Fewer ${label.toLowerCase()} teeth">&minus;</button><b aria-live="polite">${n}</b><button type="button" data-q="${esc(id)}" data-qf="${field}" data-qd="1" ${n < 10 ? '' : 'disabled'} aria-label="More ${label.toLowerCase()} teeth">+</button></div></div>`;
+function qStepper(key, field, label, n) {
+  return `<div class="qf qstep"><span class="qf-l">${label}</span><div class="qstepper"><button type="button" data-q="${esc(key)}" data-qf="${field}" data-qd="-1" ${n ? '' : 'disabled'} aria-label="Fewer ${label.toLowerCase()} teeth">&minus;</button><b aria-live="polite">${n}</b><button type="button" data-q="${esc(key)}" data-qf="${field}" data-qd="1" ${n < 10 ? '' : 'disabled'} aria-label="More ${label.toLowerCase()} teeth">+</button></div></div>`;
 }
 
-function quoteControls(l, ls, spec) {
-  const id = l.id;
+function quoteControls(key, ls, spec) {
   const metals = ls.choices.metals.map((m) => [m, m]);
   const karats = ls.choices.karats.filter((k) => !/silver|925/i.test(k)).map((k) => [k, k]);
   const iceOpts = [['', 'Not iced'], ...ls.opts.coverage];
@@ -145,23 +185,21 @@ function quoteControls(l, ls, spec) {
   const grillz = spec.type === 'grillz';
   const r = rowsOf(spec.teeth);
   return `<div class="qgrid">
-    ${qChips(id, 'metal', 'Metal', metals, spec.metal)}
-    ${isGold(spec.metal) ? qChips(id, 'karat', 'Karat', karats, spec.karat) : ''}
-    ${grillz ? `<div class="qrow2">${qStepper(id, 'top', 'Top', r.top)}${qStepper(id, 'bottom', 'Bottom', r.bottom)}</div>` : ''}
-    ${!isDental(spec.metal) && ls.opts.coverage.length ? qChips(id, 'coverage', 'How iced', iceOpts, spec.coverage || '') : ''}
-    ${spec.coverage && stones.length ? qChips(id, 'stones', 'Stones', stones, spec.stones) : ''}
-    ${spec.coverage && /natural/i.test(spec.stones) && clar.length ? qChips(id, 'clarity', 'Clarity', clar, spec.clarity) : ''}
-    ${grillz && !spec.coverage && cuts.length ? qChips(id, 'cut', 'Cut', cuts, spec.cut || cuts[0][0]) : ''}
+    ${qChips(key, 'metal', 'Metal', metals, spec.metal)}
+    ${isGold(spec.metal) ? qChips(key, 'karat', 'Karat', karats, spec.karat) : ''}
+    ${grillz ? `<div class="qrow2">${qStepper(key, 'top', 'Top', r.top)}${qStepper(key, 'bottom', 'Bottom', r.bottom)}</div>` : ''}
+    ${!isDental(spec.metal) && ls.opts.coverage.length ? qChips(key, 'coverage', 'How iced', iceOpts, spec.coverage || '') : ''}
+    ${spec.coverage && stones.length ? qChips(key, 'stones', 'Stones', stones, spec.stones) : ''}
+    ${spec.coverage && /natural/i.test(spec.stones) && clar.length ? qChips(key, 'clarity', 'Clarity', clar, spec.clarity) : ''}
+    ${grillz && !spec.coverage && cuts.length ? qChips(key, 'cut', 'Cut', cuts, spec.cut || cuts[0][0]) : ''}
   </div>`;
 }
 
-// Ključ poruke: `${id}` = Fits the budget (podešeno), `${id}|p` = Estimated price (tačno kako je kupac izabrao).
-const qkLead = (key) => String(key).split('|')[0];
 function quoteMessageView(l, q, key) {
   if (q.busy) return `<div class="qgen" role="status" aria-live="polite"><div class="qgen-orb" aria-hidden="true"><i></i><i></i><i></i></div><p class="qgen-step">${esc(q.step || 'Reading the specs')}</p><div class="qgen-lines" aria-hidden="true"><span></span><span></span><span></span><span></span></div></div>`;
   if (q.error) return `<p class="qerr" role="alert">${esc(q.error)}</p>`;
   if (q.msg == null) return '';
-  const stale = q.msgFor && q.msgFor !== JSON.stringify(q.spec);
+  const stale = q.msgFor && q.msgFor !== sigOf(q);
   const words = q.reveal ? q.msg.split(/(\s+)/).map((w, k) => (/^\s+$/.test(w) ? w.replace(/\n/g, '<br>') : `<span class="qw" style="--d:${Math.min(k, 160) * 14}ms">${esc(w)}</span>`)).join('') : '';
   return `<div class="qout ${q.reveal ? 'revealing' : ''}" data-qk="${esc(key)}">
     <div class="qout-head"><span>Quote message</span>${q.edited ? '<em>edited</em>' : q.source === 'template' ? '<em title="The AI writer was not available, so this is the standard message.">standard</em>' : '<em>written by AI</em>'}</div>
@@ -172,56 +210,56 @@ function quoteMessageView(l, q, key) {
   </div>`;
 }
 
-function calcView(l) {
+// Jedna ponuda (kartica): broj, budžet, konačna cijena, izmjene, izbori, razrada, poruka.
+function offerBox(l, ls, key) {
   const pricing = P.me.pricing;
-  const ls = leadSpec(l);
-  const setBtn = '<button type="button" class="btn small" data-tab="pricing">Set prices</button>';
-  if (!ls) return '';
-  if (!pricing) {
-    return `<aside class="calc" data-calc="${esc(l.id)}"><div class="calc-box"><p class="calc-title">Estimated price</p><p class="calc-empty">Add your prices and the estimate for every lead appears here.</p>${setBtn}</div>
-      <div class="calc-box"><p class="calc-title">Fits the budget</p><p class="calc-empty">Specs that fit the customer's budget, which you can adjust and turn into a quote message.</p></div></aside>`;
-  }
-  const est = estimate(pricing, ls.spec);
-  const pk = `${l.id}|p`;
-  const pq = (Q[pk] ||= {});
-  pq.spec = ls.spec;
-  restoreQuote(pq, l.quotes?.picked, ls.spec);
-  // Poruka za tačno ono što je kupac izabrao postoji uvijek, i kad je iznad budžeta (District 19.11.2026: prva poruka je
-  // ponuda za izabrano, druga "Fits the budget" sa poređenjem; najčešće se šalje samo druga).
-  const pgen = est.total != null || pq.msg != null || pq.busy
-    ? `<button type="button" class="btn qgo" data-act="quote-gen" data-qk="${esc(pk)}" ${pq.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${pq.msg != null ? 'Generate again' : 'Generate quote message'}</button><div class="qmsg-wrap" data-qk="${esc(pk)}">${quoteMessageView(l, pq, pk)}</div>`
-    : '';
-  const a = est.total == null
-    ? `<p class="calc-empty">Missing in your prices: ${est.missing.map(esc).join(', ')}.</p>${setBtn}`
-    : `<p class="calc-num">${money(est.total)}</p>${budgetMeter(est.total, ls.budget, ls.budgetLabel) || (ls.budgetLabel ? `<p class="calc-diff">Budget ${esc(ls.budgetLabel)}</p>` : '')}${breakdown(est)}${pgen}`;
-  const q = quoteState(l, ls);
-  const qe = estimate(pricing, q.spec);
+  const q = quoteState(l, ls, key);
+  const picked = slotOf(key) === 'picked';
+  const est = estimate(pricing, q.spec);
+  const fin = est.total == null ? null : finalTotal(q, est);
   const diff = specDiff(ls, q.spec);
-  const changed = JSON.stringify(q.spec) !== JSON.stringify(q.suggested);
-  const head = `<div class="calc-head"><p class="calc-title">${Number.isFinite(ls.budget?.high) ? 'Fits the budget' : 'Your quote'}</p>${changed ? `<button type="button" class="qreset" data-act="quote-reset" data-q="${esc(l.id)}">Reset</button>` : `<span class="qbadge">${diff.length ? 'Suggested' : 'As picked'}</span>`}</div>`;
-  const num = qe.total == null
-    ? `<p class="calc-empty">Missing in your prices: ${qe.missing.map(esc).join(', ')}.</p>`
-    : `<p class="calc-num" data-count="${Math.round(qe.total)}" data-from="${Math.round(q.animFrom ?? qe.total)}">${money(q.animFrom ?? qe.total)}</p>${budgetMeter(qe.total, ls.budget, ls.budgetLabel)}`;
+  const changed = JSON.stringify(q.spec) !== JSON.stringify(q.suggested) || q.price != null;
+  const title = picked ? 'Estimated price' : Number.isFinite(ls.budget?.high) ? 'Fits the budget' : 'Your quote';
+  const badge = picked ? (diff.length ? 'Adjusted' : '') : diff.length ? 'Suggested' : 'As picked';
+  const head = `<div class="calc-head"><p class="calc-title">${title}</p>${changed ? `<button type="button" class="qreset" data-act="quote-reset" data-q="${esc(key)}">Reset</button>` : badge ? `<span class="qbadge">${badge}</span>` : ''}</div>${picked ? `<p class="calc-sub">${diff.length ? 'Adjusted from what the customer picked' : 'What the customer picked'}</p>` : ''}`;
+  const num = est.total == null
+    ? `<p class="calc-empty">Missing in your prices: ${est.missing.map(esc).join(', ')}.</p>${picked ? '<button type="button" class="btn small" data-tab="pricing">Set prices</button>' : ''}`
+    : `<p class="calc-num" data-qk="${esc(key)}" data-count="${Math.round(fin)}" data-from="${Math.round(q.animFrom ?? fin)}">${money(q.animFrom ?? fin)}</p><div class="bm-wrap">${budgetMeter(fin, ls.budget, ls.budgetLabel) || (ls.budgetLabel ? `<p class="calc-diff">Budget ${esc(ls.budgetLabel)}</p>` : '')}</div>${priceControl(key, q, est)}`;
   const tags = diff.length ? `<ul class="qdiff" aria-label="Changed from the customer's picks">${diff.map((c) => `<li><span>${esc(c.what)}</span>${esc(c.from)} <i aria-hidden="true">→</i> <b>${esc(c.to)}</b></li>`).join('')}</ul>` : '';
-  const gen = `<button type="button" class="btn qgo" data-act="quote-gen" data-qk="${esc(l.id)}" ${qe.total == null || q.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${q.msg != null ? 'Generate again' : 'Generate quote message'}</button>`;
-  return `<aside class="calc" data-calc="${esc(l.id)}">
-    <div class="calc-box"><p class="calc-title">Estimated price</p><p class="calc-sub">What the customer picked</p>${a}</div>
-    <div class="calc-box quote">${head}${num}${tags}${quoteControls(l, ls, q.spec)}${qe.total != null ? breakdown(qe) : ''}${gen}<div class="qmsg-wrap" data-qk="${esc(l.id)}">${quoteMessageView(l, q, l.id)}</div></div>
-  </aside>`;
+  // Estimated price: izbori su sklopljeni dok ih zlatar ne promijeni (najčešće ostaje kako je kupac izabrao).
+  const controls = picked
+    ? `<details class="qadj" ${diff.length || q.adjOpen ? 'open' : ''} data-qadj="${esc(key)}"><summary>Adjust specs</summary>${quoteControls(key, ls, q.spec)}</details>`
+    : quoteControls(key, ls, q.spec);
+  const gen = est.total != null || q.msg != null || q.busy
+    ? `<button type="button" class="btn qgo" data-act="quote-gen" data-qk="${esc(key)}" ${est.total == null || q.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${q.msg != null ? 'Generate again' : 'Generate quote message'}</button><div class="qmsg-wrap" data-qk="${esc(key)}">${quoteMessageView(l, q, key)}</div>`
+    : '';
+  return `<div class="calc-box${picked ? '' : ' quote'}">${head}${num}${tags}${controls}${est.total != null ? breakdown(adjusted(est, q)) : ''}${gen}</div>`;
 }
 
-// Samo kalkulator tog leada se crta ponovo (bez skoka stranice), broj klizi od stare do nove cijene.
+function calcView(l) {
+  const ls = leadSpec(l);
+  if (!ls) return '';
+  if (!P.me.pricing) {
+    return `<aside class="calc" data-calc="${esc(l.id)}"><div class="calc-box"><p class="calc-title">Estimated price</p><p class="calc-empty">Add your prices and the estimate for every lead appears here.</p><button type="button" class="btn small" data-tab="pricing">Set prices</button></div>
+      <div class="calc-box"><p class="calc-title">Fits the budget</p><p class="calc-empty">Specs that fit the customer's budget, which you can adjust and turn into a quote message.</p></div></aside>`;
+  }
+  return `<aside class="calc" data-calc="${esc(l.id)}">${offerBox(l, ls, `${l.id}|p`)}${offerBox(l, ls, l.id)}</aside>`;
+}
+
+// Samo kalkulator tog leada se crta ponovo (bez skoka stranice), brojevi klize od stare do nove cijene.
 function renderCalc(id) {
   const l = P.leads.find((x) => x.id === id);
   const el = app.querySelector(`aside[data-calc="${CSS.escape(id)}"]`);
   if (!l || !el) return;
-  const focus = document.activeElement?.closest?.(`aside[data-calc="${CSS.escape(id)}"]`) ? { qf: document.activeElement.dataset.qf, qv: document.activeElement.dataset.qv, qd: document.activeElement.dataset.qd } : null;
+  const a = document.activeElement;
+  const focus = a?.closest?.(`aside[data-calc="${CSS.escape(id)}"]`) ? ['q', 'qf', 'qv', 'qd', 'qrange', 'qprice'].filter((k) => a.dataset[k] != null).map((k) => `[data-${k.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`)}="${CSS.escape(a.dataset[k])}"]`).join('') : '';
   el.outerHTML = calcView(l);
   const box = app.querySelector(`aside[data-calc="${CSS.escape(id)}"]`);
-  if (focus?.qf) box?.querySelector(`[data-qf="${focus.qf}"]${focus.qv != null ? `[data-qv="${CSS.escape(focus.qv)}"]` : ''}${focus.qd ? `[data-qd="${focus.qd}"]` : ''}`)?.focus();
-  const n = box?.querySelector('.quote [data-count]');
-  if (Q[id]) delete Q[id].animFrom;
-  if (n) countTo(n, Number(n.dataset.from), Number(n.dataset.count), () => {});
+  if (focus) box?.querySelector(focus)?.focus();
+  for (const n of box?.querySelectorAll('[data-count]') || []) {
+    if (Q[n.dataset.qk]) delete Q[n.dataset.qk].animFrom;
+    countTo(n, Number(n.dataset.from), Number(n.dataset.count), () => {});
+  }
   for (const k of [id, `${id}|p`]) if (Q[k]?.reveal) finishReveal(k);
 }
 function countTo(el, from, to, done) {
@@ -257,10 +295,11 @@ function finishReveal(key) {
   }, ms);
 }
 
-function quoteEdit(id, field, value, delta) {
+function quoteEdit(key, field, value, delta) {
+  const id = qkLead(key);
   const l = P.leads.find((x) => x.id === id);
   const ls = l && leadSpec(l);
-  const q = Q[id];
+  const q = Q[key];
   if (!ls || !q) return;
   const s = { ...q.spec };
   if (field === 'top' || field === 'bottom') {
@@ -284,13 +323,106 @@ function quoteEdit(id, field, value, delta) {
   }
   if (field === 'stones' && !/natural/i.test(value)) s.clarity = '';
   if (field === 'stones' && /natural/i.test(value) && !s.clarity) s.clarity = ls.opts.clarity[0] || '';
-  const prev = estimate(P.me.pricing, q.spec).total;
-  if (prev != null) q.animFrom = Math.round(prev);
+  const prev = estimate(P.me.pricing, q.spec);
+  if (prev.total != null) q.animFrom = Math.round(finalTotal(q, prev));
   q.spec = s;
+  // Nove specifikacije = nova izračunata cijena; ručna cijena se ne prenosi na drugi komad.
+  q.price = null;
+  if (slotOf(key) === 'picked') q.adjOpen = true;
+  queueAdjSave(key);
   renderCalc(id);
 }
+function quoteReset(key) {
+  const q = Q[key];
+  if (!q) return;
+  const prev = estimate(P.me.pricing, q.spec);
+  if (prev.total != null) q.animFrom = Math.round(finalTotal(q, prev));
+  q.spec = { ...q.suggested };
+  q.price = null;
+  queueAdjSave(key);
+  renderCalc(qkLead(key));
+}
 
-// Poruka: server je piše (Workers AI) iz konačnih izbora; animacija traje bar ~1,4 s da se vidi i kad je odgovor brz.
+// ---------- Konačna cijena (slider i upis, 22.11.2026) ----------
+// Dok se vuče, mijenjaju se samo broj, traka budžeta i natpis; pri puštanju se kartica crta ponovo, izmjena se
+// sačuva, a stara cijena u gotovoj poruci se zamijeni novom (i u poruci Fits the budget kad se mijenja Estimated price).
+function priceLive(key, value) {
+  const id = qkLead(key);
+  const l = P.leads.find((x) => x.id === id);
+  const ls = l && leadSpec(l);
+  const q = Q[key];
+  if (!ls || !q) return;
+  const est = estimate(P.me.pricing, q.spec);
+  if (est.total == null) return;
+  const calc = Math.round(est.total);
+  const v = Math.max(1, Math.min(5e6, Math.round(Number(value) || 0)));
+  if (q.priceFrom == null) q.priceFrom = Math.round(finalTotal(q, est));
+  q.price = v === calc ? null : v;
+  const box = app.querySelector(`.qprice[data-qk="${CSS.escape(key)}"]`)?.closest('.calc-box');
+  if (!box) return;
+  const n = box.querySelector(`.calc-num[data-qk="${CSS.escape(key)}"]`);
+  if (n) n.textContent = money(v);
+  const meter = box.querySelector('.bm-wrap');
+  if (meter && ls.budget) meter.innerHTML = budgetMeter(v, ls.budget, ls.budgetLabel);
+  const range = box.querySelector('[data-qrange]');
+  const input = box.querySelector('[data-qprice]');
+  if (range && document.activeElement !== range) range.value = v;
+  if (range) range.style.setProperty('--p', `${((Number(range.value) - range.min) / Math.max(1, range.max - range.min)) * 100}%`);
+  if (input && document.activeElement !== input) input.value = v;
+  const foot = box.querySelector('.qprice-foot');
+  if (foot) foot.innerHTML = priceFoot(calc, v, q);
+}
+function priceCommit(key) {
+  const q = Q[key];
+  if (!q) return;
+  const est = estimate(P.me.pricing, q.spec);
+  if (est.total == null) return;
+  const from = q.priceFrom;
+  delete q.priceFrom;
+  const to = Math.round(finalTotal(q, est));
+  if (from != null && from !== to) {
+    swapPrice(key, from, to);
+    if (slotOf(key) === 'picked') swapPrice(qkLead(key), from, to, true);
+  }
+  queueAdjSave(key);
+  renderCalc(qkLead(key));
+}
+// Gotova poruka: "$2,500" postaje nova cijena (samo ako je stara cijena tačno u tekstu); ostale izmjene traže Generate again.
+function swapPrice(key, from, to, other = false) {
+  const q = Q[key];
+  if (!q || q.msg == null || q.busy) return;
+  const a = money(from);
+  const b = money(to);
+  if (!q.msg.includes(a)) return;
+  q.msg = q.msg.split(a).join(b);
+  if (!other) q.msgFor = sigOf(q);
+  if (q.savedAt) queueQuoteSave(key);
+}
+
+// Izbori i cijena se čuvaju sami (pola sekunde poslije zadnje izmjene); stranica kupca ih čita odatle.
+const adjTimers = {};
+function queueAdjSave(key) {
+  clearTimeout(adjTimers[key]);
+  adjTimers[key] = setTimeout(() => saveAdjNow(key), 500);
+}
+async function saveAdjNow(key, { keepalive = false } = {}) {
+  clearTimeout(adjTimers[key]);
+  delete adjTimers[key];
+  const q = Q[key];
+  if (!q?.spec) return;
+  const id = qkLead(key);
+  const slot = slotOf(key);
+  const body = { slot, spec: q.spec, price: q.price ?? null };
+  try {
+    const res = await fetch(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'PUT', credentials: 'same-origin', keepalive, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error('save');
+    rememberQuote(id, slot, { spec: q.spec, price: q.price ?? null });
+  } catch {
+    adjTimers[key] = setTimeout(() => saveAdjNow(key), 4000);
+  }
+}
+
+// Poruka: server je piše (Workers AI) iz konačnih izbora i konačne cijene; animacija traje bar ~1,4 s.
 const GEN_STEPS = ['Reading the specs', 'Checking the price', 'Writing the message', 'Polishing the wording'];
 async function quoteGenerate(key) {
   const id = qkLead(key);
@@ -298,9 +430,10 @@ async function quoteGenerate(key) {
   const ls = l && leadSpec(l);
   const q = Q[key];
   if (!ls || !q || q.busy) return;
-  const spec = key.endsWith('|p') ? ls.spec : q.spec;
+  const spec = q.spec;
   const est = estimate(P.me.pricing, spec);
   if (est.total == null) return;
+  const fin = finalTotal(q, est);
   Object.assign(q, { busy: true, error: '', step: GEN_STEPS[0] });
   renderCalc(id);
   let k = 0;
@@ -310,16 +443,24 @@ async function quoteGenerate(key) {
     const el = app.querySelector(`aside[data-calc="${CSS.escape(id)}"] .qmsg-wrap[data-qk="${CSS.escape(key)}"] .qgen-step`);
     if (el) { el.classList.remove('swap'); void el.offsetWidth; el.textContent = q.step; el.classList.add('swap'); }
   }, 900);
-  const body = { ...quoteBody(ls, spec, est), slot: key.endsWith('|p') ? 'picked' : 'fit', spec };
-  // "Fits the budget" sa izmjenama: poruka kaže šta se mijenja (od-do) i novu cijenu naspram cijene izabranog.
-  const orig = estimate(P.me.pricing, ls.spec).total;
-  if (!key.endsWith('|p') && body.changes.length && orig != null && Math.round(orig) !== body.total) Object.assign(body, { mode: 'fit', originalTotal: Math.round(orig), inBudget: !Number.isFinite(ls.budget?.high) || est.total <= ls.budget.high });
+  const slot = slotOf(key);
+  const body = { ...quoteBody(ls, spec, adjusted(est, q)), slot, spec, price: q.price ?? null };
+  body.total = Math.round(fin);
+  // "Fits the budget" sa izmjenama: poruka kaže šta se mijenja u odnosu na Estimated price (kako je zlatar ostavi)
+  // i novu cijenu naspram njene konačne cijene.
+  if (slot === 'fit') {
+    const pq = Q[`${id}|p`] || quoteState(l, ls, `${id}|p`);
+    const pe = estimate(P.me.pricing, pq.spec);
+    const orig = pe.total == null ? null : finalTotal(pq, pe);
+    body.changes = specDiff({ ...ls, spec: pq.spec }, spec);
+    if (body.changes.length && orig != null && Math.round(orig) !== body.total) Object.assign(body, { mode: 'fit', originalTotal: Math.round(orig), inBudget: !Number.isFinite(ls.budget?.high) || fin <= ls.budget.high });
+  }
   const t0 = Date.now();
   try {
     const res = await api(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'POST', body: JSON.stringify(body), json: true });
     await new Promise((ok) => setTimeout(ok, Math.max(0, 1400 - (Date.now() - t0))));
-    Object.assign(q, { msg: res.message, source: res.source, msgFor: JSON.stringify(spec), reveal: true, edited: false, savedAt: res.saved?.at || null, saveError: '' });
-    if (res.saved) rememberQuote(id, key.endsWith('|p') ? 'picked' : 'fit', res.saved);
+    Object.assign(q, { msg: res.message, source: res.source, msgFor: sigOf(q), reveal: true, edited: false, savedAt: res.saved?.at || null, saveError: '' });
+    if (res.saved) rememberQuote(id, slot, res.saved);
   } catch (err) {
     q.error = err.message || 'Could not write the message. Try again.';
   } finally {
@@ -385,7 +526,12 @@ async function saveQuoteNow(key, { keepalive = false } = {}) {
   }
 }
 // Zatvaranje taba ili odlazak sa stranice: nesačuvana izmjena ide odmah (keepalive preživi zatvaranje).
-const flushQuotes = () => { for (const k of Object.keys(Q)) if (Q[k]?.dirty) saveQuoteNow(k, { keepalive: true }); };
+const flushQuotes = () => {
+  for (const k of Object.keys(Q)) if (Q[k]?.dirty) saveQuoteNow(k, { keepalive: true });
+  for (const k of Object.keys(adjTimers)) saveAdjNow(k, { keepalive: true });
+};
+// "Adjust specs" ostaje otvoren kroz ponovno crtanje kartice kad ga zlatar otvori.
+app.addEventListener('toggle', (e) => { const k = e.target.dataset?.qadj; if (k && Q[k]) Q[k].adjOpen = e.target.open; }, true);
 addEventListener('pagehide', flushQuotes);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushQuotes(); });
 
@@ -473,7 +619,7 @@ function pricingView() {
     <div class="pgrid2">
       ${grid('Sets (top and bottom), $', '', ['6', '8', '10', '12'], 'grillz.sets', GRILLZ_COLS, (r) => `${r} x ${r}`)}
       ${grid('Bottom or top only, $', '', ['fangs', '2', '3', '4', '6', '8', '10', '12'], 'grillz.row', GRILLZ_COLS, (r) => (r === 'fangs' ? '2 fangs & backbar' : `${r} teeth`))}
-      ${grid('Diamond iced teeth, $ per tooth', 'Price for one iced tooth. 18K and platinum use the 14K price plus the metal difference.', ['lab', 'natural si1', 'natural vvs1'], 'grillz.iced', ICED_COLS, (r) => (r === 'lab' ? 'Lab diamond' : r === 'natural si1' ? 'Natural diamond SI1' : 'Natural diamond VVS1'))}
+      ${grid('Diamond iced teeth, $ per tooth', 'Price for one iced tooth. 18K and platinum use the 14K price plus the metal difference. Leave Moissanite empty to price moissanite from the pave sets below.', ['lab', 'natural si1', 'natural vvs1', 'moissanite'], 'grillz.iced', ICED_COLS, (r) => (r === 'lab' ? 'Lab diamond' : r === 'natural si1' ? 'Natural diamond SI1' : r === 'natural vvs1' ? 'Natural diamond VVS1' : 'Moissanite'))}
       <div class="pcard2"><h3>Moissanite & silver iced out sets, pave, $</h3>${['6', '8', '10'].map((r) => `<label class="prow"><span>${r} x ${r}</span>${inp(`grillz.moissanite.${r}`, g.moissanite?.[r])}</label>`).join('')}</div>
       <div class="pcard2"><h3>Dental gold (non-precious), $</h3>${['6', '8', '10'].map((r) => `<div class="prow2"><b>${r} teeth</b><label><span>Set ${r} on ${r}</span>${inp(`grillz.dental.set.${r}`, g.dental?.set?.[r])}</label><label><span>Bottom or top</span>${inp(`grillz.dental.row.${r}`, g.dental?.row?.[r])}</label></div>`).join('')}</div>
       <div class="pcard2"><h3>Molding fee, $</h3><label class="prow"><span>Gold, silver, platinum</span>${inp('grillz.molding.metal', g.molding?.metal)}</label><label class="prow"><span>Dental gold</span>${inp('grillz.molding.dental', g.molding?.dental)}</label></div>
@@ -492,8 +638,12 @@ function pricingView() {
         <label class="prow"><span>Markup, %</span>${inp('markup', pr.markup)}</label></div>
       <div class="pcard2"><h3>Metal price per gram, $</h3>${metals.map((m) => `<label class="prow"><span>${esc(m)}</span>${inp(`metals.${pkey(m)}`, pr.metals?.[pkey(m)], /gold|two.?tone/i.test(m) && !/dental/i.test(m) ? 'from gold' : '')}</label>`).join('') || '<p class="hint">No metals in your forms.</p>'}</div>
       <div class="pcard2"><h3>Weight and labor</h3>${pieces.map((pc) => `<div class="prow2"><b>${esc(pc[0].toUpperCase() + pc.slice(1))}</b><label><span>Grams ${per(pc)}</span>${inp(`grams.${pc}`, pr.grams?.[pc])}</label><label><span>Labor ${per(pc)}, $</span>${inp(`labor.${pc}`, pr.labor?.[pc])}</label></div>`).join('')}</div>
-      <div class="pcard2"><h3>Stones, $ per piece${allPieces.includes('grillz') ? ' (not grillz)' : ''}</h3><div class="ptable"><span></span>${LEVELS.map((v) => `<span>${v === 'half' ? 'Half iced' : v === 'full' ? 'Fully iced' : 'Accents'}</span>`).join('')}
-        ${[...stones, 'Default (no stone type chosen)'].map((st) => { const k = /^default/i.test(st) ? 'default' : pkey(st); return `<span>${esc(st)}</span>${LEVELS.map((v) => inp(`stones.${k}.${v}`, pr.stones?.[k]?.[v])).join('')}`; }).join('')}</div></div>
+      <div class="pcard2 pstones"><h3>Stones${allPieces.includes('grillz') ? ' (not grillz)' : ''}, $ per carat</h3>
+        <p class="hint">The estimate works out how many stones cover the piece at its size (ring size, pendant size, chain length and width, watch case), how big they are and how many carats that makes, then uses your price per carat. Center stone = the ring's center stone and stud earrings.</p>
+        <div class="ptable" style="grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr))"><span></span><span>Small stones</span><span>Center stone</span>
+        ${[...stones, 'Default (no stone type chosen)'].map((st) => { const k = /^default/i.test(st) ? 'default' : pkey(st); return `<span>${esc(st)}</span>${inp(`stones.${k}.ct`, pr.stones?.[k]?.ct)}${inp(`stones.${k}.center`, pr.stones?.[k]?.center)}`; }).join('')}</div>
+        <label class="prow"><span>Setting, $ per stone</span>${inp('setting', pr.setting)}</label>
+        <p class="hint">Natural diamonds: VS is × 1.25, VVS × 1.5 and Flawless × 2 of the price per carat.</p></div>
     </div>
     <div class="pcard2 pwide pinfo"><h3>Store info under every quote message</h3><p class="hint">Address, hours, turnaround, out of state terms. It is added word for word at the end of every quote message.</p>
       <textarea class="in" rows="8" data-quote-info maxlength="1200" placeholder="Your store, address, hours, turnaround times…">${esc(pr.quoteInfo || '')}</textarea>
@@ -842,6 +992,8 @@ let searchTimer;
 app.addEventListener('input', (e) => {
   const el = e.target;
   if (el.dataset.qmsg && Q[el.dataset.qmsg]) { Q[el.dataset.qmsg].msg = el.value; el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; queueQuoteSave(el.dataset.qmsg); return; }
+  if (el.dataset.qrange) { priceLive(el.dataset.qrange, el.value); return; }
+  if (el.dataset.qprice) { if (Number(el.value) > 0) priceLive(el.dataset.qprice, el.value); return; }
   if (el.dataset.search !== undefined) {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(async () => { P.q = el.value.trim(); if (!await loadLeads()) return; render(); const s = app.querySelector('[data-search]'); s?.focus(); s?.setSelectionRange(s.value.length, s.value.length); }, 350);
@@ -850,6 +1002,8 @@ app.addEventListener('input', (e) => {
 app.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.dataset.qmsg) { saveQuoteNow(el.dataset.qmsg); return; }
+  if (el.dataset.qrange) { priceCommit(el.dataset.qrange); return; }
+  if (el.dataset.qprice) { if (Number(el.value) > 0) { priceLive(el.dataset.qprice, el.value); priceCommit(el.dataset.qprice); } else renderCalc(qkLead(el.dataset.qprice)); return; }
   if (el.dataset.q && el.dataset.qf) { quoteEdit(el.dataset.q, el.dataset.qf, el.value); return; }
   if (el.dataset.pickDay !== undefined) { P.day = el.value || ''; if (await loadLeads()) render(); return; }
   if (el.dataset.leadStatus) {
@@ -879,7 +1033,8 @@ app.addEventListener('click', async (e) => {
   if (t.dataset?.copy != null) { if ((await copyText(t, t.dataset.copy)) && t.dataset.copyLead) track(t.dataset.copyLead, { type: 'contact_copied', what: t.dataset.copyWhat }); return; }
   // Quote radni sto (Fits the budget): izbori, reset, poruka.
   if (t.tagName === 'BUTTON' && t.dataset.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
-  if (t.dataset?.act === 'quote-reset') { const q = Q[t.dataset.q]; if (q) { const prev = estimate(P.me.pricing, q.spec).total; if (prev != null) q.animFrom = Math.round(prev); q.spec = { ...q.suggested }; renderCalc(t.dataset.q); } return; }
+  if (t.dataset?.act === 'quote-reset') { quoteReset(t.dataset.q); return; }
+  if (t.dataset?.act === 'price-reset') { const key = t.closest('.qprice')?.dataset.qk; const q = Q[key]; if (q) { const e = estimate(P.me.pricing, q.spec); if (e.total != null) priceLive(key, Math.round(e.total)); priceCommit(key); } return; }
   if (t.dataset?.act === 'quote-gen') { quoteGenerate(t.dataset.qk); return; }
   if (t.dataset?.act === 'quote-copy') {
     const id = t.dataset.qk;

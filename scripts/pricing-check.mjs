@@ -1,6 +1,6 @@
 // Kalkulator cijene (portal): procjena iz tabele zlatara, middle ground u budžet, bez tabele nema broja.
 //   node scripts/pricing-check.mjs
-import { estimate, middleGround, parseBudget, metalPerGram, DISTRICT_GRILLZ } from '../public/pricing.js';
+import { estimate, middleGround, parseBudget, metalPerGram, DISTRICT_GRILLZ, stoneLayout, leadSpecFrom, dimKey } from '../public/pricing.js';
 
 let fails = 0;
 const ok = (c, name) => { console.log(`${c ? 'OK  ' : 'FAIL'} ${name}`); if (!c) fails++; };
@@ -73,5 +73,42 @@ ok(mg.changes[0]?.what === 'Stones' && mg.changes[0]?.to === 'Moissanite', 'prvo
 const tight = middleGround(G, spec, 1500, choices);
 ok(tight.changes.some((c) => c.what === 'Metal' && /dental/i.test(c.to)) || !tight.fits, 'kad ni to ne stane: dental gold (bez kamenja) ili javi da ne staje');
 ok(middleGround(G, { ...spec, stones: '', coverage: '', karat: '10K', teeth: 'T5,T6' }, 5000, choices).changes.length === 0, 'kad već stane, nema izmjena');
+
+// ---------- 22.11.2026: moissanite po zubu i kamenje po površini ----------
+{
+  const P2 = { grillz: { ...DISTRICT_GRILLZ, iced: { ...DISTRICT_GRILLZ.iced, moissanite: { '10k': 300, '14k': 400, silver: 150 } } } };
+  const sp = { type: 'grillz', metal: 'White Gold', karat: '14K', stones: 'Moissanite', coverage: 'full', teeth: 'T3,T4,T5,T6,T7,T8,B3,B4,B5,B6,B7,B8', units: 12 };
+  const e2 = estimate(P2, sp);
+  ok(e2.total === 12 * 400 + DISTRICT_GRILLZ.molding.metal, `moissanite red u tabeli zuba: 12 × $400 + molding = ${e2.total}`);
+  ok(estimate({ grillz: DISTRICT_GRILLZ }, sp).lines[0].label.startsWith('Moissanite pave set'), 'bez moissanite reda ostaje račun preko seta');
+  const e18 = estimate(P2, { ...sp, karat: '18K' });
+  ok(e18.total != null && /14K/.test(e18.lines[0].label), '18K moissanite = 14K po zubu + razlika metala');
+}
+{
+  const chain = stoneLayout({ type: 'chain', lengthIn: 20, widthMm: 10, coverage: 'full' });
+  ok(chain.d === 1.8 && chain.count > 800 && chain.count < 1200 && chain.ct > 18 && chain.ct < 30, `lanac 20" × 10 mm fully iced: ${chain.count} kamenova, ${chain.ct} ct`);
+  const half = stoneLayout({ type: 'chain', lengthIn: 20, widthMm: 10, coverage: 'half' });
+  ok(Math.abs(half.count - chain.count / 2) <= 1, 'half iced = pola kamenova');
+  ok(stoneLayout({ type: 'chain', lengthIn: 24, widthMm: 10, coverage: 'full' }).count > chain.count, 'duži lanac = više kamenova');
+  ok(stoneLayout({ type: 'ring', ringSize: 12, coverage: 'full' }).count > stoneLayout({ type: 'ring', ringSize: 6, coverage: 'full' }).count, 'veći prsten = više kamenova');
+  const w = stoneLayout({ type: 'watch', caseMm: 40, coverage: 'full' });
+  const wl = stoneLayout({ type: 'watch', caseMm: 40, coverage: 'full', band: 'Leather strap' });
+  ok(w.ct > 12 && w.ct < 25 && wl.count < w.count / 2, `sat 40 mm bust-down ${w.ct} ct, kožni kaiš bez narukvice ${wl.ct} ct`);
+  const PS = { goldSpot: 100, grams: { chain: 25, ring: 6 }, labor: { chain: 150, ring: 200 }, stones: { 'lab-grown diamonds': { ct: 150, center: 400 }, 'natural diamonds': { ct: 600, center: 4000 }, default: { ct: 150 } }, setting: 2 };
+  const ec = estimate(PS, { type: 'chain', metal: 'Yellow Gold', karat: '14K', stones: 'Lab-grown diamonds', coverage: 'full', lengthIn: 20, widthMm: 10 });
+  const stoneLine = ec.lines.find((x) => x.label.startsWith('Stones'));
+  const setLine = ec.lines.find((x) => x.label.startsWith('Setting'));
+  ok(Math.abs(stoneLine.amount - chain.ct * 150) < 0.01 && setLine.amount === chain.count * 2, 'kamenje = karati × $/ct + ugradnja po kamenu');
+  const vvs = estimate(PS, { type: 'ring', metal: 'Yellow Gold', karat: '14K', stones: 'Natural diamonds', clarity: 'VVS', coverage: 'half', ringSize: 9, centerCt: 1 });
+  ok(vvs.lines.some((x) => /^Center stone: 1 ct × \$6,000\/ct/.test(x.label)), 'centralni kamen 1 ct prirodni VVS = $4,000 × 1.5');
+  ok(estimate(PS, { type: 'ring', metal: 'Yellow Gold', karat: '14K', stones: 'Moissanite', coverage: 'full' }).missing.some((m) => /per carat/.test(m)), 'bez cijene po karatu: piše šta fali');
+  // Veličina iz odgovora: sirovi ključ forme (portal) i očišćeni (server) daju isto.
+  const fs = { type: [{ value: 'chain', label: 'Chain' }], metal: [], karat: [], stones: [], coverage: [], clarity: [], budget: [], cut: [],
+    dims: { length: [{ value: '20', label: '20"' }], width: [{ value: '10-mm', label: '10 mm' }] } };
+  const raw = leadSpecFrom(fs, { type: 'chain', chain_length: '20', chain_width: '10-mm' });
+  const clean = leadSpecFrom(fs, { type: 'chain', d_length: '20', d_width: '10-mm' });
+  ok(raw.spec.lengthIn === 20 && raw.spec.widthMm === 10 && clean.spec.lengthIn === 20 && clean.spec.widthMm === 10, 'dužina i širina lanca iz odgovora');
+  ok(dimKey('ring_ring_size') === 'ring_size' && dimKey('earrings_stone_size_for_stud_and_drop_ea') === 'stone_size' && dimKey('grillz_grill_cut') === null, 'ključevi veličine bez prefiksa komada');
+}
 if (fails) { console.log(`${fails} FAIL`); process.exit(1); }
 console.log('Pricing checks passed.');
