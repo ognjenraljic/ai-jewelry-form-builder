@@ -1663,7 +1663,7 @@ async function portalApi(request, env, p, secure) {
     const slot = QUOTE_SLOTS.includes(b.slot) ? b.slot : null;
     // Podešena ponuda (22.11.2026): izbori i konačna cijena koje zlatar namjesti u Estimated price / Fits the budget.
     // Čuvaju se i bez poruke, a stranica kupca pokazuje baš njih.
-    if (slot && b.message == null && ('spec' in b || 'price' in b)) {
+    if (slot && b.message == null && ('spec' in b || 'price' in b || 'show' in b)) {
       const row = await env.DB.prepare('SELECT l.quotes FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(qm[1], client.id).first();
       if (!row) return json({ error: 'Not found' }, 404);
       let quotes = {};
@@ -1673,6 +1673,9 @@ async function portalApi(request, env, p, secure) {
       const next = { ...cur, adjAt: at };
       if ('spec' in b) { const sp = quoteSpecToSave(b.spec); if (sp) next.spec = sp; else delete next.spec; }
       if ('price' in b) { const pr = quotePrice(b.price); if (pr) next.price = pr; else delete next.price; }
+      // Fits the budget se na stranici kupca pokazuje tek kad zlatar uključi "Show on sales page" (22.11.2026);
+      // showAt ponovo pokreće rok ponude na stranici.
+      if ('show' in b && slot === 'fit') { next.show = b.show === true; if (next.show && !cur.show) next.showAt = at; }
       await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(next), qm[1]).run();
       return json({ ok: true, at, price: next.price ?? null });
     }
@@ -1735,14 +1738,19 @@ async function writeQuote(env, client, lead, b, origin, { auto = false } = {}) {
   const message = await quoteByAI(env, facts);
   const body = info ? dropSignature(message || quoteTemplate(facts), facts.store, info) : message || quoteTemplate(facts);
   const slot = QUOTE_SLOTS.includes(b.slot) ? b.slot : null;
-  const link = lead.page_key ? `${slot === 'fit' ? 'See both options side by side' : 'See your design and quote'}: ${origin}/p/${lead.page_key}` : '';
+  // Stanje slota prije nove poruke: "Show on sales page" i njegovo vrijeme ostaju.
+  let cur = {};
+  if (slot) { try { cur = JSON.parse((await env.DB.prepare('SELECT quotes FROM leads WHERE id = ?').bind(lead.id).first())?.quotes || '{}')?.[slot] || {}; } catch {} }
+  const both = slot === 'fit' && cur.show === true;
+  const link = lead.page_key ? `${both ? 'See both options side by side' : 'See your design and quote'}: ${origin}/p/${lead.page_key}` : '';
   const out = { message: [body, link, info].filter(Boolean).join('\n\n'), source: message ? 'ai' : 'template' };
   // Poruka ostaje zabilježena za taj lead (Ognjen 19.11.2026): poslije izlaska ili osvježavanja je ista, nova je zamjenjuje.
   if (slot) {
     // Cijena iz poruke se zaključava uz nju (22.11.2026): sa živim cijenama metala stranica kupca bi se inače
     // poslije par dana razlikovala od poslate poruke.
     const price = quotePrice(b.price) ?? facts.total;
-    const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, ...(price ? { price } : {}), ...(msgForText(b.msgFor) ? { msgFor: msgForText(b.msgFor) } : {}), edited: false, at: Date.now() };
+    const keep = slot === 'fit' && cur.show ? { show: true, showAt: cur.showAt || null } : {};
+    const saved = { ...keep, msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, ...(price ? { price } : {}), ...(msgForText(b.msgFor) ? { msgFor: msgForText(b.msgFor) } : {}), edited: false, at: Date.now() };
     await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(saved), lead.id).run();
     out.saved = saved;
     await logEvent(env, lead.id, 'quote_generated', { slot, source: out.source, auto });
@@ -1938,7 +1946,7 @@ function leadQuotes(raw) {
   try { q = JSON.parse(raw || '{}') || {}; } catch {}
   return Object.fromEntries(QUOTE_SLOTS.filter((k) => q[k] && (typeof q[k].msg === 'string' || q[k].spec || q[k].price)).map((k) => [k, {
     msg: typeof q[k].msg === 'string' ? q[k].msg : null, source: q[k].source === 'ai' ? 'ai' : 'template', spec: q[k].spec || null,
-    price: quotePrice(q[k].price), msgFor: msgForText(q[k].msgFor) || null, edited: !!q[k].edited, at: q[k].at || null }]));
+    price: quotePrice(q[k].price), msgFor: msgForText(q[k].msgFor) || null, show: q[k].show === true, edited: !!q[k].edited, at: q[k].at || null }]));
 }
 const msgForText = (v) => (typeof v === 'string' && v.length <= 4000 ? v : undefined);
 // Konačna cijena koju zlatar upiše ili namjesti sliderom (cijeli dolari).
@@ -2108,6 +2116,8 @@ function cleanPricing(p) {
   // Grillz cjenovnik (18.11.2026): brojevi ili ugniježđene tabele do 3 nivoa (grillz.sets.6.10k).
   const tree = (o, depth) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), v && typeof v === 'object' ? (depth > 1 ? tree(v, depth - 1) : undefined) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
   return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), setting: n(p?.setting), cuts: map(p?.cuts),
+    // Rok ponude na stranici kupca u satima (prazno = 48, 0 = bez odbrojavanja).
+    offerHours: n(p?.offerHours) != null ? Math.min(720, n(p?.offerHours)) : undefined,
     live: Object.fromEntries(MARKET_METALS.map((m) => [m.key, p?.live?.[m.key] !== false])), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo), depositUrl: httpsUrl(p?.depositUrl), bookingUrl: httpsUrl(p?.bookingUrl),
     // Obavještenja i prva poruka (21.11.2026): kome ide mejl o leadu, na koju adresu kupac odgovara, da li prva poruka ide sama.
     alertEmails: emailList(p?.alertEmails), replyTo: validEmail(p?.replyTo) || undefined, autoSend: p?.autoSend === true };

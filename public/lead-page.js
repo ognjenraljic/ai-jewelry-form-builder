@@ -82,3 +82,23 @@ document.addEventListener('click', async (e) => {
   document.getElementById('sheet-p').textContent = TEXT[b.dataset.action] || TEXT.appointment;
   if (sheet?.showModal) sheet.showModal(); else alert(TEXT[b.dataset.action]);
 });
+
+// Rok ponude (22.11.2026): odbrojavanje do kraja, pa poruka da je istekla.
+const two = (n) => String(n).padStart(2, '0');
+const clock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${two(Math.floor(s / 3600))}:${two(Math.floor((s % 3600) / 60))}:${two(s % 60)}`; };
+const timers = [...document.querySelectorAll('[data-deadline]')];
+function tickOffers() {
+  const now = Date.now();
+  for (const el of timers) {
+    const left = Number(el.dataset.deadline) - now;
+    if (el.dataset.mini) { el.textContent = left > 0 ? `Your price is held for ${clock(left)}` : 'This offer has expired. Reply to your quote and we will refresh it.'; continue; }
+    const t = el.querySelector('time');
+    if (t) t.textContent = clock(left);
+    if (left <= 0 && !el.classList.contains('expired')) {
+      el.classList.add('expired');
+      el.querySelector('.v-label').textContent = 'This offer has expired';
+      el.querySelector('.v-sub').textContent = 'Reply to your quote and we will refresh your price.';
+    }
+  }
+}
+if (timers.length) { tickOffers(); setInterval(tickOffers, 1000); }

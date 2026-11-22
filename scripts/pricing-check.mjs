@@ -81,6 +81,9 @@ ok(middleGround(G, { ...spec, stones: '', coverage: '', karat: '10K', teeth: 'T5
   const e2 = estimate(P2, sp);
   ok(e2.total === 12 * 400 + DISTRICT_GRILLZ.molding.metal, `moissanite red u tabeli zuba: 12 × $400 + molding = ${e2.total}`);
   ok(estimate({ grillz: DISTRICT_GRILLZ }, sp).lines[0].label.startsWith('Moissanite pave set'), 'bez moissanite reda ostaje račun preko seta');
+  const silverOnly14 = { grillz: { ...DISTRICT_GRILLZ, iced: { ...DISTRICT_GRILLZ.iced, moissanite: { '10k': 300, '14k': 400 } } } };
+  const es = estimate(silverOnly14, { ...sp, metal: 'Silver', karat: '' });
+  ok(es.total === DISTRICT_GRILLZ.moissanite[6] + DISTRICT_GRILLZ.molding.metal && !/14K/.test(es.lines[0].label), `srebro bez Silver cijene u moissanite redu: srebrni pave set, bez 14K (${es.lines[0].label}, $${es.total})`);
   const e18 = estimate(P2, { ...sp, karat: '18K' });
   ok(e18.total != null && /14K/.test(e18.lines[0].label), '18K moissanite = 14K po zubu + razlika metala');
 }

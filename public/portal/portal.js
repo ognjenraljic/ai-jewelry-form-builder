@@ -112,6 +112,7 @@ function quoteState(l, ls, key) {
     const saved = l.quotes?.[slot];
     q.spec = saved?.spec && saved.spec.type === ls.spec.type ? { ...ls.spec, ...saved.spec } : { ...q.suggested };
     q.price = saved?.price ?? null;
+    q.show = saved?.show === true;
     restoreQuote(q, saved);
   }
   return q;
@@ -236,9 +237,11 @@ function offerBox(l, ls, key) {
   // Cijela kartica je sklopljena (Ognjen 22.11.2026): u zaglavlju naslov, cijena i stanje budžeta, klik je otvara.
   // Otvorena ostaje otvorena dok se stranica ne osvježi (i kroz ponovno crtanje kartice).
   const bn = fin == null ? null : budgetNote(fin, ls.budget);
-  const sum = `<summary class="calc-fold-sum"><span class="calc-fold-t"><span class="calc-title">${title}</span>${q.msg != null ? '<span class="calc-fold-tag">Message ready</span>' : ''}</span>
+  const sum = `<summary class="calc-fold-sum"><span class="calc-fold-t"><span class="calc-title">${title}</span>${q.msg != null ? '<span class="calc-fold-tag">Message ready</span>' : ''}${!picked && q.show ? '<span class="calc-fold-tag on-page">On sales page</span>' : ''}</span>
     <span class="calc-fold-r">${fin == null ? '<em>Missing prices</em>' : `<b>${money(fin)}</b>${bn ? `<em class="${bn.cls}">${bn.text}</em>` : ''}`}</span><i class="calc-fold-x" aria-hidden="true"></i></summary>`;
-  return `<details class="calc-box calc-fold${picked ? '' : ' quote'}" data-qbox="${esc(key)}" ${q.boxOpen ? 'open' : ''}>${sum}<div class="calc-fold-body">${head}${num}${tags}${controls}${est.total != null ? breakdown(adjusted(est, q)) : ''}${gen}</div></details>`;
+  // Fits the budget ide na stranicu kupca samo kad je uključeno (da se može poslati kasnije, npr. poslije 3-5 dana).
+  const showRow = picked ? '' : `<label class="qshow"><input type="checkbox" data-qshow="${esc(key)}" ${q.show ? 'checked' : ''} /><span><b>Show on sales page</b><em>${q.show ? "Option 2 is on the customer's page" : "Hidden from the customer's page until you turn it on"}</em></span></label>${!q.show && q.msg != null ? '<p class="qshow-note">Turn this on before you send the message, so the page shows both options.</p>' : ''}`;
+  return `<details class="calc-box calc-fold${picked ? '' : ' quote'}" data-qbox="${esc(key)}" ${q.boxOpen ? 'open' : ''}>${sum}<div class="calc-fold-body">${head}${num}${showRow}${tags}${controls}${est.total != null ? breakdown(adjusted(est, q)) : ''}${gen}</div></details>`;
 }
 // Stanje budžeta za zaglavlje sklopljene kartice (isti račun kao traka budžeta).
 function budgetNote(total, b) {
@@ -426,11 +429,11 @@ async function saveAdjNow(key, { keepalive = false } = {}) {
   if (!q?.spec) return;
   const id = qkLead(key);
   const slot = slotOf(key);
-  const body = { slot, spec: q.spec, price: q.price ?? null };
+  const body = { slot, spec: q.spec, price: q.price ?? null, ...(slot === 'fit' ? { show: q.show === true } : {}) };
   try {
     const res = await fetch(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'PUT', credentials: 'same-origin', keepalive, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) throw new Error('save');
-    rememberQuote(id, slot, { spec: q.spec, price: q.price ?? null });
+    rememberQuote(id, slot, { spec: q.spec, price: q.price ?? null, ...(slot === 'fit' ? { show: q.show === true } : {}) });
   } catch {
     adjTimers[key] = setTimeout(() => saveAdjNow(key), 4000);
   }
@@ -757,7 +760,9 @@ function pricingView() {
       <textarea class="in" rows="8" data-quote-info maxlength="1200" placeholder="Your store, address, hours, turnaround times…">${esc(pr.quoteInfo || '')}</textarea>
       <h3 class="plinks-h">Buttons on customer pages</h3><p class="hint">Where "Reserve with a deposit" and "Book an appointment" go (for example a payment link or your booking page). Leave empty and the customer's request shows on the lead, so you can contact them.</p>
       <label class="prow"><span>Deposit link</span><input class="in" type="url" data-link="depositUrl" placeholder="https://" value="${esc(pr.depositUrl || '')}" /></label>
-      <label class="prow"><span>Booking link</span><input class="in" type="url" data-link="bookingUrl" placeholder="https://" value="${esc(pr.bookingUrl || '')}" /></label></div>
+      <label class="prow"><span>Booking link</span><input class="in" type="url" data-link="bookingUrl" placeholder="https://" value="${esc(pr.bookingUrl || '')}" /></label>
+      <label class="prow"><span>Offer valid for, hours</span>${inp('offerHours', pr.offerHours, '48')}</label>
+      <p class="hint">The customer's page shows a countdown from your latest quote (and again when you turn on Fits the budget). Empty = 48 hours, 0 = no countdown.</p></div>
     <div class="pcard2 pwide pinfo palerts"><h3>New lead alerts and first message</h3>
       ${P.me.mail ? '' : '<p class="hint pwarn">Email sending is not switched on yet. Your JewelryLead team turns it on; what you save here starts working then.</p>'}
       <label class="prow"><span>Email me about every new lead</span><input class="in" type="text" data-notify="alertEmails" placeholder="you@store.com, sales@store.com" value="${esc((pr.alertEmails || []).join(', '))}" /></label>
@@ -1115,6 +1120,7 @@ app.addEventListener('change', async (e) => {
   const el = e.target;
   if (el.dataset.qmsg) { saveQuoteNow(el.dataset.qmsg); return; }
   if (el.dataset.qrange) { priceCommit(el.dataset.qrange); return; }
+  if (el.dataset.qshow) { const q = Q[el.dataset.qshow]; if (q) { q.show = el.checked; queueAdjSave(el.dataset.qshow); renderCalc(qkLead(el.dataset.qshow)); } return; }
   if (el.dataset.qprice) { if (Number(el.value) > 0) { priceLive(el.dataset.qprice, el.value); priceCommit(el.dataset.qprice); } else renderCalc(qkLead(el.dataset.qprice)); return; }
   if (el.dataset.q && el.dataset.qf) { quoteEdit(el.dataset.q, el.dataset.qf, el.value); return; }
   if (el.dataset.pickDay !== undefined) { P.day = el.value || ''; if (await loadLeads()) render(); return; }

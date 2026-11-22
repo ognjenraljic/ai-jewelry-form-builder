@@ -49,7 +49,8 @@ function offersOf({ ls, pricing, quotes }) {
   if (aTotal == null) return [];
   const adjusted = specDiff(ls, pickedSpec).length > 0;
   out.push({ slot: 'picked', tag: 'Option 1', title: 'Your design', sub: adjusted ? 'Your design, as we would make it' : 'Exactly as you created it', total: aTotal, rows: specRows(pickedSpec, ls), molding: moldingIncluded(a) });
-  const fitSpec = specOf('fit');
+  // Option 2 samo kad je zlatar uključio "Show on sales page" (22.11.2026).
+  const fitSpec = quotes?.fit?.show === true ? specOf('fit') : null;
   if (fitSpec) {
     const b = estimate(pricing, fitSpec);
     const bTotal = finalOf('fit', b);
@@ -116,6 +117,25 @@ function tiles(list, mineLabel) {
   return list.map((x) => `<figure class="tile${x.mine ? ' mine' : ''}"><div class="tile-img"><img src="${esc(x.image)}" alt="${esc(x.label)}" loading="lazy" width="400" height="400" /></div><figcaption>${esc(x.label)}${x.mine ? `<span>${esc(mineLabel)}</span>` : ''}</figcaption></figure>`).join('');
 }
 
+// Odbrojavanje: server ispiše početno stanje, /lead-page.js ga osvježava svake sekunde.
+const two = (n) => String(n).padStart(2, '0');
+function clock(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return `${two(Math.floor(s / 3600))}:${two(Math.floor((s % 3600) / 60))}:${two(s % 60)}`;
+}
+function remainingText(deadline) {
+  const left = deadline - Date.now();
+  return left > 0 ? `Your price is held for ${clock(left)}` : 'This offer has expired. Reply to your quote and we will refresh it.';
+}
+function validityHtml(deadline, hours) {
+  const left = deadline - Date.now();
+  const ends = new Date(deadline).toISOString();
+  return `<div class="validity${left > 0 ? '' : ' expired'}" data-deadline="${deadline}">
+    <span class="v-label">${left > 0 ? `This offer is reserved for you for ${hours} hours` : 'This offer has expired'}</span>
+    <span class="v-clock" aria-label="Time left on this offer"><time datetime="${ends}">${left > 0 ? clock(left) : '00:00:00'}</time></span>
+    <span class="v-sub">${left > 0 ? 'Your price and design are held until the timer ends.' : 'Reply to your quote and we will refresh your price.'}</span></div>`;
+}
+
 export function leadPageHtml(d) {
   const { key, form, answers, lead, store, renders, film } = d;
   const theme = Object.fromEntries(THEME_KEYS.map((k) => [k, HEX.test(form.theme?.[k] || '') ? form.theme[k] : '']).filter(([, v]) => v));
@@ -138,6 +158,11 @@ export function leadPageHtml(d) {
     ? `<div class="thumbs" role="list">${media.map((m, k) => `<button type="button" role="listitem" class="thumb${m.kind === 'video' ? ' is-video' : ''}${k === renders.length - 1 ? ' on' : ''}" data-${m.kind === 'video' ? 'video' : 'src'}="${esc(m.src)}"${m.poster ? ` data-poster="${esc(m.poster)}"` : ''} aria-label="${esc(m.label)}">${m.kind === 'video' ? `<img src="${esc(m.poster)}" alt="" loading="lazy" width="96" height="96" /><span class="play" aria-hidden="true"></span>` : `<img src="${esc(m.src)}" alt="" loading="lazy" width="96" height="96" />`}<span class="thumb-l">${esc(m.label)}</span></button>`).join('')}</div>`
     : '';
 
+  // Rok ponude (22.11.2026): od zadnje poslate ponude (poruka Estimated price ili uključen Option 2), podrazumijevano 48 h.
+  const hours = Number.isFinite(Number(d.pricing?.offerHours)) && d.pricing?.offerHours !== '' && d.pricing?.offerHours != null ? Number(d.pricing.offerHours) : 48;
+  const from = Math.max(Number(d.quotes?.picked?.at) || 0, d.quotes?.fit?.show ? Number(d.quotes.fit.showAt || d.quotes.fit.at) || 0 : 0) || Number(lead.createdAt) || Date.now();
+  const deadline = offers.length && hours > 0 ? from + hours * 3600_000 : 0;
+  const validity = deadline ? validityHtml(deadline, hours) : '';
   const offerSection = offers.length
     ? `<div class="offers${offers.length === 1 ? ' one' : ''}">${offers.map((o) => offerCard(o, offers.length === 1)).join('')}</div>`
     : `<div class="offers one"><article class="offer single"><header><span class="tag">Your quote</span></header><h3>Your price is being prepared</h3><p class="sub">${esc(store.name)} is finalizing the price for your design and will send it to you shortly.</p>${CTA('picked')}</article></div>`;
@@ -185,11 +210,12 @@ ${main ? `<meta property="og:image" content="${esc((d.origin || '') + main.url)}
     <p class="lead-text">Designed with you at ${esc(store.name)}. Below are your design, the options we prepared for you and how to reserve your piece.</p>
     ${details.length ? `<dl class="details">${details.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
     <a class="btn primary to-offers" href="#options">${offers.length > 1 ? 'See your two options' : 'See your quote'}</a>
+    ${deadline ? `<p class="valid-mini" data-deadline="${deadline}" data-mini="1">${esc(remainingText(deadline))}</p>` : ''}
   </div>
 </section>
 ${filmSection}
 <section class="options rv" id="options" aria-labelledby="op-h">
-  <div class="sec-head"><p class="eyebrow">${offers.length > 1 ? 'Two ways to make it yours' : 'Your quote'}</p><h2 id="op-h">${offers.length > 1 ? 'Choose your option' : 'Reserve your piece'}</h2>${budget}</div>
+  <div class="sec-head"><p class="eyebrow">${offers.length > 1 ? 'Two ways to make it yours' : 'Your quote'}</p><h2 id="op-h">${offers.length > 1 ? 'Choose your option' : 'Reserve your piece'}</h2>${budget}${validity}</div>
   ${offerSection}
   <p class="fine">Prices are estimates for your design and are confirmed by ${esc(store.name)} before your piece is made.</p>
 </section>

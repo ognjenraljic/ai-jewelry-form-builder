@@ -48,6 +48,8 @@ ok(html.includes('Styles and finishes we make') && html.includes('1 Main St'), '
 
 // Zlatar napravi Fits the budget: stranica pokazuje dvije ponude sa uštedom.
 const fitSpec = { ...GRILLZ, type: 'grillz', metal: 'Yellow Gold', karat: '14K', stones: 'Moissanite', coverage: 'full', teeth: GRILLZ.teeth, units: 12, cut: '', clarity: '', style: 'set' };
+// 22.11.2026: Option 2 ide na stranicu tek uz "Show on sales page".
+await fetch(`${BASE}/api/portal/leads/${l1.leadId}/quote`, { method: 'PUT', headers: A.P, body: JSON.stringify({ slot: 'fit', show: true }) });
 const f = await fetch(`${BASE}/api/portal/leads/${l1.leadId}/quote`, { method: 'POST', headers: A.P, body: JSON.stringify({ piece: 'grillz', total: 2500, lines: [], slot: 'fit', spec: fitSpec, mode: 'fit', originalTotal: 7900, changes: [{ what: 'Stones', from: 'Lab-grown diamonds', to: 'Moissanite' }] }) }).then(j);
 ok(f.status === 200 && /See both options side by side: http/.test(f.body.message), 'Fits the budget poruka nosi link "both options"');
 const html2 = await (await fetch(`${BASE}${row.page.url}`)).text();

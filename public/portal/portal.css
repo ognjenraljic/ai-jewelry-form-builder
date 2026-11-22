@@ -684,3 +684,13 @@ button.dbar.future { opacity: .35; cursor: default; }
 .pmkt-note b { color: var(--accent); font-weight: 700; }
 .pmkt-off { color: var(--under); }
 .pmkt-where { margin: 0; font-size: 11.5px; color: var(--ink-faint); }
+
+/* Fits the budget: "Show on sales page" (22.11.2026). */
+.qshow { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+.qshow input { margin-top: 3px; accent-color: var(--accent); width: 16px; height: 16px; flex: none; }
+.qshow span { display: grid; gap: 2px; }
+.qshow b { font-size: 13px; font-weight: 700; color: var(--ink); }
+.qshow em { font-style: normal; font-size: 11.5px; color: var(--ink-faint); }
+.qshow:has(input:checked) { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.qshow-note { margin: 6px 2px 0; font-size: 11.5px; color: var(--under); }
+.calc-fold-tag.on-page { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }

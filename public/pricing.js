@@ -181,7 +181,10 @@ function icedGrillz(g, rows, col, spec, plain) {
   const name = COL_NAME[col] || col;
   // Moissanite po zubu (22.11.2026, Ognjen): kad zlatar upiše red u tabelu zuba, ide kao ostalo kamenje po zubu;
   // bez tog reda ostaje stari račun preko srebrnih pave setova.
-  const moissPerTooth = /moissanite/.test(st) && ICED_COLS.some((c) => num(g?.iced?.moissanite?.[c]));
+  // Srebro bez svoje cijene u moissanite redu ide preko srebrnih pave setova (ti setovi su baš srebro), nikad preko
+  // 14K reda (District 22.11.2026: srebrni grillz je pisao "(14K) + Silver difference").
+  const moiss = g?.iced?.moissanite;
+  const moissPerTooth = /moissanite/.test(st) && (num(moiss?.[col]) || (col !== 'silver' && num(moiss?.['14k'])));
   if (/moissanite/.test(st) && !moissPerTooth) {
     const set = g?.moissanite;
     const one = (r) => { const sz = sizeUp(set, r, null); return sz ? { v: num(set[sz]) / 2, sz } : null; };
@@ -217,8 +220,9 @@ function icedGrillz(g, rows, col, spec, plain) {
   // 18K i platina nemaju led u tabeli: 14K led + razlika metala iz obične tabele.
   const plain14 = plainGrillz(g, rows, '14k', spec.style === 'fangs');
   if (per('14k') && plain.amount != null && plain14.amount != null) {
-    notes.push(`No iced ${name} price on the list: 14K iced price + the plain ${name} vs 14K difference`);
-    return { amount: per('14k') * n + (plain.amount - plain14.amount), label: `Iced, ${rowName}: ${n} × ${money(per('14k'))} (14K) + ${name} difference`, notes };
+    const diff = plain.amount - plain14.amount;
+    notes.push(`No ${name} price in the iced ${rowName} row: the 14K price per tooth ${diff < 0 ? 'minus' : 'plus'} the plain ${name} vs 14K difference. Add a ${name} price to that row to use your own.`);
+    return { amount: per('14k') * n + diff, label: `Iced, ${rowName}: ${n} × ${money(per('14k'))} (14K row) ${diff < 0 ? '−' : '+'} ${money(Math.abs(diff))} for ${name}`, notes };
   }
   return { missing: `iced price per tooth for ${rowName} in ${name}` };
 }

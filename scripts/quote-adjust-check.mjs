@@ -47,7 +47,13 @@ ok(r2.status === 200, 'Fits the budget podešen bez poruke');
 row = (await list()).find((x) => x.id === l1.leadId);
 ok(row.quotes.fit && row.quotes.fit.msg === null && row.quotes.fit.price === 2400 && row.quotes.fit.spec.stones === 'Moissanite', 'portal vraća podešen slot bez poruke');
 html = await (await fetch(url)).text();
+ok(!html.includes('Option 2'), 'Fits the budget je skriven sa stranice dok se ne uključi "Show on sales page"');
+const s1 = await put({ slot: 'fit', show: true });
+row = (await list()).find((x) => x.id === l1.leadId);
+ok(s1.status === 200 && row.quotes.fit.show === true, '"Show on sales page" sačuvan');
+html = await (await fetch(url)).text();
 ok(html.includes('Option 2') && html.includes('$2,400') && /You save \$5,000/.test(html), 'stranica: Option 2 $2,400, ušteda od $7,400 = $5,000');
+ok(/data-deadline="\d+"/.test(html) && /reserved for you for 48 hours/.test(html), 'stranica ima rok ponude od 48 h sa odbrojavanjem');
 
 // 3) Izmjena teksta poruke traži da poruka postoji; generisana poruka čuva cijenu i izbore.
 ok((await put({ slot: 'fit', message: 'Hi' })).status === 404, 'tekst bez generisane poruke se ne čuva');
