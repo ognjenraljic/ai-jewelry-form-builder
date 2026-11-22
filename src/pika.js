@@ -78,7 +78,9 @@ export async function jobCharge(env, job) {
   let j = job;
   for (const ms of [0, 1000, 2000]) {
     if (ms) { await wait(ms); j = await pikaJob(env, job.id); }
-    if (j.billing?.state === 'settled') return j.billing.charge_micro_usd / 1e6;
+    // Naplata 0 za gotov posao (22.11.2026, video Kadena kod Districta) nije stvarni trošak nego nepoznat (kredit ili
+    // promocija na Pika nalogu): vraća se null, pa video ostaje na procjeni modela, a slika na procjeni iz tokena.
+    if (j.billing?.state === 'settled') return j.billing.charge_micro_usd > 0 ? j.billing.charge_micro_usd / 1e6 : null;
   }
   return null;
 }
