@@ -119,7 +119,7 @@ function restoreQuote(q, saved) {
   if (q.restored) return;
   q.restored = true;
   if (!saved?.msg || q.msg != null) return;
-  Object.assign(q, { msg: saved.msg, source: saved.source, edited: saved.edited, savedAt: saved.at, msgFor: sigOf(q) });
+  Object.assign(q, { msg: saved.msg, source: saved.source, edited: saved.edited, savedAt: saved.at, msgFor: saved.msgFor || sigOf(q) });
 }
 // Traka budžeta: raspon kupca osjenčen, tačka je cijena (ispred raspona = ispod, iza = preko).
 function budgetMeter(total, b, label) {
@@ -226,10 +226,9 @@ function offerBox(l, ls, key) {
     ? `<p class="calc-empty">Missing in your prices: ${est.missing.map(esc).join(', ')}.</p>${picked ? '<button type="button" class="btn small" data-tab="pricing">Set prices</button>' : ''}`
     : `<p class="calc-num" data-qk="${esc(key)}" data-count="${Math.round(fin)}" data-from="${Math.round(q.animFrom ?? fin)}">${money(q.animFrom ?? fin)}</p><div class="bm-wrap">${budgetMeter(fin, ls.budget, ls.budgetLabel) || (ls.budgetLabel ? `<p class="calc-diff">Budget ${esc(ls.budgetLabel)}</p>` : '')}</div>${priceControl(key, q, est)}`;
   const tags = diff.length ? `<ul class="qdiff" aria-label="Changed from the customer's picks">${diff.map((c) => `<li><span>${esc(c.what)}</span>${esc(c.from)} <i aria-hidden="true">→</i> <b>${esc(c.to)}</b></li>`).join('')}</ul>` : '';
-  // Estimated price: izbori su sklopljeni dok ih zlatar ne promijeni (najčešće ostaje kako je kupac izabrao).
-  const controls = picked
-    ? `<details class="qadj" ${diff.length || q.adjOpen ? 'open' : ''} data-qadj="${esc(key)}"><summary>Adjust specs</summary>${quoteControls(key, ls, q.spec)}</details>`
-    : quoteControls(key, ls, q.spec);
+  // Izbori su sklopljeni u obje kartice (Ognjen 22.11.2026); otvaraju se na klik i ostaju otvoreni dok se mijenjaju.
+  // Šta je promijenjeno se vidi u tagovima i kad su sklopljeni.
+  const controls = `<details class="qadj" ${q.adjOpen ? 'open' : ''} data-qadj="${esc(key)}"><summary>Adjust specs</summary>${quoteControls(key, ls, q.spec)}</details>`;
   const gen = est.total != null || q.msg != null || q.busy
     ? `<button type="button" class="btn qgo" data-act="quote-gen" data-qk="${esc(key)}" ${est.total == null || q.busy ? 'disabled' : ''}><span class="qgo-spark" aria-hidden="true"></span>${q.msg != null ? 'Generate again' : 'Generate quote message'}</button><div class="qmsg-wrap" data-qk="${esc(key)}">${quoteMessageView(l, q, key)}</div>`
     : '';
@@ -328,7 +327,7 @@ function quoteEdit(key, field, value, delta) {
   q.spec = s;
   // Nove specifikacije = nova izračunata cijena; ručna cijena se ne prenosi na drugi komad.
   q.price = null;
-  if (slotOf(key) === 'picked') q.adjOpen = true;
+  q.adjOpen = true;
   queueAdjSave(key);
   renderCalc(id);
 }
@@ -444,7 +443,7 @@ async function quoteGenerate(key) {
     if (el) { el.classList.remove('swap'); void el.offsetWidth; el.textContent = q.step; el.classList.add('swap'); }
   }, 900);
   const slot = slotOf(key);
-  const body = { ...quoteBody(ls, spec, adjusted(est, q)), slot, spec, price: q.price ?? null };
+  const body = { ...quoteBody(ls, spec, adjusted(est, q)), slot, spec, price: q.price ?? null, msgFor: sigOf(q) };
   body.total = Math.round(fin);
   // "Fits the budget" sa izmjenama: poruka kaže šta se mijenja u odnosu na Estimated price (kako je zlatar ostavi)
   // i novu cijenu naspram njene konačne cijene.
@@ -508,11 +507,11 @@ async function saveQuoteNow(key, { keepalive = false } = {}) {
   q.saving = true;
   showSaved(key);
   try {
-    const res = await fetch(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'PUT', credentials: 'same-origin', keepalive, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slot, message: msg }) });
+    const res = await fetch(`/api/portal/leads/${encodeURIComponent(id)}/quote`, { method: 'PUT', credentials: 'same-origin', keepalive, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ slot, message: msg, msgFor: q.msgFor || undefined }) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Could not save');
     Object.assign(q, { edited: true, savedAt: data.at, saveError: '' });
-    rememberQuote(id, slot, { msg, edited: true, at: data.at });
+    rememberQuote(id, slot, { msg, edited: true, at: data.at, msgFor: q.msgFor });
   } catch (err) {
     q.dirty = true;
     q.saveError = 'Not saved, retrying…';

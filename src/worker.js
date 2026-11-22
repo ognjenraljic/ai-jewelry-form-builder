@@ -1678,8 +1678,11 @@ async function portalApi(request, env, p, secure) {
     const msg = quoteMessageText(b.message);
     if (!slot || msg == null) return json({ error: 'Nothing to save.' }, 400);
     const at = Date.now();
-    const r = await env.DB.prepare(`UPDATE leads SET quotes = json_set(quotes, '$.${slot}.msg', ?, '$.${slot}.edited', json('true'), '$.${slot}.at', ?)
-      WHERE id = ? AND json_type(quotes, '$.${slot}.msg') = 'text' AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`).bind(msg, at, qm[1], client.id).run();
+    // msgFor: za koje izbore i cijenu je tekst (portal ga pošalje kad sam zamijeni cijenu u poruci), da se poslije
+    // osvježavanja zna da li je poruka zastarjela.
+    const mf = msgForText(b.msgFor);
+    const r = await env.DB.prepare(`UPDATE leads SET quotes = json_set(quotes, '$.${slot}.msg', ?, '$.${slot}.edited', json('true'), '$.${slot}.at', ?${mf ? `, '$.${slot}.msgFor', ?` : ''})
+      WHERE id = ? AND json_type(quotes, '$.${slot}.msg') = 'text' AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`).bind(...[msg, at, ...(mf ? [mf] : []), qm[1], client.id]).run();
     return r.meta.changes ? json({ ok: true, at }) : json({ error: 'Generate the message first.' }, 404);
   }
   let lm;
@@ -1736,7 +1739,7 @@ async function writeQuote(env, client, lead, b, origin, { auto = false } = {}) {
   // Poruka ostaje zabilježena za taj lead (Ognjen 19.11.2026): poslije izlaska ili osvježavanja je ista, nova je zamjenjuje.
   if (slot) {
     const price = quotePrice(b.price);
-    const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, ...(price ? { price } : {}), edited: false, at: Date.now() };
+    const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, ...(price ? { price } : {}), ...(msgForText(b.msgFor) ? { msgFor: msgForText(b.msgFor) } : {}), edited: false, at: Date.now() };
     await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(saved), lead.id).run();
     out.saved = saved;
     await logEvent(env, lead.id, 'quote_generated', { slot, source: out.source, auto });
@@ -1931,8 +1934,9 @@ function leadQuotes(raw) {
   try { q = JSON.parse(raw || '{}') || {}; } catch {}
   return Object.fromEntries(QUOTE_SLOTS.filter((k) => q[k] && (typeof q[k].msg === 'string' || q[k].spec || q[k].price)).map((k) => [k, {
     msg: typeof q[k].msg === 'string' ? q[k].msg : null, source: q[k].source === 'ai' ? 'ai' : 'template', spec: q[k].spec || null,
-    price: quotePrice(q[k].price), edited: !!q[k].edited, at: q[k].at || null }]));
+    price: quotePrice(q[k].price), msgFor: msgForText(q[k].msgFor) || null, edited: !!q[k].edited, at: q[k].at || null }]));
 }
+const msgForText = (v) => (typeof v === 'string' && v.length <= 4000 ? v : undefined);
 // Konačna cijena koju zlatar upiše ili namjesti sliderom (cijeli dolari).
 function quotePrice(v) {
   const n = Math.round(Number(v));
