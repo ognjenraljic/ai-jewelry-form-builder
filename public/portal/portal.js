@@ -819,6 +819,8 @@ async function boot() {
     try { await api('/api/portal/session', { method: 'POST', body: JSON.stringify({ token }), json: true }); }
     catch (e) { return ended('This link no longer works', 'Ask your JewelryLead team for a new portal link.'); }
   }
+  // Brzina (22.11.2026): lista upita i Bookings kreću odmah, uporedo sa /me.
+  const listsReady = Promise.all([loadLeads(), loadBookings()]);
   try {
     P.me = await api(`/api/portal/me${P.obQuery || ''}`);
   } catch (e) {
@@ -827,7 +829,7 @@ async function boot() {
   // A new setup draft must not hide a client's existing forms or enquiries.
   P.onboardingFlow = hasDraftOnboarding() && (onboardingRequested || (!P.me.forms.length && !P.me.stats.leads));
   P.tab = P.onboardingFlow ? 'onboarding' : 'leads';
-  await Promise.all([loadLeads(), loadBookings()]);
+  await listsReady;
   document.title = `${P.me.client.name} · JewelryLead`;
   render();
   setInterval(tick, 30_000);
@@ -849,9 +851,16 @@ async function loadLeads(more = false) {
   P.loadingMore = more;
   P.loadError = '';
   const result = leadStore.load({ status: P.status, q: P.q, day: P.day, dfrom: rangeFrom(), piece: P.piece, video: P.video, before: more ? P.next : null, previous: P.leads });
-  if (P.me) render();
+  // Brzina (22.11.2026): iz keša nema međukoraka; sa servera stare kartice ostaju zatamnjene, "Loading" tek poslije 0,6 s.
+  P.loading = false;
+  let done = false;
+  if (P.me && !more) {
+    setTimeout(() => { if (!done && seq === leadRequest) { P.busy = true; render(); } }, 60);
+    setTimeout(() => { if (!done && seq === leadRequest) { P.loading = true; render(); } }, 600);
+  } else if (P.me) render();
   try {
     const r = await result;
+    done = true;
     if (seq !== leadRequest || !r) return false;
     P.leads = r.leads;
     P.next = r.next;
@@ -863,8 +872,9 @@ async function loadLeads(more = false) {
     if (seq !== leadRequest) return false;
     P.loadError = 'Could not load leads. Please try again.';
   }
+  done = true;
   if (seq !== leadRequest) return false;
-  P.loading = P.loadingMore = false;
+  P.loading = P.loadingMore = P.busy = false;
   return true;
 }
 
@@ -969,7 +979,7 @@ function leadsView() {
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
   const perDay = dayCounts(list);
   let lastDay = '';
-  const cards = P.loading ? '<p class="empty" role="status">Loading leads…</p>' : P.loadError ? `<p class="empty" role="alert">${esc(P.loadError)} <button class="btn" data-act="retry-leads">Try again</button></p>` : list.map((l) => {
+  const cards = P.loading && !P.leads?.length ? '<p class="empty" role="status">Loading leads…</p>' : P.loadError ? `<p class="empty" role="alert">${esc(P.loadError)} <button class="btn" data-act="retry-leads">Try again</button></p>` : list.map((l) => {
     const k = dayKey(l.created_at);
     const head = k !== lastDay ? `<h3 class="day-head"><span>${esc(dayTitle(k))}</span><b>${perDay[k] || 1} lead${(perDay[k] || 1) === 1 ? '' : 's'}</b></h3>` : '';
     lastDay = k;
@@ -981,7 +991,7 @@ function leadsView() {
     const changes = l.renders.map((r, k) => (k && r.tweak ? `<li><b>Change ${k}</b>${esc(r.tweak)}</li>` : '')).join('');
     const sel = `<select class="status-sel s-${esc(l.status)}" data-lead-status="${esc(l.id)}" aria-label="Status of ${esc(l.name)}" ${readOnly() ? 'disabled title="Admin view is read-only. The client changes the status in their own portal."' : ''}>${STATUSES.map(([v, t]) => `<option value="${v}" ${l.status === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
     return `${head}
-      <article class="lead has-calc">
+      <article class="lead has-calc${P.busy ? ' busy' : ''}" data-find="${esc([l.name, l.email, l.phone].join(' ').toLowerCase())}">
         <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}${pageBox(l)}</div>
         <div>
           <div class="lead-top"><h2>${esc(l.name)}</h2><span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
@@ -1105,6 +1115,17 @@ app.addEventListener('mouseout', (e) => {
 });
 
 let searchTimer;
+// Trenutna pretraga (22.11.2026): sakrije kartice koje ne odgovaraju, bez čekanja servera i bez ponovnog crtanja.
+function filterCardsNow(value) {
+  const q = value.trim().toLowerCase();
+  for (const card of app.querySelectorAll('article.lead[data-find]')) card.hidden = !!q && !card.dataset.find.includes(q);
+  // Naslov dana ostaje samo ako ispod njega ima vidljiva kartica.
+  for (const head of app.querySelectorAll('.day-head')) {
+    let el = head.nextElementSibling, any = false;
+    while (el && !el.classList.contains('day-head')) { if (el.matches('article.lead') && !el.hidden) { any = true; break; } el = el.nextElementSibling; }
+    head.hidden = !any;
+  }
+}
 app.addEventListener('input', (e) => {
   const el = e.target;
   if (el.dataset.qmsg && Q[el.dataset.qmsg]) { Q[el.dataset.qmsg].msg = el.value; el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; queueQuoteSave(el.dataset.qmsg); return; }
@@ -1112,8 +1133,9 @@ app.addEventListener('input', (e) => {
   if (el.dataset.price && /^(stones\.|setting$)/.test(el.dataset.price)) renderStoneExample();
   if (el.dataset.qprice) { if (Number(el.value) > 0) priceLive(el.dataset.qprice, el.value); return; }
   if (el.dataset.search !== undefined) {
+    filterCardsNow(el.value);
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(async () => { P.q = el.value.trim(); if (!await loadLeads()) return; render(); const s = app.querySelector('[data-search]'); s?.focus(); s?.setSelectionRange(s.value.length, s.value.length); }, 350);
+    searchTimer = setTimeout(async () => { P.q = el.value.trim(); if (!await loadLeads()) return; const typed = app.querySelector('[data-search]')?.value ?? P.q; render(); const s = app.querySelector('[data-search]'); if (s) { s.value = typed; s.focus(); s.setSelectionRange(typed.length, typed.length); if (typed.trim() !== P.q) filterCardsNow(typed); } }, 200);
   }
 });
 app.addEventListener('change', async (e) => {

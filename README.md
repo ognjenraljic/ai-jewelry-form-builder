@@ -235,3 +235,8 @@ Renders without spending credit: start the fake OpenAI with `node scripts/mock-o
 - **Slike:** Studio Light je `public/library-light/` sa ISTIM putanjama kao `public/library/` (307 slika, Codex iz Studio Dark slike kao reference, `~/Desktop/jewelrylead-katalog/_generisi.py`). Forma u `art()` (form.js) mijenja `/library/` u `/library-light/`; makro kadrovi (`details/`) i SVG crteži ostaju isti. Slika komada Chain iz galerije sajta ima svoj par `library-light/pieces/chain-category.webp` (`LIGHT_EXTRA`).
 - **Nova slika u biblioteci** mora dobiti i svijetli par; dok ga nema, forma sama pada na tamnu sliku (listener na `error`). `scripts/image-style-check.mjs` javlja svaku sliku bez para.
 - AI render i dalje šalje modelu tamnu sliku kao referencu oblika; pozadinu rendera bira polje "Render background".
+
+## Portal speed (22.11.2026)
+
+- Every portal request loads the client and its forms in parallel; `/api/portal/me` and `/api/portal/leads` run all their D1 queries in parallel (before: 8-10 queries one after another). Pending Pika videos are checked in the background (`ctx.waitUntil`), the list never waits for Pika.
+- The portal starts the lead list and Bookings together with `/me`. Filters keep the old cards (dimmed, `.lead.busy`) instead of a "Loading" screen, which appears only after 0.6 s with no cards. Search hides non-matching cards on every keystroke (`filterCardsNow`, `data-find` on each card) and asks the server after 200 ms.

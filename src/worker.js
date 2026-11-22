@@ -120,7 +120,7 @@ async function route(request, env, ctx, url) {
   if (p === '/api/config' && read) return json({ turnstile: turnstileOn(env) ? env.TURNSTILE_SITE_KEY : null });
   if (p === '/api/portal/session' && request.method === 'POST') return portalLogin(request, env, secure);
   if (p === '/api/portal/logout' && request.method === 'POST') return portalLogout(request, env, secure);
-  if (p.startsWith('/api/portal/')) return portalApi(request, env, p, secure);
+  if (p.startsWith('/api/portal/')) return portalApi(request, env, p, secure, ctx);
   if (p === '/api/admin/view-as-log' && request.method === 'GET') return viewAsLog(request, env);
   if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/view-as$/)) && request.method === 'POST') return startViewAs(request, env, m[1]);
   if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/portal-link$/)) && ['GET', 'POST', 'DELETE'].includes(request.method)) return clientLink(request, env, m[1]);
@@ -1490,10 +1490,14 @@ async function portalLogout(request, env, secure) {
   return new Response(JSON.stringify({ ok: true }), { headers: h });
 }
 
-async function portalApi(request, env, p, secure) {
+async function portalApi(request, env, p, secure, ctx) {
   const sess = await portalSession(request, env);
   if (!sess) return json({ error: 'Session expired. Open the portal again.' }, 401);
-  const client = await env.DB.prepare('SELECT id, name, data FROM clients WHERE id = ?').bind(sess.client_id).first();
+  // Brzina (22.11.2026): klijent i forme u isto vrijeme; svaki upit u D1 je jedan put do baze.
+  const [client, formRes] = await Promise.all([
+    env.DB.prepare('SELECT id, name, data FROM clients WHERE id = ?').bind(sess.client_id).first(),
+    env.DB.prepare('SELECT id, data, template, updated_at, archived_at FROM forms WHERE client_id = ? ORDER BY updated_at DESC').bind(sess.client_id).all(),
+  ]);
   if (!client) return json({ error: 'Client not found' }, 404);
 
   // Admin zatvara svoj pregled. Klijentov link se ovdje ne gasi (odjava samo briše token u browseru).
@@ -1503,26 +1507,31 @@ async function portalApi(request, env, p, secure) {
   }
   // Onboarding: zlatar popunjava svoj vodič; čuva se dok kuca, Send ga šalje adminu.
   if (p.startsWith('/api/portal/onboarding')) return portalOnboarding(request, env, p, client, sess);
-  const formRows = (await env.DB.prepare('SELECT id, data, template, updated_at, archived_at FROM forms WHERE client_id = ? ORDER BY updated_at DESC').bind(client.id).all()).results;
+  const formRows = formRes.results;
   const forms = Object.fromEntries(formRows.map((r) => [r.id, JSON.parse(r.data)]));
 
   if (p === '/api/portal/me' && request.method === 'GET') {
     const d = JSON.parse(client.data || '{}');
-    const stats = await env.DB.prepare(`SELECT COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, COUNT(DISTINCT CASE WHEN l.created_at > ? THEN l.id END) AS recent
-      FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ?`).bind(Date.now() - 30 * 86400_000, client.id).first();
+    const [stats, perRows, gen, ob, speed, market, spent] = await Promise.all([env.DB.prepare(`SELECT COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, COUNT(DISTINCT CASE WHEN l.created_at > ? THEN l.id END) AS recent
+      FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ?`).bind(Date.now() - 30 * 86400_000, client.id).first(),
     // Po formi: upiti, renderi i zadnji upit. Trošak po formi klijent ne vidi; vidi samo mjesečnu potrošnju naspram budžeta.
-    const per = Object.fromEntries((await env.DB.prepare(`SELECT l.form_id, COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, MAX(l.created_at) AS last_lead
-      FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? GROUP BY l.form_id`).bind(client.id).all()).results.map((r) => [r.form_id, r]));
+    env.DB.prepare(`SELECT l.form_id, COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, MAX(l.created_at) AS last_lead
+      FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? GROUP BY l.form_id`).bind(client.id).all(),
     // Prosječno vrijeme generisanja (slika i video) i broj videa, za statistiku na vrhu portala.
-    const gen = await env.DB.prepare(`SELECT
+    env.DB.prepare(`SELECT
         (SELECT AVG(r.ms) FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND r.status = 'ok' AND r.kind IS NULL AND r.ms > 0) AS render_ms,
         (SELECT AVG(fl.ms) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok' AND fl.ms > 0 AND fl.model = ?2) AS film_ms,
-        (SELECT COUNT(*) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok') AS films`).bind(client.id, VIDEO_MODELS[primaryFilm(env)].api).first();
-    const ob = await pickOnboarding(request, env, client.id);
+        (SELECT COUNT(*) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok') AS films`).bind(client.id, VIDEO_MODELS[primaryFilm(env)].api).first(),
+    pickOnboarding(request, env, client.id),
+    replySpeed(env, client.id),
+    getMarket(env).catch(() => null),
+    clientMonthCost(env, client.id),
+    ]);
+    const per = Object.fromEntries(perRows.results.map((r) => [r.form_id, r]));
     return json({
       session: { kind: sess.kind, expiresAt: sess.expires_at || null },
       mail: mailOn(env),
-      speed: await replySpeed(env, client.id),
+      speed,
       client: { id: client.id, name: client.name, logo: d.logo || null, website: d.website || '' },
       onboarding: ob ? { id: ob.id, status: ob.status, rev: ob.rev, data: JSON.parse(ob.data || '{}'), updatedAt: ob.updated_at, submittedAt: ob.submitted_at } : null,
       ...(ob && ob.status === 'draft' ? { onboardingDefaults: ONBOARDING_DEFAULTS, onboardingSuggestions: await onboardingSuggestions(env, client.id) } : {}),
@@ -1532,10 +1541,10 @@ async function portalApi(request, env, p, secure) {
       })),
       stats: { leads: stats?.leads || 0, renders: stats?.renders || 0, recent: stats?.recent || 0, films: gen?.films || 0, renderMs: Math.round(gen?.render_ms || 0), filmMs: Math.round(gen?.film_ms || 0) },
       pricing: d.pricing || null,
-      market: await getMarket(env).catch(() => null),
+      market,
       // Izbori formi koje kalkulator cijene treba (natpisi), po formi.
       formSpecs: Object.fromEntries(formRows.filter((r) => !r.archived_at).map((r) => [r.id, pricingSpec(forms[r.id])])),
-      usage: { spent: Math.round((await clientMonthCost(env, client.id)) * 100) / 100, limit: monthlyBudget(env), resetsAt: monthStart(Date.now(), 1) },
+      usage: { spent: Math.round(spent * 100) / 100, limit: monthlyBudget(env), resetsAt: monthStart(Date.now(), 1) },
     });
   }
   // Bookings (19.11.2026): kupci koji su na svojoj stranici kliknuli Reserve with a deposit ili Book an appointment.
@@ -1575,35 +1584,45 @@ async function portalApi(request, env, p, secure) {
       where.push('l.created_at >= ? AND l.created_at < ?');
       args.push(from, from + 864e5);
     }
-    const leads = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page,
+    // Brzina (22.11.2026): sve što ne zavisi od stranice ide u isto vrijeme kad i lista (ranije 7 upita zaredom).
+    const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
+    const [leadRes, countRows, pieceRows, dayRes, vrowsRes] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page,
         l.alerted_at, l.auto_sent_at, l.first_reply_at
-      FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all()).results;
+      FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
+    // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
+    env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
+    env.DB.prepare(`SELECT json_extract(l.answers, '$.type') AS t, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? GROUP BY t`).bind(client.id).all(),
+    // Upiti po danu (zlatar prati koliko mu dolazi dnevno): dan po vremenskoj zoni pregledača, zadnjih 90 dana, isti filteri kao lista.
+    env.DB.prepare(`SELECT strftime('%Y-%m-%d', (l.created_at / 1000) - ? * 60, 'unixepoch') AS d, l.form_id AS fid, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id
+        WHERE ${baseWhere.filter((w) => w !== 'l.created_at < ?').join(' AND ')} AND l.created_at >= ? GROUP BY d, fid`).bind(tz, ...baseArgs.filter((_, k) => k !== 1), dayFrom).all(),
+    // Video modeli za filter: broj gotovih videa, prosječno vrijeme i cijena po modelu (za sve upite zlatara).
+    env.DB.prepare(`SELECT fl.model, COUNT(*) AS n, AVG(CASE WHEN fl.ms > 0 THEN fl.ms END) AS ms, AVG(fl.cost_usd) AS cost FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
+        WHERE f.client_id = ? AND fl.status = 'ok' GROUP BY fl.model`).bind(client.id).all(),
+    ]);
+    const leads = leadRes.results;
     const more = leads.length > PAGE_SIZE;
     const pageLeads = leads.slice(0, PAGE_SIZE);
     const oldest = pageLeads.length ? pageLeads[pageLeads.length - 1].created_at : before;
-    const renders = pageLeads.length
-      ? (await env.DB.prepare(`SELECT r.lead_id, r.n, r.image_key, r.tweak, r.kind, r.ms FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id
-          WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND r.status = 'ok' AND r.image_key IS NOT NULL ORDER BY r.created_at`).bind(client.id, before, oldest).all()).results
-      : [];
-    // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
-    const counts = Object.fromEntries((await env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all()).results.map((r) => [r.s, r.n]));
-    const pieces = Object.fromEntries((await env.DB.prepare(`SELECT json_extract(l.answers, '$.type') AS t, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? GROUP BY t`).bind(client.id).all()).results.filter((r) => r.t).map((r) => [String(r.t), r.n]));
-    // Upiti po danu (zlatar prati koliko mu dolazi dnevno): dan po vremenskoj zoni pregledača, zadnjih 90 dana, isti filteri kao lista.
-    const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
+    const [renders, filmRows] = pageLeads.length ? await Promise.all([
+      env.DB.prepare(`SELECT r.lead_id, r.n, r.image_key, r.tweak, r.kind, r.ms FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id
+          WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND r.status = 'ok' AND r.image_key IS NOT NULL ORDER BY r.created_at`).bind(client.id, before, oldest).all(),
+      // Video komada (dugme kupca ili pozadinski): gotovi idu uz upit.
+      env.DB.prepare(`SELECT fl.* FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
+          WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND fl.status IN ('ok', 'pending') ORDER BY fl.created_at`).bind(client.id, before, oldest).all(),
+    ]).then(([r, f]) => [r.results, f.results]) : [[], []];
+    const counts = Object.fromEntries(countRows.results.map((r) => [r.s, r.n]));
+    const pieces = Object.fromEntries(pieceRows.results.filter((r) => r.t).map((r) => [String(r.t), r.n]));
     const days = {};
-    const dayRows = (await env.DB.prepare(`SELECT strftime('%Y-%m-%d', (l.created_at / 1000) - ? * 60, 'unixepoch') AS d, l.form_id AS fid, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id
-        WHERE ${baseWhere.filter((w) => w !== 'l.created_at < ?').join(' AND ')} AND l.created_at >= ? GROUP BY d, fid`).bind(tz, ...baseArgs.filter((_, k) => k !== 1), dayFrom).all()).results;
-    for (const r of dayRows) (days[r.d] ||= {})[r.fid] = r.n;
-    // Video komada (dugme kupca ili pozadinski): gotovi idu uz upit; nekoliko na čekanju se ovdje dovrši.
-    let films = pageLeads.length
-      ? (await env.DB.prepare(`SELECT fl.* FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
-          WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND fl.status IN ('ok', 'pending') ORDER BY fl.created_at`).bind(client.id, before, oldest).all()).results
-      : [];
-    if (pikaOn(env)) films = await Promise.all(films.map((fl, k) => (fl.status === 'pending' && k < 6 ? settleFilm(env, fl) : fl)));
+    for (const r of dayRes.results) (days[r.d] ||= {})[r.fid] = r.n;
+    let films = filmRows;
+    // Videi na čekanju se provjere kod Pike u pozadini (ranije je lista čekala Piku); portal ih vidi pri sljedećem osvježavanju.
+    const waiting = films.filter((fl) => fl.status === 'pending').slice(0, 6);
+    if (pikaOn(env) && waiting.length) {
+      const work = Promise.all(waiting.map((fl) => settleFilm(env, fl).catch(() => null)));
+      if (ctx?.waitUntil) ctx.waitUntil(work); else await work;
+    }
     if (video) films = films.filter((fl) => fl.model === VIDEO_MODELS[video].api);
-    // Video modeli za filter: broj gotovih videa, prosječno vrijeme i cijena po modelu (za sve upite zlatara).
-    const vrows = (await env.DB.prepare(`SELECT fl.model, COUNT(*) AS n, AVG(CASE WHEN fl.ms > 0 THEN fl.ms END) AS ms, AVG(fl.cost_usd) AS cost FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
-        WHERE f.client_id = ? AND fl.status = 'ok' GROUP BY fl.model`).bind(client.id).all()).results;
+    const vrows = vrowsRes.results;
     const videoModels = Object.entries(VIDEO_MODELS).map(([k, m]) => {
       const r = vrows.find((x) => x.model === m.api);
       return { key: k, label: m.label, customer: k === primaryFilm(env), count: r?.n || 0, ms: Math.round(r?.ms || 0) || null, cost: r ? +Number(r.cost || 0).toFixed(3) : m.est };
