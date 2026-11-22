@@ -4,11 +4,32 @@ const API = 'https://api.dev.pika.art';
 const IMAGE_WAIT_MS = 150_000; // manje od STALE_PENDING_MS u workeru
 const POLL_MS = 2000;
 
-export const FILM_API = 'pika/pika-h3-flex/image-to-video';
-// 10 s blago njihanje u petlji (Ognjenova odluka 16.11); petlja jer je zadnji kadar ista slika kao prvi.
+// Tri video modela po slici (Ognjen 22.11.2026, sva tri oko $0,20): kupac dobija samo prvi (H3 Flex, najbrži), a zlatar u portalu
+// vidi sva tri sa oznakom modela, da se uporedi kvalitet za cijenu. Svi kreću od iste slike.
+// Cijene za 10 s provjerene preko besplatnog Pika quote-a 22.11. (procjena; pravi iznos stiže sa poslom).
+// FILM_MODELS (Worker variable, npr. "flex" ili "flex,pika25") bira koji se prave; prvi u listi je uvijek kupčev.
 export const FILM_SECONDS = 10;
-export const FILM_RESOLUTION = '768p';
-export const FILM_EST_USD = 0.2; // 0,02 $ po sekundi na 768p; trošak se ispravi kad posao stigne
+export const VIDEO_MODELS = {
+  flex: { api: 'pika/pika-h3-flex/image-to-video', label: 'Pika H3 Flex', est: 0.2,
+    body: (img, prompt) => ({ image: img, last_frame_image: img, prompt, duration: FILM_SECONDS, resolution: '768p', rewrite: false }) },
+  // Hailuo 2.3 Fast i Pika 2.5 nemaju zadnji kadar: komad se njiše i vraća po promptu, ali šav petlje nije zagarantovan.
+  hailuo: { api: 'minimax/hailuo-2.3-fast/image-to-video', label: 'Hailuo 2.3 Fast', est: 0.192,
+    body: (img, prompt) => ({ first_frame_image: img, prompt, duration: FILM_SECONDS, resolution: '768p', prompt_optimizer: false }) },
+  pika25: { api: 'pika/pika-2.5/image-to-video', label: 'Pika 2.5', est: 0.2,
+    body: (img, prompt) => ({ image: img, prompt, duration_s: FILM_SECONDS, resolution: '480p' }) },
+};
+export const DEFAULT_FILM_MODELS = ['flex', 'hailuo', 'pika25'];
+export const filmModels = (env) => {
+  const list = String(env.FILM_MODELS || '').split(',').map((x) => x.trim()).filter((x) => VIDEO_MODELS[x]);
+  return [...new Set(list.length ? list : DEFAULT_FILM_MODELS)];
+};
+// Kupčev model (prvi) i dodatni samo za portal.
+export const primaryFilm = (env) => filmModels(env)[0];
+export const extraFilms = (env) => filmModels(env).slice(1);
+// Zapisi u bazi nose API putanju modela; ključ modela se iz nje pronalazi.
+export const modelKeyOf = (api) => Object.keys(VIDEO_MODELS).find((k) => VIDEO_MODELS[k].api === api) || null;
+export const FILM_API = VIDEO_MODELS.flex.api;
+export const FILM_EST_USD = VIDEO_MODELS.flex.est;
 
 export const pikaOn = (env) => !!env.PIKA_API_KEY;
 // Slike preko Pike samo kad se izričito uključi (PIKA_IMAGES=1). Ključ sam po sebi pali samo video komada,
@@ -80,7 +101,8 @@ export async function pikaImage(env, model, prompt, images, mask = null, size = 
 // Video se ne čeka u zahtjevu (nekoliko minuta): vraća se broj posla, a forma ga prati.
 // Isti prvi i zadnji kadar: film se vrti u krug bez skoka.
 // key je ID filma, pa ponovljen zahtjev ne pravi drugi plaćeni posao.
-export async function startFilm(env, bytes, mime, prompt, key) {
+export async function startFilm(env, bytes, mime, prompt, key, modelKey = 'flex') {
+  const m = VIDEO_MODELS[modelKey] || VIDEO_MODELS.flex;
   const image_url = await upload(env, bytes, mime);
-  return submit(env, FILM_API, { image: image_url, last_frame_image: image_url, prompt, duration: FILM_SECONDS, resolution: FILM_RESOLUTION, rewrite: false }, key);
+  return submit(env, m.api, m.body(image_url, prompt), key);
 }

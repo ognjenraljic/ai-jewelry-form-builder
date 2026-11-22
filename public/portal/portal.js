@@ -12,7 +12,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const safe = (fn) => { try { return fn(); } catch { return null; } };
 
 const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
-const P = { me: null, bookings: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
+const P = { me: null, bookings: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, video: '', videoModels: [], status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
 const day = (t) => new Date(t).toLocaleDateString('en-US', { dateStyle: 'medium' });
 // Dan upita u zoni pregledača (isto kao server sa ?tz=), da zlatar prati koliko mu dolazi dnevno.
 const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -582,7 +582,7 @@ async function loadLeads(more = false) {
   P.loading = !more;
   P.loadingMore = more;
   P.loadError = '';
-  const result = leadStore.load({ status: P.status, q: P.q, day: P.day, dfrom: rangeFrom(), piece: P.piece, before: more ? P.next : null, previous: P.leads });
+  const result = leadStore.load({ status: P.status, q: P.q, day: P.day, dfrom: rangeFrom(), piece: P.piece, video: P.video, before: more ? P.next : null, previous: P.leads });
   if (P.me) render();
   try {
     const r = await result;
@@ -592,6 +592,7 @@ async function loadLeads(more = false) {
     P.counts = r.counts;
     P.days = r.days || {};
     if (r.pieces && Object.keys(r.pieces).length) P.pieces = r.pieces;
+    if (r.videoModels?.length) P.videoModels = r.videoModels;
   } catch (error) {
     if (seq !== leadRequest) return false;
     P.loadError = 'Could not load leads. Please try again.';
@@ -681,7 +682,7 @@ function usageView() {
 
 function leadsView() {
   const total = Object.values(P.counts).reduce((a, b) => a + b, 0);
-  if (!total && !P.q && !P.piece && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
+  if (!total && !P.q && !P.piece && !P.video && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
   const forms = P.me.forms.filter((f) => f.leads);
   const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}</div>`;
   const formChips = forms.length > 1
@@ -692,6 +693,11 @@ function leadsView() {
   const pieceList = Object.entries(P.pieces || {}).sort((a, b) => b[1] - a[1]);
   const pieceChips = pieceList.length > 1 || P.piece
     ? `<div class="chips" role="group" aria-label="Filter by piece"><button class="chip ${P.piece ? '' : 'on'}" data-piece="" aria-pressed="${!P.piece}">All pieces</button>${pieceList.map(([v, n]) => `<button class="chip ${P.piece === v ? 'on' : ''}" data-piece="${esc(v)}" aria-pressed="${P.piece === v}">${esc(PIECE_NAMES[v] || v[0].toUpperCase() + v.slice(1))} <span>${n}</span></button>`).join('')}</div>`
+    : '';
+  // Filter po video modelu (22.11.2026): svaki upit ima do tri videa (kupčev + dva za poređenje); čip pokazuje broj, a title vrijeme i cijenu.
+  const vm = P.videoModels || [];
+  const videoChips = vm.length > 1 || P.video
+    ? `<div class="chips" role="group" aria-label="Filter by video model"><button class="chip ${P.video ? '' : 'on'}" data-video="" aria-pressed="${!P.video}">All videos</button>${vm.map((m) => `<button class="chip ${P.video === m.key ? 'on' : ''}" data-video="${esc(m.key)}" aria-pressed="${P.video === m.key}" title="${esc(`${m.label}${m.customer ? ', the video your customer sees' : ', only in your portal'}${m.ms ? `, about ${secs(m.ms)} to make` : ''}, about $${Number(m.cost).toFixed(2)} per video`)}">${esc(m.label)}${m.customer ? ' (customer)' : ''} <span>${m.count}</span></button>`).join('')}</div>`
     : '';
   const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email or phone" value="${esc(P.q)}" /></label>`;
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
@@ -719,7 +725,7 @@ function leadsView() {
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
           <div class="thumbs">${strip}${photos}</div>
           ${changes ? `<div class="changes"><p class="changes-title">Changes the customer asked for</p><ol>${changes}</ol></div>` : ''}
-          ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><button type="button" class="film-tile" data-film="${esc(f.url)}" data-poster="${esc(last?.url || '')}" aria-label="Play the highlight video of ${esc(l.name)}"><video src="${esc(f.url)}" ${last ? `poster="${esc(last.url)}"` : ''} muted loop playsinline preload="none" tabindex="-1" aria-hidden="true"></video><span class="film-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span></button><figcaption>Highlight video · <a href="${esc(f.url)}" download>Download</a></figcaption>${genTime(f.ms, 'Video made in')}</figure>` : '<p class="film-wait">Highlight video is being made. It appears here in a few minutes.</p>')).join('')}</div>` : ''}
+          ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><button type="button" class="film-tile" data-film="${esc(f.url)}" data-poster="${esc(last?.url || '')}" aria-label="Play the highlight video of ${esc(l.name)}"><video src="${esc(f.url)}" ${last ? `poster="${esc(last.url)}"` : ''} muted loop playsinline preload="none" tabindex="-1" aria-hidden="true"></video><span class="film-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span></button><figcaption><span class="film-model ${f.customer ? 'cust' : ''}">${esc(f.label || 'Video')}${f.customer ? ' · customer' : ''}</span>${f.cost != null ? ` · $${Number(f.cost).toFixed(2)}` : ''} · <a href="${esc(f.url)}" download>Download</a></figcaption>${genTime(f.ms, 'Video made in')}</figure>` : `<p class="film-wait"><span class="film-model ${f.customer ? 'cust' : ''}">${esc(f.label || 'Video')}</span> is being made. It appears here in a few minutes.</p>`)).join('')}</div>` : ''}
           <label class="lead-note"><span class="sr-only">Note</span><textarea class="in" rows="1" data-lead-note="${esc(l.id)}" placeholder="Add a note (quote sent, follow up Friday…)" ${readOnly() ? 'disabled' : ''}>${esc(l.note)}</textarea></label>
         </div>
         ${calcView(l)}
@@ -728,7 +734,7 @@ function leadsView() {
   const more = P.next && !P.loading && !P.loadError ? `<div class="more"><button class="btn" data-act="more" ${P.loadingMore ? 'disabled' : ''}>${P.loadingMore ? 'Loading…' : 'Show older leads'}</button></div>` : '';
   // Traka ostaje i kad izabrani dan nema leadova, da se može izabrati drugi dan ili "All days".
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
-  return `<div class="filters">${search}${statusChips}${pieceChips}${formChips}</div>${chart}${cards}${more}`;
+  return `<div class="filters">${search}${statusChips}${pieceChips}${videoChips}${formChips}</div>${chart}${cards}${more}`;
 }
 
 // Stranica kupca (19.11.2026): link ispod slike, otvaranje bez brojanja posjete, posjete i klikovi na Deposit / Book.
@@ -889,9 +895,10 @@ app.addEventListener('click', async (e) => {
   }
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'bookings') openBookings(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
-  if (t.dataset.seeLead) { P.tab = 'leads'; P.q = t.dataset.seeLead; P.status = ''; P.piece = ''; P.day = ''; if (await loadLeads()) render(); return; }
+  if (t.dataset.seeLead) { P.tab = 'leads'; P.q = t.dataset.seeLead; P.status = ''; P.piece = ''; P.video = ''; P.day = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
   if (t.dataset.piece !== undefined) { P.piece = t.dataset.piece; if (await loadLeads()) render(); }
+  if (t.dataset.video !== undefined) { P.video = t.dataset.video; if (await loadLeads()) render(); }
   if (t.dataset.status !== undefined) { P.status = t.dataset.status; if (await loadLeads()) render(); }
   if (t.dataset.range) { P.range = t.dataset.range; P.shift = 0; if (await loadLeads()) render(); }
   if (t.dataset.shift) { P.shift = Math.max(0, P.shift + Number(t.dataset.shift)); if (await loadLeads()) render(); }

@@ -59,8 +59,10 @@ check((await video()).length === before, 'odbijeni zahtjevi nisu plaćeni');
 
 const [a, b] = await Promise.all([send(`${api}/films`, { token: lead.token, n: 1 }), send(`${api}/films`, { token: lead.token, n: 1 })]);
 check(a.data.film?.id && a.data.film.id === b.data.film?.id, 'dva istovremena klika su jedan film');
-check((await video()).length === before + 1, 'plaćen je samo jedan posao');
-const job = (await video()).pop();
+await new Promise((r) => setTimeout(r, 1500));
+const flexJobs = async () => (await video()).slice(before).filter((j) => j.path.includes('pika/pika-h3-flex/'));
+check((await flexJobs()).length === 1, 'plaćen je samo jedan kupčev posao (uz njega idu dva modela samo za portal, three-films-check)');
+const job = (await flexJobs()).pop();
 check(job.path.includes('pika/pika-h3-flex/image-to-video') && job.body.duration === 10 && job.body.resolution === '768p' && job.body.last_frame_image === job.body.image && job.body.rewrite === false, 'H3 Flex, 10 s, 768p, zadnji kadar = prvi (petlja)');
 check(job.body.prompt.includes('The ring turns slowly a little to the left') && job.body.prompt.includes('loops seamlessly') && !job.body.prompt.includes('360'), 'blago njihanje lijevo-desno u petlji, bez punog kruga');
 check(job.body.prompt.includes('keeps exactly the design of the input image throughout'), 'isti dizajn kroz cijeli pokret');
@@ -116,7 +118,7 @@ const lead2 = (await send('/api/leads', fd2)).data;
 const videosBefore = (await video()).length;
 check((await send(`/api/leads/${lead2.leadId}/renders`, { token: lead2.token })).status === 200, 'backend: prvi render');
 await new Promise((r) => setTimeout(r, 1500));
-check((await video()).length === videosBefore + 1, 'backend: film krenuo sam');
+check((await video()).length === videosBefore + 3, 'backend: film krenuo sam (kupčev model + dva za poređenje)');
 check((await send(`/api/leads/${lead2.leadId}/films`, { token: lead2.token, n: 1 })).status === 404, 'backend: kupac ne može naručiti film');
 await setVideo(null);
 

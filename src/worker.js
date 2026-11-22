@@ -12,7 +12,7 @@ import { estimate, leadSpecFrom, quoteBody } from '../public/pricing.js';
 import { leadPageHtml, PAGE_ACTIONS } from './leadpage.js';
 import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
-import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, FILM_API, FILM_EST_USD } from './pika.js';
+import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
@@ -66,7 +66,15 @@ const PAGE_SIZE = 50;
 const LEAD_STATUSES = ['new', 'contacted', 'quoted', 'won', 'lost'];
 const SELFIE_DAYS = 30;
 const FILMS_PER_LEAD = 2;
+// Dodatni modeli (samo za portal, poređenje): jedan video po modelu i upitu, od iste slike kao kupčev.
+const EXTRA_FILMS_PER_LEAD = 1;
 const STALE_FILM_MS = 10 * 60_000;
+// Skuplji modeli znaju čekati u redu kod provajdera duže od H3 Flexa, pa im se daje više vremena.
+const STALE_EXTRA_FILM_MS = 25 * 60_000;
+const extraApis = (env) => extraFilms(env).map((k) => VIDEO_MODELS[k].api);
+// Kupac vidi samo svoj (prvi) model; dodatni modeli su samo za zlatara u portalu.
+const customerFilm = (env, f) => !extraApis(env).includes(f.model);
+const staleFor = (env, f) => (customerFilm(env, f) ? STALE_FILM_MS : STALE_EXTRA_FILM_MS);
 const MAX_VERSIONS = 50;
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\]|.+\.localhost)$/;
@@ -123,7 +131,7 @@ async function route(request, env, ctx, url) {
   if (p.startsWith('/api/admin/onboardings')) return adminOnboardings(request, env, p);
   if (p.startsWith('/api/admin/notifications')) return adminNotifications(request, env, p);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/tryon$/)) && request.method === 'POST') return createTryOn(request, env, m[1], ctx);
-  if ((m = p.match(/^\/api\/leads\/([\w-]+)\/films$/)) && request.method === 'POST') return createFilm(request, env, m[1]);
+  if ((m = p.match(/^\/api\/leads\/([\w-]+)\/films$/)) && request.method === 'POST') return createFilm(request, env, m[1], ctx);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/films\/([a-z0-9]+)$/)) && request.method === 'GET') return filmStatus(request, env, m[1], m[2]);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)$/)) && request.method === 'GET') return leadStatus(request, env, m[1]);
   if (p.startsWith('/api/admin/clients') && !p.endsWith('/upload')) return adminClients(request, env, p);
@@ -296,6 +304,18 @@ async function catchUp(env) {
     for (const lead of need) {
       const form = await loadForm(env, lead.form_id);
       if (autoFilm(env, form)) await startLeadFilm(env, lead, form, 1, { auto: true }).catch((e) => console.error('catch-up film', lead.id, e.message));
+    }
+    // Dodatni modeli (portal) za kupčev video koji je krenuo u zadnjem satu, ako nisu krenuli odmah. Samo svježi upiti,
+    // da puštanje ove mogućnosti ne napravi videe za sve starije leadove.
+    for (const key of extraFilms(env)) {
+      const miss = (await env.DB.prepare(`SELECT l.*, r.n AS film_n FROM films p JOIN leads l ON l.id = p.lead_id JOIN renders r ON r.id = p.render_id
+          WHERE p.model = ? AND p.status != 'error' AND p.created_at > ? AND p.created_at < ?
+          AND NOT EXISTS (SELECT 1 FROM films x WHERE x.lead_id = l.id AND x.model = ?) ORDER BY p.created_at LIMIT 5`)
+        .bind(VIDEO_MODELS[primaryFilm(env)].api, now - 60 * 60_000, now - 2 * 60_000, VIDEO_MODELS[key].api).all()).results;
+      for (const lead of miss) {
+        const form = await loadForm(env, lead.form_id);
+        if (filmMode(env, form)) await startLeadFilm(env, lead, form, lead.film_n, { auto: true, modelKey: key }).catch((e) => console.error('catch-up extra film', key, lead.id, e.message));
+      }
     }
     const pending = (await env.DB.prepare("SELECT * FROM films WHERE status = 'pending' AND created_at < ? ORDER BY created_at LIMIT 20").bind(now - 60_000).all()).results;
     for (const fl of pending) await settleFilm(env, fl).catch((e) => console.error('catch-up settle', fl.id, e.message));
@@ -533,56 +553,74 @@ const filmMode = (env, form) => (pikaOn(env) && ['button', 'backend', 'auto'].in
 // Film koji kreće sam poslije prvog rendera (bez klika): zlatarev pozadinski i kupčev automatski.
 const autoFilm = (env, form) => ['backend', 'auto'].includes(filmMode(env, form));
 
-async function createFilm(request, env, leadId) {
+async function createFilm(request, env, leadId, ctx) {
   if (!pikaOn(env)) return json({ error: 'Not available.' }, 404);
   const body = await request.json().catch(() => ({}));
   const lead = await env.DB.prepare('SELECT * FROM leads WHERE id = ?').bind(leadId).first();
   if (!lead || !body.token || !safeEqual(body.token, lead.token)) return json({ error: 'Not allowed.' }, 403);
   const form = await loadForm(env, lead.form_id);
   if (!['button', 'auto'].includes(filmMode(env, form))) return json({ error: 'Not available.' }, 404);
-  const out = await startLeadFilm(env, lead, form, body.n);
+  const out = await startLeadFilm(env, lead, form, body.n, { ctx });
   return json(out.film ? { film: out.film } : { error: out.error, ...(out.paused ? { paused: true } : {}), ...(out.dev ? { dev: out.dev } : {}) }, out.status);
 }
 
 // Zajedničko za dugme kupca i pozadinski film: zauzme mjesto jednim upisom i pošalje posao Piki.
-async function startLeadFilm(env, lead, form, n, { auto = false } = {}) {
+// modelKey bez vrijednosti = kupčev model; kad on krene, isti render ide i na dodatne modele (samo portal).
+async function startLeadFilm(env, lead, form, n, { auto = false, modelKey = null, ctx = null } = {}) {
   const leadId = lead.id;
+  const key = modelKey || primaryFilm(env);
+  const vm = VIDEO_MODELS[key];
+  const extra = key !== primaryFilm(env);
   const render = await env.DB.prepare("SELECT id, image_key FROM renders WHERE lead_id = ? AND n = ? AND status = 'ok' AND kind IS NULL AND image_key IS NOT NULL").bind(leadId, n).first();
   if (!render) return { error: 'Preview not found.', status: 404 };
   const block = await spendBlock(env, lead.form_id);
   if (block) { await budgetNotice(env, block, lead.form_id); return { error: SPEND_MESSAGE, paused: true, status: 503 }; }
   // Video koji kreće sam se preskače kad ostane manje od 30% dnevnog budžeta: slike kupaca imaju prednost.
-  if (auto && !(await filmRoom(env, lead.form_id, FILM_EST_USD))) { console.log('auto film skipped: budget kept for pictures', leadId); return { error: 'skipped', status: 409 }; }
+  if ((auto || extra) && !(await filmRoom(env, lead.form_id, vm.est))) { console.log('auto film skipped: budget kept for pictures', leadId, key); return { error: 'skipped', status: 409 }; }
 
   const now = Date.now();
-  await env.DB.prepare("UPDATE films SET status = 'error', error = 'timed out', cost_usd = 0 WHERE lead_id = ? AND status = 'pending' AND created_at < ?").bind(leadId, now - STALE_FILM_MS).run();
+  await env.DB.prepare("UPDATE films SET status = 'error', error = 'timed out', cost_usd = 0 WHERE lead_id = ? AND model = ? AND status = 'pending' AND created_at < ?").bind(leadId, vm.api, now - (extra ? STALE_EXTRA_FILM_MS : STALE_FILM_MS)).run();
   const typeField = form?.steps?.flatMap((st) => st.fields).find((f) => f.id === 'type');
   const answers = JSON.parse(lead.answers);
   const piece = (typeField?.options || []).find((o) => o.value === answers.type)?.label || answers.type;
   const prompt = buildFilmPrompt(piece, answers.type, filmDescription(form, answers));
   const id = rid(12);
-  // Mjesto se zauzima jednim upisom, kao kod rendera: ni paralelni zahtjevi ne prave drugi plaćeni posao.
+  const perLead = extra ? EXTRA_FILMS_PER_LEAD : FILMS_PER_LEAD;
+  // Mjesto se zauzima jednim upisom, kao kod rendera: ni paralelni zahtjevi ne prave drugi plaćeni posao. Limiti važe po modelu.
   const r = await env.DB.prepare(
     `INSERT INTO films (id, lead_id, render_id, model, prompt, status, cost_usd, created_at)
      SELECT ?,?,?,?,?,'pending',?,? WHERE
-       (SELECT COUNT(*) FROM films WHERE lead_id = ? AND status != 'error') < ? AND
-       (SELECT COUNT(*) FROM films WHERE lead_id = ?) < ? AND
-       NOT EXISTS (SELECT 1 FROM films WHERE lead_id = ? AND status = 'pending') AND
-       NOT EXISTS (SELECT 1 FROM films WHERE render_id = ? AND status = 'ok')`
-  ).bind(id, leadId, render.id, FILM_API, prompt, FILM_EST_USD, now, leadId, FILMS_PER_LEAD, leadId, FILMS_PER_LEAD + 2, leadId, render.id).run();
+       (SELECT COUNT(*) FROM films WHERE lead_id = ? AND model = ? AND status != 'error') < ? AND
+       (SELECT COUNT(*) FROM films WHERE lead_id = ? AND model = ?) < ? AND
+       NOT EXISTS (SELECT 1 FROM films WHERE lead_id = ? AND model = ? AND status = 'pending') AND
+       NOT EXISTS (SELECT 1 FROM films WHERE render_id = ? AND model = ? AND status = 'ok')`
+  ).bind(id, leadId, render.id, vm.api, prompt, vm.est, now, leadId, vm.api, perLead, leadId, vm.api, perLead + 2, leadId, vm.api, render.id, vm.api).run();
   if (r.meta.changes !== 1) {
-    const mine = await env.DB.prepare("SELECT * FROM films WHERE render_id = ? AND status != 'error' ORDER BY created_at DESC").bind(render.id).first();
+    const mine = await env.DB.prepare("SELECT * FROM films WHERE render_id = ? AND model = ? AND status != 'error' ORDER BY created_at DESC").bind(render.id, vm.api).first();
     return mine ? { film: filmJson(mine), status: 200 } : { error: 'Video limit reached. Our team will follow up with you.', status: 429 };
   }
   try {
     const img = await env.MEDIA.get(render.image_key);
-    const job = await startFilm(env, new Uint8Array(await img.arrayBuffer()), img.httpMetadata?.contentType || 'image/png', prompt, id);
+    const job = await startFilm(env, new Uint8Array(await img.arrayBuffer()), img.httpMetadata?.contentType || 'image/png', prompt, id, key);
     await env.DB.prepare('UPDATE films SET job_id = ? WHERE id = ?').bind(job.id, id).run();
+    if (!extra && extraFilms(env).length) {
+      // Dodatni modeli kreću poslije kupčevog i ne zadržavaju njegov odgovor.
+      const more = startExtraFilms(env, lead, form, n);
+      if (ctx?.waitUntil) ctx.waitUntil(more); else await more;
+    }
     return { film: { id, status: 'pending', created: now }, status: 201 };
   } catch (err) {
-    console.error('film failed', err.message);
+    console.error('film failed', key, err.message);
     await env.DB.prepare("UPDATE films SET status = 'error', error = ?, cost_usd = 0 WHERE id = ?").bind(String(err.message).slice(0, 500), id).run();
     return { error: 'We could not start your video this time.', status: 502, ...(env.DEV_MODE === '1' ? { dev: { error: err.message } } : {}) };
+  }
+}
+
+// Isti render na svaki dodatni model, jedan po jedan (greška jednog ne zaustavlja ostale).
+async function startExtraFilms(env, lead, form, n) {
+  for (const key of extraFilms(env)) {
+    const out = await startLeadFilm(env, lead, form, n, { auto: true, modelKey: key }).catch((e) => ({ error: e.message }));
+    if (out.error && out.status !== 429) console.log('extra film', key, lead.id, out.error);
   }
 }
 
@@ -591,7 +629,7 @@ async function filmStatus(request, env, leadId, filmId) {
   const lead = await env.DB.prepare('SELECT token FROM leads WHERE id = ?').bind(leadId).first();
   if (!lead || !token || !safeEqual(token, lead.token)) return json({ error: 'Not allowed.' }, 403);
   const film = await env.DB.prepare('SELECT * FROM films WHERE id = ? AND lead_id = ?').bind(filmId, leadId).first();
-  if (!film) return json({ error: 'Not found' }, 404);
+  if (!film || !customerFilm(env, film)) return json({ error: 'Not found' }, 404);
   return json({ film: filmJson(await settleFilm(env, film)) });
 }
 
@@ -605,7 +643,7 @@ async function settleFilm(env, film) {
     return { ...film, status: 'error' };
   };
   if (job.status === 'failed') return fail(`${job.error?.code || ''} ${job.error?.message || ''}`.trim(), (await jobCharge(env, job)) || 0);
-  if (job.status !== 'completed') return Date.now() - film.created_at > STALE_FILM_MS ? fail('timed out', film.cost_usd) : film;
+  if (job.status !== 'completed') return Date.now() - film.created_at > staleFor(env, film) ? fail('timed out', film.cost_usd) : film;
   const file = jobFile(job);
   const res = file && (await fetch(file.url));
   if (!res?.ok) return film; // sljedeća provjera pokušava ponovo
@@ -727,7 +765,7 @@ async function leadStatus(request, env, leadId) {
   return json({
     answers: JSON.parse(lead.answers),
     renders: design.map((r) => {
-      const film = films.filter((f) => f.render_id === r.id).pop();
+      const film = films.filter((f) => f.render_id === r.id && customerFilm(env, f)).pop();
       return { url: `/media/${r.image_key}`, n: r.n, ...(r.checking && r.created_at > Date.now() - CHECK_STALE_MS ? { checking: true } : {}), ...(film ? { film: filmJson(film) } : {}) };
     }),
     tryons: await Promise.all(tries.map(async (r) => ({ url: await signMedia(env, r.image_key), base: design.find((d) => d.id === r.base_render_id)?.n ?? null }))),
@@ -1479,8 +1517,8 @@ async function portalApi(request, env, p, secure) {
     // Prosječno vrijeme generisanja (slika i video) i broj videa, za statistiku na vrhu portala.
     const gen = await env.DB.prepare(`SELECT
         (SELECT AVG(r.ms) FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND r.status = 'ok' AND r.kind IS NULL AND r.ms > 0) AS render_ms,
-        (SELECT AVG(fl.ms) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok' AND fl.ms > 0) AS film_ms,
-        (SELECT COUNT(*) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok') AS films`).bind(client.id).first();
+        (SELECT AVG(fl.ms) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok' AND fl.ms > 0 AND fl.model = ?2) AS film_ms,
+        (SELECT COUNT(*) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok') AS films`).bind(client.id, VIDEO_MODELS[primaryFilm(env)].api).first();
     const ob = await pickOnboarding(request, env, client.id);
     return json({
       session: { kind: sess.kind, expiresAt: sess.expires_at || null },
@@ -1522,6 +1560,9 @@ async function portalApi(request, env, p, secure) {
     // Filter po komadu (District 19.11.2026: "filter po kategoriji proizvoda"): odgovor "type" iz upita.
     const piece = /^[a-z0-9-]{1,40}$/.test(u.searchParams.get('piece') || '') ? u.searchParams.get('piece') : '';
     if (piece) { where.push("json_extract(l.answers, '$.type') = ?"); args.push(piece); }
+    // Filter po video modelu (22.11.2026): samo upiti koji imaju video tog modela, i u kartici samo ti videi.
+    const video = VIDEO_MODELS[u.searchParams.get('video')] ? u.searchParams.get('video') : '';
+    if (video) { where.push("EXISTS (SELECT 1 FROM films vf WHERE vf.lead_id = l.id AND vf.model = ? AND vf.status IN ('ok', 'pending'))"); args.push(VIDEO_MODELS[video].api); }
     // Jedan dan (klik na traku u portalu): od ponoći do ponoći po vremenskoj zoni pregledača (?tz= u minutama).
     // Dani za traku: od zadnjih 90 dana, ili od početka mjeseca/sedmice koju zlatar lista strelicama (do 2 godine unazad).
     const dayFrom = Math.max(Date.now() - 730 * 864e5, Math.min(Date.now() - 90 * 864e5, Number(u.searchParams.get('dfrom')) || Infinity));
@@ -1558,9 +1599,17 @@ async function portalApi(request, env, p, secure) {
       ? (await env.DB.prepare(`SELECT fl.* FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
           WHERE f.client_id = ? AND l.created_at < ? AND l.created_at >= ? AND fl.status IN ('ok', 'pending') ORDER BY fl.created_at`).bind(client.id, before, oldest).all()).results
       : [];
-    if (pikaOn(env)) films = await Promise.all(films.map((fl, k) => (fl.status === 'pending' && k < 4 ? settleFilm(env, fl) : fl)));
+    if (pikaOn(env)) films = await Promise.all(films.map((fl, k) => (fl.status === 'pending' && k < 6 ? settleFilm(env, fl) : fl)));
+    if (video) films = films.filter((fl) => fl.model === VIDEO_MODELS[video].api);
+    // Video modeli za filter: broj gotovih videa, prosječno vrijeme i cijena po modelu (za sve upite zlatara).
+    const vrows = (await env.DB.prepare(`SELECT fl.model, COUNT(*) AS n, AVG(CASE WHEN fl.ms > 0 THEN fl.ms END) AS ms, AVG(fl.cost_usd) AS cost FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
+        WHERE f.client_id = ? AND fl.status = 'ok' GROUP BY fl.model`).bind(client.id).all()).results;
+    const videoModels = Object.entries(VIDEO_MODELS).map(([k, m]) => {
+      const r = vrows.find((x) => x.model === m.api);
+      return { key: k, label: m.label, customer: k === primaryFilm(env), count: r?.n || 0, ms: Math.round(r?.ms || 0) || null, cost: r ? +Number(r.cost || 0).toFixed(3) : m.est };
+    }).filter((m) => m.count || filmModelsOn(env).includes(m.key));
     return json({
-      more, next: more ? oldest : null, counts, days, pieces,
+      more, next: more ? oldest : null, counts, days, pieces, videoModels,
       leads: pageLeads.map((l) => {
         const a = JSON.parse(l.answers);
         let files = {};
@@ -1576,7 +1625,11 @@ async function portalApi(request, env, p, secure) {
             ...renders.filter((r) => r.lead_id === l.id && r.kind === 'tryon').map((r) => ({ label: 'On their smile', key: r.image_key })),
           ],
           renders: renders.filter((r) => r.lead_id === l.id && r.kind !== 'tryon').map((r) => ({ url: `/media/${r.image_key}`, tweak: r.tweak, ms: r.ms || null })),
-          films: films.filter((fl) => fl.lead_id === l.id && fl.status !== 'error').map((fl) => (fl.video_key ? { url: `/media/${fl.video_key}`, ms: fl.ms || null } : { pending: true })),
+          films: films.filter((fl) => fl.lead_id === l.id && fl.status !== 'error').map((fl) => {
+            const mk = modelKeyOf(fl.model);
+            const tag = { model: mk || '', label: VIDEO_MODELS[mk]?.label || 'Video', customer: customerFilm(env, fl) };
+            return fl.video_key ? { url: `/media/${fl.video_key}`, ms: fl.ms || null, cost: fl.cost_usd ?? null, ...tag } : { pending: true, ...tag };
+          }),
         };
       }),
     });
@@ -2372,7 +2425,8 @@ async function leadPage(request, env, ctx, key, url) {
   try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
   const pricing = client.pricing || null;
   const renders = (await env.DB.prepare(`SELECT image_key, tweak, n FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL AND kind IS NULL ORDER BY created_at`).bind(row.id).all()).results;
-  const film = await env.DB.prepare(`SELECT video_key FROM films WHERE lead_id = ? AND status = 'ok' AND video_key IS NOT NULL ORDER BY created_at DESC LIMIT 1`).bind(row.id).first();
+  // Stranica kupca pokazuje samo kupčev video, ne dodatne modele za poređenje.
+  const film = (await env.DB.prepare(`SELECT video_key, model FROM films WHERE lead_id = ? AND status = 'ok' AND video_key IS NOT NULL ORDER BY created_at DESC`).bind(row.id).all()).results.find((f) => customerFilm(env, f));
   const ls = leadSpecFrom(pricingSpec(form), pricingAnswers(answers));
   const html = leadPageHtml({
     key, origin: url.origin, form, answers, details: leadDetails(form, answers), ls, pricing, quotes,
