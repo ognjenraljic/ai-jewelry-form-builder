@@ -57,6 +57,31 @@ export const SUGGESTED_PRICING = {
   setting: 1.5,
   grillz: DISTRICT_GRILLZ,
 };
+// ---------- Žive cijene metala (22.11.2026) ----------
+// Spot cijene po troy unci (api.gold-api.com, bez ključa) postaju cijene po gramu. Zlatar po metalu bira Live
+// (podrazumijevano) ili Custom (njegov broj iz Pricing taba); bez žive cijene ostaje njegov broj.
+export const OZ = 31.1034768;
+export const MARKET_METALS = [
+  { key: 'gold', symbol: 'XAU', label: 'Pure gold (24K)' },
+  { key: 'silver', symbol: 'XAG', label: 'Silver' },
+  { key: 'platinum', symbol: 'XPT', label: 'Platinum' },
+];
+export const isLive = (pricing, k) => pricing?.live?.[k] !== false;
+const r2 = (x) => Math.round(x * 100) / 100;
+export function applyMarket(pricing, market) {
+  if (!pricing || !market) return pricing;
+  const out = { ...pricing, metals: { ...(pricing.metals || {}) } };
+  if (isLive(pricing, 'gold') && market.gold > 0) out.goldSpot = r2(market.gold);
+  for (const [k, re] of [['silver', /silver|925/], ['platinum', /platinum/]]) {
+    if (!isLive(pricing, k) || !(market[k] > 0)) continue;
+    const keys = Object.keys(out.metals).filter((m) => re.test(m) && !m.includes('|'));
+    if (!keys.includes(k)) keys.push(k);
+    // Sterling / 925 je 92,5% srebra; ostali ključevi tog metala dobijaju čistu spot cijenu.
+    for (const m of keys) out.metals[m] = r2(market[k] * (k === 'silver' && /sterling|925/.test(m) ? 0.925 : 1));
+  }
+  return out;
+}
+
 export const PURITY = { '10k': 10 / 24, '14k': 14 / 24, '18k': 18 / 24, '22k': 22 / 24, '24k': 1 };
 export const LEVELS = ['accents', 'half', 'full'];
 export const PIECES = ['grillz', 'pendant', 'chain', 'ring', 'bracelet', 'earrings', 'watch'];

@@ -1,5 +1,5 @@
 import { createLeadStore } from './leads.js';
-import { estimate, stoneLayout, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody } from '/pricing.js';
+import { estimate, stoneLayout, applyMarket, isLive, MARKET_METALS, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody } from '/pricing.js';
 import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
 import { SUGGESTED, suggestOptions } from '/option-suggestions.js';
@@ -91,6 +91,8 @@ const rowIds = (k, n, keep) => (keep.length === n ? keep : Array.from({ length: 
 // Od 22.11.2026 obje ponude se podešavaju (izbori + konačna cijena sliderom) i to se čuva uz lead, pa stranica kupca
 // pokazuje tačno ono što je zlatar namjestio.
 const Q = {};
+// Cijene za račun: zlatareve + žive cijene metala gdje je Live (22.11.2026).
+const PR = () => applyMarket(P.me.pricing, P.me.market);
 const qkLead = (key) => String(key).split('|')[0];
 const slotOf = (key) => (String(key).endsWith('|p') ? 'picked' : 'fit');
 const sigOf = (q) => JSON.stringify([q.spec, q.price ?? null]);
@@ -103,7 +105,7 @@ function quoteState(l, ls, key) {
     if (slot === 'picked') q.suggested = { ...ls.spec };
     else {
       const high = ls.budget?.high;
-      const mg = Number.isFinite(high) && P.me.pricing ? middleGround(P.me.pricing, ls.spec, high, ls.choices) : null;
+      const mg = Number.isFinite(high) && P.me.pricing ? middleGround(PR(), ls.spec, high, ls.choices) : null;
       q.suggested = { ...(mg?.spec || ls.spec) };
     }
     // Sačuvano (19.11 poruka, 22.11 izbori i cijena): radni sto se vraća na ono što je zlatar ostavio.
@@ -151,7 +153,7 @@ function priceRange(calc, fin) {
 }
 function priceFoot(calc, fin, q) {
   const diff = fin - calc;
-  return `<span>${diff ? `Calculated ${money(calc)} · ${diff > 0 ? '+' : '−'}${money(Math.abs(diff))}` : 'Calculated from your price list'}</span>${q.price != null ? '<button type="button" class="qlink" data-act="price-reset">Use calculated</button>' : ''}`;
+  return `<span>${diff ? `Calculated ${money(calc)} · ${diff > 0 ? '+' : '−'}${money(Math.abs(diff))}` : q.price != null ? 'Locked at this price' : 'Calculated from your price list'}</span>${q.price != null ? '<button type="button" class="qlink" data-act="price-reset">Use calculated</button>' : ''}`;
 }
 function priceControl(key, q, est) {
   if (est.total == null) return '';
@@ -212,7 +214,7 @@ function quoteMessageView(l, q, key) {
 
 // Jedna ponuda (kartica): broj, budžet, konačna cijena, izmjene, izbori, razrada, poruka.
 function offerBox(l, ls, key) {
-  const pricing = P.me.pricing;
+  const pricing = PR();
   const q = quoteState(l, ls, key);
   const picked = slotOf(key) === 'picked';
   const est = estimate(pricing, q.spec);
@@ -333,7 +335,7 @@ function quoteEdit(key, field, value, delta) {
   }
   if (field === 'stones' && !/natural/i.test(value)) s.clarity = '';
   if (field === 'stones' && /natural/i.test(value) && !s.clarity) s.clarity = ls.opts.clarity[0] || '';
-  const prev = estimate(P.me.pricing, q.spec);
+  const prev = estimate(PR(), q.spec);
   if (prev.total != null) q.animFrom = Math.round(finalTotal(q, prev));
   q.spec = s;
   // Nove specifikacije = nova izračunata cijena; ručna cijena se ne prenosi na drugi komad.
@@ -344,7 +346,7 @@ function quoteEdit(key, field, value, delta) {
 function quoteReset(key) {
   const q = Q[key];
   if (!q) return;
-  const prev = estimate(P.me.pricing, q.spec);
+  const prev = estimate(PR(), q.spec);
   if (prev.total != null) q.animFrom = Math.round(finalTotal(q, prev));
   q.spec = { ...q.suggested };
   q.price = null;
@@ -361,7 +363,7 @@ function priceLive(key, value) {
   const ls = l && leadSpec(l);
   const q = Q[key];
   if (!ls || !q) return;
-  const est = estimate(P.me.pricing, q.spec);
+  const est = estimate(PR(), q.spec);
   if (est.total == null) return;
   const calc = Math.round(est.total);
   const v = Math.max(1, Math.min(5e6, Math.round(Number(value) || 0)));
@@ -384,7 +386,7 @@ function priceLive(key, value) {
 function priceCommit(key) {
   const q = Q[key];
   if (!q) return;
-  const est = estimate(P.me.pricing, q.spec);
+  const est = estimate(PR(), q.spec);
   if (est.total == null) return;
   const from = q.priceFrom;
   delete q.priceFrom;
@@ -440,7 +442,7 @@ async function quoteGenerate(key) {
   const q = Q[key];
   if (!ls || !q || q.busy) return;
   const spec = q.spec;
-  const est = estimate(P.me.pricing, spec);
+  const est = estimate(PR(), spec);
   if (est.total == null) return;
   const fin = finalTotal(q, est);
   Object.assign(q, { busy: true, error: '', step: GEN_STEPS[0] });
@@ -453,13 +455,16 @@ async function quoteGenerate(key) {
     if (el) { el.classList.remove('swap'); void el.offsetWidth; el.textContent = q.step; el.classList.add('swap'); }
   }, 900);
   const slot = slotOf(key);
-  const body = { ...quoteBody(ls, spec, adjusted(est, q)), slot, spec, price: q.price ?? null, msgFor: sigOf(q) };
+  // Poruka zaključava cijenu (žive cijene metala ne mijenjaju već poslatu ponudu); "Use calculated" je otključava.
+  const priceBefore = q.price;
+  if (q.price == null) q.price = Math.round(fin);
+  const body = { ...quoteBody(ls, spec, adjusted(est, q)), slot, spec, price: q.price, msgFor: sigOf(q) };
   body.total = Math.round(fin);
   // "Fits the budget" sa izmjenama: poruka kaže šta se mijenja u odnosu na Estimated price (kako je zlatar ostavi)
   // i novu cijenu naspram njene konačne cijene.
   if (slot === 'fit') {
     const pq = Q[`${id}|p`] || quoteState(l, ls, `${id}|p`);
-    const pe = estimate(P.me.pricing, pq.spec);
+    const pe = estimate(PR(), pq.spec);
     const orig = pe.total == null ? null : finalTotal(pq, pe);
     body.changes = specDiff({ ...ls, spec: pq.spec }, spec);
     if (body.changes.length && orig != null && Math.round(orig) !== body.total) Object.assign(body, { mode: 'fit', originalTotal: Math.round(orig), inBudget: !Number.isFinite(ls.budget?.high) || fin <= ls.budget.high });
@@ -472,6 +477,7 @@ async function quoteGenerate(key) {
     if (res.saved) rememberQuote(id, slot, res.saved);
   } catch (err) {
     q.error = err.message || 'Could not write the message. Try again.';
+    q.price = priceBefore;
   } finally {
     clearInterval(tick);
     q.busy = false;
@@ -650,6 +656,44 @@ function renderStoneExample() {
   if (el) el.innerHTML = stoneExample(pexStones());
 }
 
+// ---------- Žive cijene metala u Pricing tabu (22.11.2026) ----------
+// Polje sa data-mkt je zaključano dok je Live (pokazuje današnju cijenu); zlatarev broj ostaje u data-custom.
+const mktOf = (label) => (/platinum/i.test(label) ? 'platinum' : /silver|925/i.test(label) ? 'silver' : null);
+const mktGram = (k, factor = 1) => (P.me.market?.[k] > 0 ? Math.round(P.me.market[k] * factor * 100) / 100 : null);
+function mktInp(k, path, custom, factor = 1) {
+  const live = isLive(P.me.pricing, k) && mktGram(k) != null;
+  const v = live ? mktGram(k, factor) : custom;
+  return `<input class="in pin ${live ? 'is-live' : ''}" type="number" min="0" step="0.01" inputmode="decimal" data-price="${esc(path)}" data-mkt="${k}" data-factor="${factor}" data-custom="${custom ?? ''}" value="${v ?? ''}" ${live ? 'disabled title="Live market price. Switch to Custom to enter your own."' : ''} />`;
+}
+function mktNote(k) {
+  const m = P.me.market;
+  if (!(m?.[k] > 0)) return '<span class="pmkt-off">Live price not available right now; your custom price is used.</span>';
+  const at = m[`${k}At`] ? new Date(m[`${k}At`]).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  return `Today $${Number(m[`${k}Oz`]).toLocaleString('en-US', { maximumFractionDigits: 2 })}/oz = <b>$${mktGram(k).toFixed(2)}/g</b>${at ? ` · ${esc(at)}` : ''}`;
+}
+function mktRow(m, pr) {
+  const live = isLive(pr, m.key);
+  const seg = `<div class="pseg" role="group" aria-label="${esc(m.label)} price source"><button type="button" class="${live ? 'on' : ''}" aria-pressed="${live}" data-live="${m.key}" data-on="1">Live</button><button type="button" class="${live ? '' : 'on'}" aria-pressed="${!live}" data-live="${m.key}" data-on="0">Custom</button></div>`;
+  const input = m.key === 'gold' ? mktInp('gold', 'goldSpot', pr.goldSpot) : '';
+  return `<div class="pmkt" data-mkt-row="${m.key}"><div class="pmkt-top"><span class="pmkt-l">${esc(m.label)}, $ per gram</span>${seg}</div>
+    ${input ? `<div class="pmkt-in">${input}</div>` : `<p class="pmkt-where">${live ? 'Live price is used for every metal with this name.' : 'Enter your price in "Metal price per gram".'}</p>`}
+    <p class="pmkt-note">${mktNote(m.key)}</p></div>`;
+}
+function setLive(k, on) {
+  if (!P.me.pricing) P.me.pricing = {};
+  P.me.pricing.live = { ...(P.me.pricing.live || {}), [k]: on };
+  for (const b of app.querySelectorAll(`[data-live="${k}"]`)) { const me = (b.dataset.on === '1') === on; b.classList.toggle('on', me); b.setAttribute('aria-pressed', String(me)); }
+  for (const el of app.querySelectorAll(`[data-mkt="${k}"]`)) {
+    const live = on && mktGram(k) != null;
+    if (live) { if (!el.disabled) el.dataset.custom = el.value; el.value = mktGram(k, Number(el.dataset.factor) || 1); }
+    else if (el.disabled) el.value = el.dataset.custom || '';
+    el.disabled = live;
+    el.classList.toggle('is-live', live);
+  }
+  const where = app.querySelector(`[data-mkt-row="${k}"] .pmkt-where`);
+  if (where) where.textContent = on ? 'Live price is used for every metal with this name.' : 'Enter your price in "Metal price per gram".';
+}
+
 function pricingView() {
   const pr = P.me.pricing || {};
   const specs = Object.values(P.me.formSpecs || {});
@@ -690,11 +734,12 @@ function pricingView() {
     <div class="pfill"><button type="button" class="btn small" data-act="fill-pricing">Fill suggested prices</button><span class="hint">Fills only empty fields with starting prices (grillz from the District price list of Nov 2026, other pieces from gold at $124/g on Nov 16, 2026). Then press Save.</span></div>
     ${grillzCards}
     <div class="pgrid2">
-      <div class="pcard2"><h3>Gold and markup</h3>
-        <label class="prow"><span>Pure gold (24K) price per gram, $</span>${inp('goldSpot', pr.goldSpot)}</label>
-        <p class="hint">Gold metals use this × karat purity (10K, 14K, 18K) unless you set their own price below.</p>
+      <div class="pcard2 pmkt-card"><h3>Metal prices and markup</h3>
+        <p class="hint">Live = today's market price per gram (updates on its own); Custom = your own price. Grillz use your price list above, not these.</p>
+        ${MARKET_METALS.map((m) => mktRow(m, pr)).join('')}
+        <p class="hint">Gold metals use the gold price × karat purity (10K, 14K, 18K) unless you set their own price in the next card.</p>
         <label class="prow"><span>Markup, %</span>${inp('markup', pr.markup)}</label></div>
-      <div class="pcard2"><h3>Metal price per gram, $</h3>${metals.map((m) => `<label class="prow"><span>${esc(m)}</span>${inp(`metals.${pkey(m)}`, pr.metals?.[pkey(m)], /gold|two.?tone/i.test(m) && !/dental/i.test(m) ? 'from gold' : '')}</label>`).join('') || '<p class="hint">No metals in your forms.</p>'}</div>
+      <div class="pcard2"><h3>Metal price per gram, $</h3>${metals.map((m) => { const mk = mktOf(m); return `<label class="prow"><span>${esc(m)}</span>${mk ? mktInp(mk, `metals.${pkey(m)}`, pr.metals?.[pkey(m)], /sterling|925/i.test(m) ? 0.925 : 1) : inp(`metals.${pkey(m)}`, pr.metals?.[pkey(m)], /gold|two.?tone/i.test(m) && !/dental/i.test(m) ? 'from gold' : '')}</label>`; }).join('') || '<p class="hint">No metals in your forms.</p>'}</div>
       <div class="pcard2"><h3>Weight and labor</h3>${pieces.map((pc) => `<div class="prow2"><b>${esc(pc[0].toUpperCase() + pc.slice(1))}</b><label><span>Grams ${per(pc)}</span>${inp(`grams.${pc}`, pr.grams?.[pc])}</label><label><span>Labor ${per(pc)}, $</span>${inp(`labor.${pc}`, pr.labor?.[pc])}</label></div>`).join('')}</div>
       <div class="pcard2 pwide pstones"><h3>Stones${allPieces.includes('grillz') ? ' (not grillz)' : ''}, $ per carat</h3>
         <p class="hint">The estimate works out how many stones cover the piece at its size (ring size, pendant size, chain length and width, watch case), how big they are and how many carats that makes, then uses your price per carat. Center stone = the ring's center stone and stud earrings.</p>
@@ -722,12 +767,15 @@ function pricingView() {
 function readPricing() {
   const out = { metals: {}, grams: {}, labor: {}, stones: {}, cuts: { ...(P.me.pricing?.cuts || {}) }, grillz: {} };
   for (const el of app.querySelectorAll('[data-price]')) {
-    if (el.value === '') continue;
+    // Live polje: čuva se zlatarev broj (za Custom), ne današnja cijena.
+    if (el.disabled && el.dataset.mkt) { if (el.dataset.custom === '') continue; }
+    else if (el.value === '') continue;
     const parts = el.dataset.price.split('.');
     let o = out;
     for (const k of parts.slice(0, -1)) o = o[k] ||= {};
-    o[parts[parts.length - 1]] = Number(el.value);
+    o[parts[parts.length - 1]] = Number(el.disabled && el.dataset.mkt ? el.dataset.custom : el.value);
   }
+  out.live = Object.fromEntries(MARKET_METALS.map((m) => [m.key, isLive(P.me.pricing, m.key)]));
   const info = app.querySelector('[data-quote-info]');
   out.quoteInfo = info ? info.value : P.me.pricing?.quoteInfo || '';
   for (const el of app.querySelectorAll('[data-link]')) out[el.dataset.link] = el.value.trim();
@@ -1095,9 +1143,10 @@ app.addEventListener('click', async (e) => {
   // Quote radni sto (Fits the budget): izbori, reset, poruka.
   if (t.tagName === 'BUTTON' && t.dataset.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
   if (t.dataset?.act === 'quote-reset') { quoteReset(t.dataset.q); return; }
+  if (t.dataset?.live) { setLive(t.dataset.live, t.dataset.on === '1'); return; }
   if (t.dataset?.pexPiece) { PEX.piece = t.dataset.pexPiece; renderStoneExample(); return; }
   if (t.dataset?.pexStone) { PEX.stone = t.dataset.pexStone; renderStoneExample(); return; }
-  if (t.dataset?.act === 'price-reset') { const key = t.closest('.qprice')?.dataset.qk; const q = Q[key]; if (q) { const e = estimate(P.me.pricing, q.spec); if (e.total != null) priceLive(key, Math.round(e.total)); priceCommit(key); } return; }
+  if (t.dataset?.act === 'price-reset') { const key = t.closest('.qprice')?.dataset.qk; const q = Q[key]; if (q) { const e = estimate(PR(), q.spec); if (e.total != null) priceLive(key, Math.round(e.total)); priceCommit(key); } return; }
   if (t.dataset?.act === 'quote-gen') { quoteGenerate(t.dataset.qk); return; }
   if (t.dataset?.act === 'quote-copy') {
     const id = t.dataset.qk;

@@ -110,5 +110,18 @@ ok(middleGround(G, { ...spec, stones: '', coverage: '', karat: '10K', teeth: 'T5
   ok(raw.spec.lengthIn === 20 && raw.spec.widthMm === 10 && clean.spec.lengthIn === 20 && clean.spec.widthMm === 10, 'dužina i širina lanca iz odgovora');
   ok(dimKey('ring_ring_size') === 'ring_size' && dimKey('earrings_stone_size_for_stud_and_drop_ea') === 'stone_size' && dimKey('grillz_grill_cut') === null, 'ključevi veličine bez prefiksa komada');
 }
+// ---------- 22.11.2026: žive cijene metala, Live / Custom ----------
+{
+  const { applyMarket } = await import('../public/pricing.js');
+  const mk = { gold: 113.78, silver: 1.32, platinum: 41.35 };
+  const base = { goldSpot: 124, metals: { silver: 2, 'sterling silver': 2, platinum: 50, 'dental gold': 45 } };
+  const live = applyMarket(base, mk);
+  ok(live.goldSpot === 113.78 && live.metals.silver === 1.32 && live.metals['sterling silver'] === 1.22 && live.metals.platinum === 41.35, 'Live: zlato, srebro, sterling (92,5%) i platina iz tržišta');
+  ok(live.metals['dental gold'] === 45 && base.goldSpot === 124, 'dental gold ostaje zlatarev, original se ne mijenja');
+  const custom = applyMarket({ ...base, live: { gold: false, silver: true, platinum: false } }, mk);
+  ok(custom.goldSpot === 124 && custom.metals.platinum === 50 && custom.metals.silver === 1.32, 'Custom: zlatarev broj ostaje za taj metal');
+  ok(applyMarket(base, { gold: null }).goldSpot === 124 && applyMarket(base, null) === base, 'bez žive cijene računa sa zlatarevim brojem');
+  ok(applyMarket({ goldSpot: 100 }, { silver: 1.5 }).metals.silver === 1.5, 'srebro se doda i kad ga zlatar nije upisao');
+}
 if (fails) { console.log(`${fails} FAIL`); process.exit(1); }
 console.log('Pricing checks passed.');

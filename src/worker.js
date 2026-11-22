@@ -8,7 +8,7 @@ import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
-import { estimate, leadSpecFrom, quoteBody, dimKey } from '../public/pricing.js';
+import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ } from '../public/pricing.js';
 import { leadPageHtml, PAGE_ACTIONS } from './leadpage.js';
 import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
@@ -1532,6 +1532,7 @@ async function portalApi(request, env, p, secure) {
       })),
       stats: { leads: stats?.leads || 0, renders: stats?.renders || 0, recent: stats?.recent || 0, films: gen?.films || 0, renderMs: Math.round(gen?.render_ms || 0), filmMs: Math.round(gen?.film_ms || 0) },
       pricing: d.pricing || null,
+      market: await getMarket(env).catch(() => null),
       // Izbori formi koje kalkulator cijene treba (natpisi), po formi.
       formSpecs: Object.fromEntries(formRows.filter((r) => !r.archived_at).map((r) => [r.id, pricingSpec(forms[r.id])])),
       usage: { spent: Math.round((await clientMonthCost(env, client.id)) * 100) / 100, limit: monthlyBudget(env), resetsAt: monthStart(Date.now(), 1) },
@@ -1738,7 +1739,9 @@ async function writeQuote(env, client, lead, b, origin, { auto = false } = {}) {
   const out = { message: [body, link, info].filter(Boolean).join('\n\n'), source: message ? 'ai' : 'template' };
   // Poruka ostaje zabilježena za taj lead (Ognjen 19.11.2026): poslije izlaska ili osvježavanja je ista, nova je zamjenjuje.
   if (slot) {
-    const price = quotePrice(b.price);
+    // Cijena iz poruke se zaključava uz nju (22.11.2026): sa živim cijenama metala stranica kupca bi se inače
+    // poslije par dana razlikovala od poslate poruke.
+    const price = quotePrice(b.price) ?? facts.total;
     const saved = { msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, ...(price ? { price } : {}), ...(msgForText(b.msgFor) ? { msgFor: msgForText(b.msgFor) } : {}), edited: false, at: Date.now() };
     await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(saved), lead.id).run();
     out.saved = saved;
@@ -1758,6 +1761,7 @@ async function autoQuote(env, leadId, origin) {
   if (quotes.picked) return null;
   let pricing = null;
   try { pricing = JSON.parse(row.client_data || '{}').pricing || null; } catch {}
+  pricing = await marketPricing(env, pricing);
   const form = JSON.parse(row.form_data || '{}');
   const ls = pricing && leadSpecFrom(pricingSpec(form), pricingAnswers(JSON.parse(row.answers || '{}')));
   const est = ls && estimate(pricing, ls.spec);
@@ -2052,6 +2056,29 @@ async function fitByAI(env, f) {
   }
 }
 
+// ---------- Žive cijene metala (22.11.2026) ----------
+// api.gold-api.com (bez ključa), keš u Workeru 15 min; ako izvor ne odgovori, računa se sa zlatarevim brojem.
+const MARKET_TTL = 900;
+async function getMarket(env) {
+  const key = new Request('https://market.jewelrylead.invalid/spot/v1');
+  const cache = typeof caches !== 'undefined' ? caches.default : null;
+  try { const hit = cache && (await cache.match(key)); if (hit) return await hit.json(); } catch {}
+  const base = env.MARKET_BASE || 'https://api.gold-api.com';
+  const out = { at: Date.now(), source: 'gold-api.com' };
+  await Promise.all(MARKET_METALS.map(async (m) => {
+    try {
+      const r = await fetch(`${base}/price/${m.symbol}`, { signal: AbortSignal.timeout(3500) });
+      const j = await r.json();
+      if (Number(j.price) > 0) { out[m.key] = Math.round((j.price / OZ) * 100) / 100; out[`${m.key}Oz`] = Number(j.price); if (j.updatedAt) out[`${m.key}At`] = j.updatedAt; }
+    } catch (e) { console.log('market', m.symbol, e.message); }
+  }));
+  if (MARKET_METALS.some((m) => out[m.key]) && cache) {
+    try { await cache.put(key, new Response(JSON.stringify(out), { headers: { 'content-type': 'application/json', 'cache-control': `max-age=${MARKET_TTL}` } })); } catch {}
+  }
+  return out;
+}
+const marketPricing = async (env, pricing) => (pricing ? applyMarket(pricing, await getMarket(env).catch(() => null)) : pricing);
+
 // ---------- Kalkulator cijene (portal) ----------
 // Samo izbori koji ulaze u cijenu, kao natpisi; vrijednosti iz odgovora kupca uz lead.
 const CUT_FIELD = /(^|_)cut$/;
@@ -2078,7 +2105,8 @@ function cleanPricing(p) {
   const map = (o, depth = 1) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), depth > 1 ? map(v, depth - 1) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
   // Grillz cjenovnik (18.11.2026): brojevi ili ugniježđene tabele do 3 nivoa (grillz.sets.6.10k).
   const tree = (o, depth) => Object.fromEntries(Object.entries(o && typeof o === 'object' ? o : {}).slice(0, 80).map(([k, v]) => [String(k).toLowerCase().slice(0, 60), v && typeof v === 'object' ? (depth > 1 ? tree(v, depth - 1) : undefined) : n(v)]).filter(([, v]) => v !== undefined && (typeof v !== 'object' || Object.keys(v).length)));
-  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), setting: n(p?.setting), cuts: map(p?.cuts), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo), depositUrl: httpsUrl(p?.depositUrl), bookingUrl: httpsUrl(p?.bookingUrl),
+  return { goldSpot: n(p?.goldSpot), markup: n(p?.markup), metals: map(p?.metals), grams: map(p?.grams), labor: map(p?.labor), stones: map(p?.stones, 2), setting: n(p?.setting), cuts: map(p?.cuts),
+    live: Object.fromEntries(MARKET_METALS.map((m) => [m.key, p?.live?.[m.key] !== false])), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo), depositUrl: httpsUrl(p?.depositUrl), bookingUrl: httpsUrl(p?.bookingUrl),
     // Obavještenja i prva poruka (21.11.2026): kome ide mejl o leadu, na koju adresu kupac odgovara, da li prva poruka ide sama.
     alertEmails: emailList(p?.alertEmails), replyTo: validEmail(p?.replyTo) || undefined, autoSend: p?.autoSend === true };
 }
@@ -2453,7 +2481,7 @@ async function leadPage(request, env, ctx, key, url) {
   try { client = JSON.parse(row.client_data || '{}') || {}; } catch {}
   let quotes = {};
   try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
-  const pricing = client.pricing || null;
+  const pricing = await marketPricing(env, client.pricing || null);
   const renders = (await env.DB.prepare(`SELECT image_key, tweak, n FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL AND kind IS NULL ORDER BY created_at`).bind(row.id).all()).results;
   // Stranica kupca pokazuje samo kupčev video, ne dodatne modele za poređenje.
   const film = (await env.DB.prepare(`SELECT video_key, model FROM films WHERE lead_id = ? AND status = 'ok' AND video_key IS NOT NULL ORDER BY created_at DESC`).bind(row.id).all()).results.find((f) => customerFilm(env, f));
