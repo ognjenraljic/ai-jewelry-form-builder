@@ -845,7 +845,8 @@ async function api(path, opts = {}) {
 }
 
 // Render the selected filter immediately; only its current request may update the cards.
-async function loadLeads(more = false) {
+// quiet = pretraga: crta se samo lista kartica, polje za pretragu se ne dira (kucanje se ne prekida).
+async function loadLeads(more = false, quiet = false) {
   const seq = ++leadRequest;
   P.loading = !more;
   P.loadingMore = more;
@@ -854,9 +855,10 @@ async function loadLeads(more = false) {
   // Brzina (22.11.2026): iz keša nema međukoraka; sa servera stare kartice ostaju zatamnjene, "Loading" tek poslije 0,6 s.
   P.loading = false;
   let done = false;
+  const draw = quiet ? renderResults : render;
   if (P.me && !more) {
-    setTimeout(() => { if (!done && seq === leadRequest) { P.busy = true; render(); } }, 60);
-    setTimeout(() => { if (!done && seq === leadRequest) { P.loading = true; render(); } }, 600);
+    setTimeout(() => { if (!done && seq === leadRequest) { P.busy = true; draw(); } }, 60);
+    setTimeout(() => { if (!done && seq === leadRequest) { P.loading = true; draw(); } }, 600);
   } else if (P.me) render();
   try {
     const r = await result;
@@ -956,7 +958,15 @@ function usageView() {
     </div>`;
 }
 
-function leadsView() {
+// Samo lista ispod filtera (pretraga 22.11.2026: Ognjen nije mogao kucati jer je svaki rezultat crtao i polje za pretragu).
+function renderResults() {
+  const box = app.querySelector('.lead-results');
+  if (P.tab !== 'leads' || !box) return render();
+  box.innerHTML = leadsView(true);
+  const s = app.querySelector('[data-search]');
+  if (s && s.value.trim() !== P.q) filterCardsNow(s.value);
+}
+function leadsView(resultsOnly = false) {
   const total = Object.values(P.counts).reduce((a, b) => a + b, 0);
   if (!total && !P.q && !P.piece && !P.video && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
   const forms = P.me.forms.filter((f) => f.leads);
@@ -1010,7 +1020,8 @@ function leadsView() {
   const more = P.next && !P.loading && !P.loadError ? `<div class="more"><button class="btn" data-act="more" ${P.loadingMore ? 'disabled' : ''}>${P.loadingMore ? 'Loading…' : 'Show older leads'}</button></div>` : '';
   // Traka ostaje i kad izabrani dan nema leadova, da se može izabrati drugi dan ili "All days".
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
-  return `<div class="filters">${search}${statusChips}${pieceChips}${videoChips}${formChips}</div>${chart}${cards}${more}`;
+  if (resultsOnly) return `${chart}${cards}${more}`;
+  return `<div class="filters">${search}${statusChips}${pieceChips}${videoChips}${formChips}</div><div class="lead-results">${chart}${cards}${more}</div>`;
 }
 
 // Stranica kupca (19.11.2026): link ispod slike, otvaranje bez brojanja posjete, posjete i klikovi na Deposit / Book.
@@ -1135,7 +1146,7 @@ app.addEventListener('input', (e) => {
   if (el.dataset.search !== undefined) {
     filterCardsNow(el.value);
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(async () => { P.q = el.value.trim(); if (!await loadLeads()) return; const typed = app.querySelector('[data-search]')?.value ?? P.q; render(); const s = app.querySelector('[data-search]'); if (s) { s.value = typed; s.focus(); s.setSelectionRange(typed.length, typed.length); if (typed.trim() !== P.q) filterCardsNow(typed); } }, 200);
+    searchTimer = setTimeout(async () => { P.q = el.value.trim(); if (await loadLeads(false, true)) renderResults(); }, el.value.trim() ? 200 : 0);
   }
 });
 app.addEventListener('change', async (e) => {

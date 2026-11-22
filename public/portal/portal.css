@@ -697,3 +697,4 @@ button.dbar.future { opacity: .35; cursor: default; }
 
 /* Brzina 22.11.2026: dok stiže nova lista, stare kartice ostaju zatamnjene umjesto praznog "Loading". */
 .lead.busy { opacity: .5; transition: opacity .15s; pointer-events: none; }
+.lead-results { display: contents; }
