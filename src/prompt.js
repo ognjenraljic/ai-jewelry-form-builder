@@ -158,6 +158,46 @@ const CINEMATIC_STYLE =
   'faint warm haze and a gentle glow around the brightest highlights, shallow depth of field, razor sharp macro detail on the piece. ' +
   'Square composition, the piece fills about 60% of the frame and sits in the center, with dark empty space around it. No people, no hands, no props, no text beyond what is specified, no watermark, no brand logos or trademarks. ' + NO_ENV_REFLECTIONS;
 
+// Hiperrealizam (Ognjen 23.11.2026, proba lokalno prije puštanja): isti model, samo prompt traži pravu fotografiju
+// umjesto "katalog" izgleda koji zna da ispadne kao 3D render. Uključuje se sa buildPrompt(..., { realism: 'hyper' }).
+export const HYPER_REAL =
+  'PHOTOREALISM: this must be indistinguishable from a real photograph taken by a professional jewelry photographer, not a 3D render, not CGI, not an illustration. ' +
+  'Camera: full-frame camera with a 100mm macro lens, focus-stacked so the whole piece is tack sharp from front to back, true-to-life color and white balance, natural micro-contrast. ' +
+  'Metal: real polished precious metal with physically correct reflections, smooth gradient highlights rolling across curved surfaces, very faint polishing marks and hairline micro-scratches visible up close, slightly softened hand-finished edges, no plastic, airbrushed or melted look. ' +
+  'Stones: every stone individually cut with visible crisp facets, real refraction and dispersion, small sparks of spectral fire and white scintillation, slightly varied sparkle from stone to stone, each stone held by tiny visible metal prongs or beads, honest stone sizes. ' +
+  'Craft: the slight irregularities of a hand-made piece (minute variation in spacing and setting), believable weight and thickness, a soft natural contact shadow where the piece rests. ' +
+  'Avoid: perfect CGI symmetry, glowing or neon stones, oversaturated gold, cartoon sparkle stars, bloom, blur on the piece, fake depth of field on the metal, text overlays.';
+
+// Još jači korak (Ognjen 23.11.2026 "ajde još više"): umjesto "katalog" stila prava fotografska scena. Ono što pravu
+// fotku nakita razlikuje od rendera: tamni dijelovi kamena (extinction), metal koji odražava tamni studio, sitni tragovi
+// ruke, šum senzora i blago "pregorjeli" odsjaji. Uključuje se sa realism: 'ultra'.
+// Od 23.11.2026 (Ognjen "primijeni") ovo je podrazumijevani izgled svakog prvog rendera (worker: REALISM=off vraća stari).
+// Forma sa Studio Light stilom dobija svijetli kamen umjesto tamnog.
+export function ultraScene(form = {}) {
+  const light = form.imageStyle === 'light';
+  return 'Scene: an unretouched RAW photograph from a working jewelry photographer\'s studio, straight out of the camera with only light color correction. ' +
+    (light
+      ? 'The piece rests on a matte pale grey stone surface; behind it the background falls off into soft light grey. '
+      : 'The piece rests on a matte black slate surface; behind it the background falls off into deep black. ') +
+    'Lighting: one large diffused overhead light and a thin strip light from the side, ' +
+    (light ? 'with dark cards at the sides so the polished metal still shows contrast: dark reflections mixed with long bright highlight streaks' : 'black cards around the set, so the polished metal reflects mostly DARK surroundings with a few long bright highlight streaks') +
+    ', like real jewelry photos (never evenly bright, never glowing). ' +
+    'Square composition, the piece fills about 65% of the frame. No people, no hands, no props, no watermark, no brand logos or trademarks. ' + NO_ENV_REFLECTIONS;
+}
+export const ULTRA_SCENE = ultraScene();
+export const ULTRA_REAL =
+  'MAXIMUM PHOTOREALISM, this is a real photo of a real piece, judged by a jeweler at 100% zoom. ' +
+  'Design fidelity comes first: show exactly the piece described above and add nothing the customer did not choose: no extra underlines, swashes, tails, frames, borders, halos, accent stones, engraving or extra parts; ' +
+  'stones only where the description puts them (an unset piece stays plain polished metal); any chain, bail or band that is not described is plain polished metal. ' +
+  'Where the piece has stones: real optics with dark extinction areas and black facet reflections mixed with white brilliance, a few sharp rainbow flashes only where light hits at the right angle, some stones darker than others because of their angle; never uniformly white, never glowing, never glitter. ' +
+  'Set stones are hand-set: each stone sits in its own seat with tiny metal beads or prongs over its edge, rows close to straight but not computer perfect, stone tables at slightly different tilts. ' +
+  'Metal is real precious metal in exactly the color and karat stated above (never orange or neon): deep shadows inside links and curves, mirror polish with faint swirl marks, fine hairline scratches on flat areas, crisp but slightly rounded hand-finished edges, visible jump rings and solder joints where parts meet. ' +
+  'Camera artifacts of a real photo: true macro lens rendering with very slight softness at the far edges, a faint natural vignette, fine sensor grain in the dark areas, the brightest specular points just clipping to white, accurate scale and perspective. ' +
+  'Absolutely no 3D render look: no plastic smoothness, no perfect repetition, no bloom, no lens flare stars, no sparkle effects, no oversaturation, no HDR glow, no painterly detail.';
+// Grillz u ultra izgledu je znao ispasti "kockast": kape moraju pratiti pravi oblik zuba.
+export const ULTRA_GRILLZ =
+  'Tooth caps follow real tooth anatomy: natural convex crowns, rounded corners and softly curved biting edges, canines slightly pointed, each cap a little different like real teeth; never boxy rectangles or flat tiles.';
+
 // Video prvog kadra (Pika H3 Flex). Model nema polje za zabrane i svaku riječ iz prompta shvata kao nešto što treba
 // prikazati: "no new stones, no new text" je 16.11. dalo video sa slovima i kamenjem na grillzu bez ijednog kamena.
 // Zato prompt SAMO pozitivno opisuje ono što je na slici (iz odgovora kupca) i pomjera svjetlo i kameru, a komad stoji
@@ -212,7 +252,7 @@ export function buildFilmPrompt(piece, type = '', desc = '') {
 
 // refs: lista referentnih slika istim redom kojim idu modelu, npr. ['style', 'customer'].
 // style: { shape } iz src/library.json za izabrani stil.
-export function buildPrompt(form, answers, { refs = [], style = null, cinematic = false } = {}) {
+export function buildPrompt(form, answers, { refs = [], style = null, cinematic = false, realism = '' } = {}) {
   let a = answers;
   const lines = [];
   // Samo uključeni koraci i pitanja; "ai: false" pitanja (kalupi, gravura iznutra) su samo za zlatara. Budžet je izuzetak, vidi budgetLine.
@@ -247,7 +287,11 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
     karat = '';
   }
 
-  lines.push(`Create a photorealistic high-end jewelry product photograph of ${subject}.`);
+  lines.push(realism === 'ultra'
+    ? `A real, unretouched macro photograph of ${subject}, photographed in a jewelry studio.`
+    : realism === 'hyper'
+    ? `Create a hyper-realistic macro product photograph of ${subject}, shot for a luxury jeweler's website.`
+    : `Create a photorealistic high-end jewelry product photograph of ${subject}.`);
   // Kod grillza stil govori samo broj zuba; tačan izbor zuba ga zamjenjuje.
   if (style?.shape && (!g?.lines || style.teeth === a.teeth)) lines.push(`Design style: ${style.shape}.`);
   if (fieldOf('metal') || a.metal) lines.push(`Metal: ${metal}${karat}.`);
@@ -357,10 +401,12 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
     }
   });
 
-  lines.push(cinematic ? CINEMATIC_STYLE :
+  lines.push(realism === 'ultra' ? ultraScene(form) : cinematic ? CINEMATIC_STYLE :
     `Style: luxury catalog photography, soft studio lighting with crisp reflections, sharp macro detail, on a seamless ${form.background || 'neutral'} background. ` +
       'Square composition, the piece fills about 70% of the frame. No people, no hands, no props, no watermark, no brand logos or trademarks. ' + NO_ENV_REFLECTIONS
   );
+  if (realism === 'hyper') lines.push(HYPER_REAL);
+  if (realism === 'ultra') lines.push(ULTRA_REAL, ...(a.type === 'grillz' ? [ULTRA_GRILLZ] : []));
   if (text) lines.push(`FINAL TEXT CHECK: the only lettering on the piece is "${text}" (${text.split('').join(' ')}), exactly as the customer typed it${placeholder && placeholder.toLowerCase() !== text.toLowerCase() ? `, never "${placeholder}"` : ''}.`);
   if (g?.lines) {
     lines.push(

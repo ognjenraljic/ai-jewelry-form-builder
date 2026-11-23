@@ -249,3 +249,7 @@ Renders without spending credit: start the fake OpenAI with `node scripts/mock-o
 - Public API `POST /api/orders/track` `{ order, email }`: CORS open (no cookies), both must match, the reply has the first name, piece, stage, dates, note and the last render, never the email or phone. 20 wrong attempts per network per hour, then 429 (`order_lookups`, cleaned nightly).
 - The store's own site calls it: District `/order-tracking/` (`assets/js/sections.js` in the District child theme).
 - Code: `src/orders.js`, migration `0032_orders.sql`, check `scripts/order-tracking-check.mjs` (21 checks).
+
+## Hiperrealni renderi (23.11.2026)
+
+Svaki prvi render ide sa `realism: 'ultra'` (`src/prompt.js`: `ultraScene`, `ULTRA_REAL`, `ULTRA_GRILLZ`): prava studijska fotka bez retuša (tamni kamen, Studio Light forme svijetli kamen), kamenje sa tamnim i svijetlim fasetama, ručno ugrađeno, tragovi poliranja, zrno i vinjeta fotoaparata; pravilo vjernosti (ništa što kupac nije izabrao: bez dodatnih crta, okvira, kamenja, ledovanog lanca); grillz kape po pravoj anatomiji zuba. Vraćanje bez deploya: `REALISM=off` na Workeru. Poređenje: `node scripts/hyperreal-test.mjs` (promptovi), slike na Desktopu `jewelrylead-hyperreal/`.

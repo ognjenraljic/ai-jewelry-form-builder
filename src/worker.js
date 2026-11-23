@@ -823,7 +823,8 @@ async function renderInputs(env, request, form, answers, { ref = null, tweak = '
     if (map) { images.push({ mime: map.mime, b64: map.b64 }); refs.push('teethmap'); }
   }
   if (ref) { images.push(ref); refs.push('customer'); }
-  return { images, prompt: buildPrompt(form, answers, { refs, style, cinematic: pikaImages(env) }) };
+  // Hiperrealni izgled (Ognjen 23.11.2026) je podrazumijevan; REALISM=off na Workeru vraća stari katalog stil bez deploya.
+  return { images, prompt: buildPrompt(form, answers, { refs, style, cinematic: pikaImages(env), realism: env.REALISM === 'off' ? '' : 'ultra' }) };
 }
 
 async function r2Image(env, key) {
