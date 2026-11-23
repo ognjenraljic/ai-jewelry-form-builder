@@ -698,3 +698,33 @@ button.dbar.future { opacity: .35; cursor: default; }
 /* Brzina 22.11.2026: dok stiže nova lista, stare kartice ostaju zatamnjene umjesto praznog "Loading". */
 .lead.busy { opacity: .5; transition: opacity .15s; pointer-events: none; }
 .lead-results { display: contents; }
+
+/* Praćenje narudžbe (23.11.2026): Won lead, broj narudžbe i faze izrade. */
+.ord { margin: 12px 0 4px; padding: 12px 14px 12px; border: 1px solid color-mix(in srgb, #9be38a 35%, var(--line)); border-radius: 14px; background: var(--surface); }
+.ord-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ord-t { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-faint); }
+.ord-t b { font-size: 14px; letter-spacing: .08em; color: var(--ink); font-weight: 700; }
+.ord-saved { font-size: 12px; color: #9be38a; }
+.ord-steps { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(6, 1fr); }
+.ord-s { position: relative; }
+.ord-s::before { content: ""; position: absolute; top: 9px; left: -50%; right: 50%; height: 2px; background: var(--line-strong); }
+.ord-s:first-child::before { display: none; }
+.ord-s.done::before, .ord-s.now::before { background: #9be38a; }
+.ord-s button { position: relative; z-index: 1; width: 100%; background: none; border: 0; padding: 0 2px; display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; color: var(--ink-soft); text-align: center; }
+.ord-s button:disabled { cursor: default; }
+.ord-s i { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line-strong); background: var(--bg); display: grid; place-items: center; transition: border-color .15s, background .15s; }
+.ord-s.done i { border-color: #9be38a; background: #9be38a; }
+.ord-s.done i::after { content: ""; width: 8px; height: 4px; border: 2px solid var(--bg); border-top: 0; border-right: 0; transform: translateY(-1px) rotate(-45deg); }
+.ord-s.now i { border-color: #9be38a; background: color-mix(in srgb, #9be38a 22%, var(--bg)); box-shadow: 0 0 0 4px color-mix(in srgb, #9be38a 16%, transparent); }
+.ord-s span { font-size: 11.5px; font-weight: 600; line-height: 1.25; }
+.ord-s.now span { color: var(--ink); }
+.ord-s small { font-size: 10.5px; color: var(--ink-faint); }
+.ord-s button:not(:disabled):hover i { border-color: var(--accent); }
+.ord-s button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+.ord-note { display: flex; flex-direction: column; gap: 5px; margin-top: 14px; font-size: 12px; color: var(--ink-soft); }
+.ord-note small { color: var(--ink-faint); font-weight: 400; }
+.ord-help { margin: 8px 0 0; font-size: 12px; color: var(--ink-faint); }
+@media (max-width: 640px) {
+  .ord-steps { grid-template-columns: repeat(3, 1fr); row-gap: 14px; }
+  .ord-s:nth-child(4)::before { display: none; }
+}

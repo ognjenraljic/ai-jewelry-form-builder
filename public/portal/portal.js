@@ -1007,6 +1007,7 @@ function leadsView(resultsOnly = false) {
           <div class="lead-top"><h2>${esc(l.name)}</h2><span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
           <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span></div>
           ${replyLine(l)}
+          ${orderBox(l)}
           <div class="tags">${l.details.map((d) => `<span class="tag">${esc(d.label)}: <b>${esc(d.value)}</b></span>`).join('')}</div>
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
           <div class="thumbs">${strip}${photos}</div>
@@ -1027,6 +1028,34 @@ function leadsView(resultsOnly = false) {
 // Stranica kupca (19.11.2026): link ispod slike, otvaranje bez brojanja posjete, posjete i klikovi na Deposit / Book.
 const ACTION_LABEL = { deposit: 'Asked to place a deposit', appointment: 'Asked for an appointment' };
 const when = (t) => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+// Praćenje narudžbe (23.11.2026): Won lead ima broj narudžbe i fazu izrade; kupac je vidi na sajtu radnje
+// (broj + svoj mejl). Klik na fazu je pomjera, poruka kupcu se čuva kad se polje napusti.
+const ORDER_LABELS = ['Order placed', 'CAD approved', 'Wax & cast', 'Stone setting', 'Polish', 'Ready for pick up'];
+function orderBox(l) {
+  const o = l.order;
+  if (!o || l.status !== 'won') return '';
+  const ro = readOnly();
+  const steps = o.stages.map((s, i) => `<li class="ord-s ${i < o.stage ? 'done' : i === o.stage ? 'now' : ''}"><button type="button" data-order-stage="${i}" data-order-lead="${esc(l.id)}" ${ro ? 'disabled' : ''} aria-pressed="${i === o.stage}" title="${s.at ? `Reached ${esc(when(s.at))}` : `Move the order to ${esc(s.label)}`}"><i aria-hidden="true"></i><span>${esc(s.label || ORDER_LABELS[i])}</span>${s.at ? `<small>${esc(new Date(s.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}</small>` : ''}</button></li>`).join('');
+  return `<div class="ord" data-order-box="${esc(l.id)}">
+    <div class="ord-top"><p class="ord-t">Order <b>${esc(o.no)}</b>${copyBtn(o.no, 'order ID')}</p><span class="ord-saved" role="status" aria-live="polite"></span></div>
+    <ol class="ord-steps">${steps}</ol>
+    <label class="ord-note"><span>Message on the tracking page <small>optional</small></span><input class="in" type="text" maxlength="500" data-order-note="${esc(l.id)}" value="${esc(o.note)}" placeholder="e.g. Stones arrived, setting starts Monday" ${ro ? 'disabled' : ''} /></label>
+    <p class="ord-help">Send the customer this order ID. They track the piece on your website with it and their email (${esc(l.email)}).</p>
+  </div>`;
+}
+async function saveOrder(id, body) {
+  const box = app.querySelector(`[data-order-box="${CSS.escape(id)}"]`);
+  const note = box?.querySelector('.ord-saved');
+  try {
+    const r = await api(`/api/portal/leads/${encodeURIComponent(id)}/order`, { method: 'PATCH', body: JSON.stringify(body), json: true });
+    const l = P.leads.find((x) => x.id === id);
+    if (l && r.order) { l.order = r.order; leadStore.update(id, { order: r.order }, P.counts); }
+    if (box && l && 'stage' in body) box.outerHTML = orderBox(l);
+    const n = app.querySelector(`[data-order-box="${CSS.escape(id)}"] .ord-saved`);
+    if (n) { n.textContent = 'Saved'; setTimeout(() => { n.textContent = ''; }, 1600); }
+  } catch (err) { JLUI.alert(err.message); }
+}
+
 function pageBox(l) {
   const pg = l.page;
   if (!pg?.url) return '';
@@ -1161,14 +1190,17 @@ app.addEventListener('change', async (e) => {
     const id = el.dataset.leadStatus;
     const prev = P.leads.find((l) => l.id === id)?.status;
     try {
-      await api(`/api/portal/leads/${id}`, { method: 'PATCH', body: JSON.stringify({ status: el.value }), json: true });
+      const r = await api(`/api/portal/leads/${id}`, { method: 'PATCH', body: JSON.stringify({ status: el.value }), json: true });
       const l = P.leads.find((x) => x.id === id);
-      if (l) { P.counts[prev] = Math.max(0, (P.counts[prev] || 1) - 1); P.counts[el.value] = (P.counts[el.value] || 0) + 1; l.status = el.value; }
-      leadStore.update(id, { status: el.value }, P.counts);
+      // Won vraća broj narudžbe (praćenje), da se kartica narudžbe pojavi odmah i iz keša.
+      const patch = { status: el.value, ...(r?.order ? { order: r.order } : {}) };
+      if (l) { P.counts[prev] = Math.max(0, (P.counts[prev] || 1) - 1); P.counts[el.value] = (P.counts[el.value] || 0) + 1; Object.assign(l, patch); }
+      leadStore.update(id, patch, P.counts);
       if (await loadLeads()) render();
       el.className = `status-sel s-${el.value}`;
     } catch (err) { JLUI.alert(err.message); el.value = prev; }
   }
+  if (el.dataset.orderNote) { saveOrder(el.dataset.orderNote, { note: el.value }); return; }
   if (el.dataset.leadNote) {
     try { await api(`/api/portal/leads/${el.dataset.leadNote}`, { method: 'PATCH', body: JSON.stringify({ note: el.value }), json: true }); const l = P.leads.find((x) => x.id === el.dataset.leadNote); if (l) l.note = el.value; leadStore.update(el.dataset.leadNote, { note: el.value }, P.counts); el.classList.add('saved'); setTimeout(() => el.classList.remove('saved'), 1200); }
     catch (err) { JLUI.alert(err.message); }
@@ -1181,6 +1213,7 @@ app.addEventListener('keydown', (e) => {
 app.addEventListener('click', async (e) => {
   const t = e.target.closest('button, img[data-zoom]') || e.target;
   if (t.dataset?.film) { zoomVideo(t.dataset.film, t.dataset.poster); return; }
+  if (t.dataset?.orderStage != null) { saveOrder(t.dataset.orderLead, { stage: Number(t.dataset.orderStage) }); return; }
   if (t.dataset?.copy != null) { if ((await copyText(t, t.dataset.copy)) && t.dataset.copyLead) track(t.dataset.copyLead, { type: 'contact_copied', what: t.dataset.copyWhat }); return; }
   // Quote radni sto (Fits the budget): izbori, reset, poruka.
   if (t.tagName === 'BUTTON' && t.dataset.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }

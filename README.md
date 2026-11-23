@@ -241,3 +241,11 @@ Renders without spending credit: start the fake OpenAI with `node scripts/mock-o
 
 - Every portal request loads the client and its forms in parallel; `/api/portal/me` and `/api/portal/leads` run all their D1 queries in parallel (before: 8-10 queries one after another). Pending Pika videos are checked in the background (`ctx.waitUntil`), the list never waits for Pika.
 - The portal starts the lead list and Bookings together with `/me`. Filters keep the old cards (dimmed, `.lead.busy`) instead of a "Loading" screen, which appears only after 0.6 s with no cards. Search hides non-matching cards on every keystroke (`filterCardsNow`, `data-find` on each card) and asks the server after 200 ms. Search results redraw only `.lead-results` (`renderResults`, `loadLeads(false, true)`), never the search field, so typing is never interrupted; an empty search reloads at once.
+
+## Order tracking (23.11.2026)
+
+- A lead marked **Won** becomes an order: it gets an order ID once (store prefix + 5 characters without 0/O/1/I/L, e.g. `DJ-7K4Q9`; prefix from the client name or `clients.data.orderPrefix`). The ID stays if the status changes later.
+- Portal: the Won card shows the order with six stages (Order placed, CAD approved, Wax & cast, Stone setting, Polish, Ready for pick up). A click moves the stage (going back clears later dates), and an optional message shows on the tracking page. Admin view is read-only. Every stage change is logged in `lead_events` (`order_created`, `order_stage`).
+- Public API `POST /api/orders/track` `{ order, email }`: CORS open (no cookies), both must match, the reply has the first name, piece, stage, dates, note and the last render, never the email or phone. 20 wrong attempts per network per hour, then 429 (`order_lookups`, cleaned nightly).
+- The store's own site calls it: District `/order-tracking/` (`assets/js/sections.js` in the District child theme).
+- Code: `src/orders.js`, migration `0032_orders.sql`, check `scripts/order-tracking-check.mjs` (21 checks).

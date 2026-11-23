@@ -14,6 +14,7 @@ import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
+import { ORDER_STAGES, orderPrefix, newOrderNo, normalizeOrderNo, orderView, nextOrder, parseOrder } from './orders.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
   spendBlock, spendToday, filmRoom, budgets, SPEND_MESSAGE, turnstileOn, turnstileOk, flagged, FLAG_MESSAGE, sniffImage, withSecurity,
@@ -136,6 +137,8 @@ async function route(request, env, ctx, url) {
   if (p.startsWith('/api/admin/clients') && !p.endsWith('/upload')) return adminClients(request, env, p);
   if (p.startsWith('/api/admin/forms') || /^\/api\/admin\/clients\/[a-z0-9-]+\/upload$/.test(p)) return adminForms(request, env, p);
   if (p === '/api/leads' && request.method === 'POST') return createLead(request, env, ctx);
+  // Praćenje narudžbe sa sajta radnje (23.11.2026): broj narudžbe + mejl kupca, bez prijave, sa bilo kog sajta.
+  if (p === '/api/orders/track') return orderTrack(request, env);
   // Stranica kupca (19.11.2026): njegov dizajn, ponude i dugmad Deposit / Book appointment.
   if ((m = p.match(/^\/p\/([a-z0-9]{16,32})$/)) && read) return leadPage(request, env, ctx, m[1], url);
   if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/action$/)) && request.method === 'POST') return pageAction(request, env, m[1]);
@@ -789,6 +792,7 @@ async function nightly(env) {
     cursor = list.truncated ? list.cursor : null;
   } while (cursor);
   await env.DB.prepare("UPDATE renders SET status = 'error', error = 'timed out' WHERE status = 'pending' AND created_at < ?").bind(Date.now() - STALE_PENDING_MS).run();
+  await env.DB.prepare('DELETE FROM order_lookups WHERE at < ?').bind(Date.now() - 2 * 86400_000).run();
   console.log('nightly', { removed });
 }
 
@@ -1587,7 +1591,7 @@ async function portalApi(request, env, p, secure, ctx) {
     // Brzina (22.11.2026): sve što ne zavisi od stranice ide u isto vrijeme kad i lista (ranije 7 upita zaredom).
     const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
     const [leadRes, countRows, pieceRows, dayRes, vrowsRes] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page,
-        l.alerted_at, l.auto_sent_at, l.first_reply_at
+        l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
     // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
     env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
@@ -1600,6 +1604,11 @@ async function portalApi(request, env, p, secure, ctx) {
         WHERE f.client_id = ? AND fl.status = 'ok' GROUP BY fl.model`).bind(client.id).all(),
     ]);
     const leads = leadRes.results;
+    // Won lead bez broja narudžbe (npr. Won prije praćenja narudžbi) dobija broj sada.
+    for (const l of leads.slice(0, PAGE_SIZE).filter((x) => x.status === 'won' && !x.order_no)) {
+      const o = await assignOrder(env, l.id, client).catch((e) => { console.error('order', l.id, e.message); return null; });
+      if (o) { l.order_no = o.no; l.order_data = o.data; }
+    }
     const more = leads.length > PAGE_SIZE;
     const pageLeads = leads.slice(0, PAGE_SIZE);
     const oldest = pageLeads.length ? pageLeads[pageLeads.length - 1].created_at : before;
@@ -1637,6 +1646,7 @@ async function portalApi(request, env, p, secure, ctx) {
           id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
           status: l.status || 'new', note: l.note || '', quotes: leadQuotes(l.quotes), page: pageInfo(l),
           alertedAt: l.alerted_at || null, autoSentAt: l.auto_sent_at || null, firstReplyAt: l.first_reply_at || null,
+          order: orderView(l.order_no, l.order_data),
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a), answers: pricingAnswers(a),
           photos: [
             ...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []),
@@ -1738,7 +1748,26 @@ async function portalApi(request, env, p, secure, ctx) {
       await logEvent(env, lm[1], 'status', { from: before.status || 'new', to: st });
       if (REPLY_STATUSES.includes(st)) await markReply(env, lm[1]);
     }
+    // Won = narudžba: broj za praćenje se dodjeljuje jednom i ostaje i ako se status kasnije promijeni.
+    if (st === 'won') {
+      const o = await assignOrder(env, lm[1], client);
+      return json({ ok: true, order: o ? orderView(o.no, o.data) : null });
+    }
     return json({ ok: true });
+  }
+  // Faza izrade i poruka kupcu za praćenje narudžbe (23.11.2026). Admin pregled ne mijenja podatke klijenta.
+  if ((lm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/order$/)) && request.method === 'PATCH') {
+    if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const row = await env.DB.prepare('SELECT l.id, l.order_no, l.order_data FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(lm[1], client.id).first();
+    if (!row) return json({ error: 'Not found' }, 404);
+    if (!row.order_no) return json({ error: 'Mark the lead as Won first.' }, 409);
+    const next = nextOrder(row.order_data, { stage: b.stage, note: b.note });
+    if (!next) return json({ error: 'Unknown stage.' }, 400);
+    await env.DB.prepare('UPDATE leads SET order_data = ? WHERE id = ?').bind(JSON.stringify(next), row.id).run();
+    const prev = parseOrder(row.order_data).stage;
+    if (next.stage !== prev) await logEvent(env, row.id, 'order_stage', { from: ORDER_STAGES[prev].key, to: ORDER_STAGES[next.stage].key });
+    return json({ ok: true, order: orderView(row.order_no, JSON.stringify(next)) });
   }
   return json({ error: 'Not found' }, 404);
 }
@@ -2575,4 +2604,63 @@ async function portalBookings(env, client) {
       isNew: actions.some((a) => a.at > seenAt), actions };
   }).filter((x) => x.actions.length).sort((a, b) => b.lastAt - a.lastAt);
   return { seenAt, unseen: items.filter((x) => x.isNew).length, items };
+}
+
+// ---------- Praćenje narudžbe (23.11.2026) ----------
+// Broj se dodjeljuje Won leadu jednom (prefiks radnje, npr. DJ-7K4Q9); sudar sa postojećim brojem = novi pokušaj.
+async function assignOrder(env, leadId, client) {
+  const cur = await env.DB.prepare('SELECT order_no, order_data FROM leads WHERE id = ?').bind(leadId).first();
+  if (!cur) return null;
+  if (cur.order_no) return { no: cur.order_no, data: cur.order_data };
+  let d = {};
+  try { d = JSON.parse(client.data || '{}') || {}; } catch {}
+  const prefix = orderPrefix(client.name, d);
+  const data = JSON.stringify(nextOrder(null, { stage: 0 }));
+  for (let i = 0; i < 5; i++) {
+    const no = newOrderNo(prefix);
+    try {
+      const r = await env.DB.prepare('UPDATE leads SET order_no = ?, order_data = ? WHERE id = ? AND order_no IS NULL').bind(no, data, leadId).run();
+      if (r.meta.changes) { await logEvent(env, leadId, 'order_created', { no }); return { no, data }; }
+      const again = await env.DB.prepare('SELECT order_no, order_data FROM leads WHERE id = ?').bind(leadId).first();
+      return again?.order_no ? { no: again.order_no, data: again.order_data } : null;
+    } catch (e) {
+      if (!/UNIQUE/i.test(e.message)) throw e;
+    }
+  }
+  return null;
+}
+
+const ORDER_LOOKUPS_PER_HOUR = 20;
+const TRACK_CORS = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' };
+const trackJson = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...TRACK_CORS } });
+
+// Kupac na sajtu radnje: broj narudžbe + mejl iz upita. Nema kolačića ni prijave, pa je CORS otvoren za sve sajtove;
+// oba podatka moraju da se poklope, a pogrešni pokušaji su ograničeni po mreži (pogađanje brojeva).
+async function orderTrack(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: TRACK_CORS });
+  if (request.method !== 'POST') return trackJson({ error: 'Not found' }, 404);
+  const net = ipNet(request);
+  const now = Date.now();
+  const tries = await env.DB.prepare('SELECT COUNT(*) AS n FROM order_lookups WHERE net = ? AND at > ? AND ok = 0').bind(net, now - 3600_000).first();
+  if ((tries?.n || 0) >= ORDER_LOOKUPS_PER_HOUR) return trackJson({ error: 'Too many attempts. Please try again in an hour or call the store.' }, 429);
+  const b = await request.json().catch(() => ({}));
+  const no = normalizeOrderNo(b.order);
+  const email = String(b.email ?? '').trim().toLowerCase();
+  const row = no && email ? await env.DB.prepare(`SELECT l.id, l.name, l.email, l.answers, l.order_no, l.order_data, f.data AS form_data, c.name AS client_name,
+      (SELECT r.image_key FROM renders r WHERE r.lead_id = l.id AND r.status = 'ok' AND r.kind IS NULL AND r.image_key IS NOT NULL ORDER BY r.created_at DESC LIMIT 1) AS img
+      FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id WHERE l.order_no = ?`).bind(no).first() : null;
+  const hit = !!row && safeEqual(String(row.email || '').trim().toLowerCase(), email);
+  await env.DB.prepare('INSERT INTO order_lookups (net, at, ok) VALUES (?,?,?)').bind(net, now, hit ? 1 : 0).run();
+  if (!hit) return trackJson({ error: 'We could not find an order with that number and email. Check the order ID in your receipt email.' }, 404);
+  let form = {};
+  try { form = JSON.parse(row.form_data || '{}') || {}; } catch {}
+  let a = {};
+  try { a = JSON.parse(row.answers || '{}') || {}; } catch {}
+  const v = orderView(row.order_no, row.order_data);
+  const piece = typeof a.type === 'string' ? a.type.replace(/[-_]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase()) : '';
+  return trackJson({
+    order: v.no, name: String(row.name || '').trim().split(/\s+/)[0] || '', piece, store: form.brand?.name || row.client_name,
+    stage: v.stage, stages: v.stages.map((s, i) => ({ ...s, text: ORDER_STAGES[i].text })), note: v.note, updatedAt: v.updatedAt,
+    image: row.img ? `${ORIGIN_BASE}/media/${row.img}` : null,
+  });
 }
