@@ -1626,7 +1626,7 @@ async function portalApi(request, env, p, secure, ctx) {
     const videoModels = Object.entries(VIDEO_MODELS).map(([k, m]) => {
       const r = vrows.find((x) => x.model === m.api);
       return { key: k, label: m.label, customer: k === primaryFilm(env), count: r?.n || 0, ms: Math.round(r?.ms || 0) || null, cost: r ? +Number(r.cost || 0).toFixed(3) : m.est };
-    }).filter((m) => m.count || filmModelsOn(env).includes(m.key));
+    }).filter((m) => filmModelsOn(env).includes(m.key));   // samo modeli koji su uključeni (stari Wan/Seedance videi se ne pokazuju)
     return json({
       more, next: more ? oldest : null, counts, days, pieces, videoModels,
       leads: pageLeads.map((l) => {
@@ -1644,7 +1644,7 @@ async function portalApi(request, env, p, secure, ctx) {
             ...renders.filter((r) => r.lead_id === l.id && r.kind === 'tryon').map((r) => ({ label: 'On their smile', key: r.image_key })),
           ],
           renders: renders.filter((r) => r.lead_id === l.id && r.kind !== 'tryon').map((r) => ({ url: `/media/${r.image_key}`, tweak: r.tweak, ms: r.ms || null })),
-          films: films.filter((fl) => fl.lead_id === l.id && fl.status !== 'error').map((fl) => {
+          films: films.filter((fl) => fl.lead_id === l.id && fl.status !== 'error' && filmModelsOn(env).includes(modelKeyOf(fl.model))).map((fl) => {
             const mk = modelKeyOf(fl.model);
             const tag = { model: mk || '', label: VIDEO_MODELS[mk]?.label || 'Video', customer: customerFilm(env, fl) };
             return fl.video_key ? { url: `/media/${fl.video_key}`, ms: fl.ms || null, cost: fl.cost_usd ?? null, ...tag } : { pending: true, ...tag };

@@ -1,4 +1,5 @@
 // Tri video modela po slici (22.11.2026): kupac dobija samo prvi (H3 Flex), portal pokazuje sva tri sa oznakom modela i filterom.
+// Od 23.11.2026 dodatni modeli su ugašeni: ovu provjeru pokreći uz --var FILM_MODELS:flex,wan3,seedmini na wrangler dev.
 // Pokretanje kao film-check.mjs: mock-pika + mock-openai + wrangler dev (DEV_MODE, PIKA_API_KEY:mock-local, PIKA_BASE, OPENAI_BASE),
 //   BASE=... PIKA=... ADMIN=<ADMIN_TOKEN> node scripts/three-films-check.mjs
 import assert from 'node:assert/strict';

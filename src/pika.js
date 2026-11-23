@@ -24,7 +24,8 @@ export const VIDEO_MODELS = {
   pika25: { api: 'pika/pika-2.5/image-to-video', label: 'Pika 2.5', est: 0.2,
     body: (img, prompt) => ({ image: img, prompt, duration_s: FILM_SECONDS, resolution: '480p' }) },
 };
-export const DEFAULT_FILM_MODELS = ['flex', 'wan3', 'seedmini'];
+// Ognjen 23.11.2026: samo Pika H3 Flex (Wan 3.0 i Seedance 2.0 Mini ugašeni; vraćaju se sa FILM_MODELS=flex,wan3,seedmini).
+export const DEFAULT_FILM_MODELS = ['flex'];
 export const filmModels = (env) => {
   const list = String(env.FILM_MODELS || '').split(',').map((x) => x.trim()).filter((x) => VIDEO_MODELS[x]);
   return [...new Set(list.length ? list : DEFAULT_FILM_MODELS)];
