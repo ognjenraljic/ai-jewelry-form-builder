@@ -585,7 +585,8 @@ async function startLeadFilm(env, lead, form, n, { auto = false, modelKey = null
   const typeField = form?.steps?.flatMap((st) => st.fields).find((f) => f.id === 'type');
   const answers = JSON.parse(lead.answers);
   const piece = (typeField?.options || []).find((o) => o.value === answers.type)?.label || answers.type;
-  const prompt = buildFilmPrompt(piece, answers.type, filmDescription(form, answers));
+  const stones = answers.coverage ? answers.coverage !== 'none' : !!answers.stones;
+  const prompt = buildFilmPrompt(piece, answers.type, filmDescription(form, answers), { stones });
   const id = rid(12);
   const perLead = extra ? EXTRA_FILMS_PER_LEAD : FILMS_PER_LEAD;
   // Mjesto se zauzima jednim upisom, kao kod rendera: ni paralelni zahtjevi ne prave drugi plaćeni posao. Limiti važe po modelu.
@@ -2544,8 +2545,11 @@ async function leadPage(request, env, ctx, key, url) {
   try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
   const pricing = await marketPricing(env, client.pricing || null);
   const renders = (await env.DB.prepare(`SELECT image_key, tweak, n FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL AND kind IS NULL ORDER BY created_at`).bind(row.id).all()).results;
-  // Stranica kupca pokazuje samo kupčev video, ne dodatne modele za poređenje.
-  const film = (await env.DB.prepare(`SELECT video_key, model FROM films WHERE lead_id = ? AND status = 'ok' AND video_key IS NOT NULL ORDER BY created_at DESC`).bind(row.id).all()).results.find((f) => customerFilm(env, f));
+  // Stranica kupca: duži video (sales, 24.11.2026) kad postoji za najnoviji dizajn sa videom, inače kupčev kratki.
+  const okFilms = (await env.DB.prepare(`SELECT f.video_key, f.model, r.created_at AS rat FROM films f JOIN renders r ON r.id = f.render_id WHERE f.lead_id = ? AND f.status = 'ok' AND f.video_key IS NOT NULL ORDER BY r.created_at DESC, f.created_at DESC`).bind(row.id).all()).results;
+  const salesApi = VIDEO_MODELS.sales.api;
+  const newest = okFilms.find((f) => f.model === salesApi || customerFilm(env, f));
+  const film = newest && (okFilms.find((f) => f.model === salesApi && f.rat === newest.rat) || newest);
   const ls = leadSpecFrom(pricingSpec(form), pricingAnswers(answers));
   const html = leadPageHtml({
     key, origin: url.origin, form, answers, details: leadDetails(form, answers), ls, pricing, quotes,

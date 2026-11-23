@@ -1,5 +1,5 @@
-// Samo Pika H3 Flex (Ognjen 23.11.2026): bez FILM_MODELS na Workeru pravi se jedan video po slici, a portal ne pokazuje druge modele
-// (ni stare Wan/Seedance videe). Tri modela: three-films-check.mjs uz --var FILM_MODELS:flex,wan3,seedmini.
+// Pika H3 Flex (Ognjen 24.11.2026): bez FILM_MODELS na Workeru prva slika pravi kratki video za formu (6 s) i duži za
+// stranicu kupca (sales, 10 s); portal ne pokazuje Wan/Seedance. Tri modela: three-films-check.mjs uz --var FILM_MODELS:flex,wan3,seedmini.
 // Pokretanje kao film-check.mjs: mock-pika + mock-openai + wrangler dev (DEV_MODE, PIKA_API_KEY:mock-local, PIKA_BASE, OPENAI_BASE),
 //   BASE=... PIKA=... ADMIN=<ADMIN_TOKEN> node scripts/three-films-check.mjs
 import assert from 'node:assert/strict';
@@ -36,8 +36,10 @@ let jobs = [];
 for (let i = 0; i < 20 && !jobs.length; i++) { await sleep(300); jobs = (await videoJobs()).slice(before); }
 await sleep(2500);
 jobs = (await videoJobs()).slice(before);
-check(jobs.length === 1, `prva slika pokrene jedan video (${jobs.length})`);
-check(jobs[0].path.includes('pika/pika-h3-flex/') && jobs[0].body.resolution === '768p' && jobs[0].body.last_frame_image === jobs[0].body.image, 'taj video je Pika H3 Flex, 768p, petlja');
+check(jobs.length === 2, `prva slika pokrene dva videa (${jobs.length})`);
+check(jobs.every((j) => j.path.includes('pika/pika-h3-flex/image-to-video') && !j.path.includes('#') && j.body.resolution === '768p' && j.body.last_frame_image === j.body.image), 'oba su Pika H3 Flex, 768p, petlja');
+check(jobs.map((j) => j.body.duration).sort().join(',') === '10,6', 'kratki 6 s za formu i duži 10 s za stranicu kupca');
+check(/cinematic pan/.test(jobs[0].body.prompt) && /lamp beam/.test(jobs[0].body.prompt), 'prompt je izabrani stil (pan + lampa)');
 let st;
 for (let i = 0; i < 4; i++) { st = (await send(api, null, h)).data; const fid = st.renders[0].film?.id; if (fid) await send(`${api}/films/${fid}`, null, h); }
 st = (await send(api, null, h)).data;
@@ -46,7 +48,16 @@ const tok = (await (await fetch(`${base}/api/admin/clients/${client.id}/view-as`
 const P = { 'x-portal-token': tok };
 const all = await (await fetch(`${base}/api/portal/leads`, { headers: P })).json();
 const mine = all.leads.find((l) => l.id === lead.leadId);
-check(mine.films.length === 1 && mine.films[0].model === 'flex' && mine.films[0].customer, 'portal: jedan video, Pika H3 Flex');
-check(all.videoModels.length === 1 && all.videoModels[0].key === 'flex', 'portal: filter modela ima samo Pika H3 Flex');
-check(all.leads.every((l) => l.films.every((f) => f.model === 'flex')), 'portal: nijedan Wan/Seedance video');
+for (let i = 0; i < 6; i++) { await fetch(`${base}/api/portal/leads`, { headers: P }); await sleep(800); }
+const all2 = await (await fetch(`${base}/api/portal/leads`, { headers: P })).json();
+const mine2 = all2.leads.find((l) => l.id === lead.leadId);
+check(mine2.films.length === 2 && mine2.films.some((f) => f.model === 'flex' && f.customer) && mine2.films.some((f) => f.model === 'sales' && !f.customer), 'portal: kratki (kupčev) i sales video');
+check(all2.leads.every((l) => l.films.every((f) => ['flex', 'sales'].includes(f.model))), 'portal: nijedan Wan/Seedance video');
+const salesUrl = mine2.films.find((f) => f.model === 'sales')?.url;
+const page = mine2.page?.url;
+check(page && salesUrl, 'upit ima stranicu kupca i sales video');
+{
+  const html = await (await fetch(`${base}${page}?preview=1`)).text();
+  check(html.includes(salesUrl), 'stranica kupca pokazuje duži (sales) video');
+}
 console.log(`\n${checks} provjera prošlo`);

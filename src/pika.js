@@ -12,8 +12,12 @@ const POLL_MS = 2000;
 // FILM_MODELS (Worker variable, npr. "flex" ili "flex,pika25") bira koji se prave; prvi u listi je uvijek kupčev.
 export const FILM_SECONDS = 10;
 export const VIDEO_MODELS = {
-  flex: { api: 'pika/pika-h3-flex/image-to-video', label: 'Pika H3 Flex', est: 0.2,
-    body: (img, prompt) => ({ image: img, last_frame_image: img, prompt, duration: FILM_SECONDS, resolution: '768p', rewrite: false }) },
+  // Ognjen 24.11.2026: kratki pregled u formi (6 s, ~20 s pravljenja, $0,12) i duži video za stranicu kupca (10 s, $0,20).
+  // Oba su Pika H3 Flex 768p; sales ima svoj ključ u bazi (api sa #sales), a Piki ide ista putanja (path).
+  flex: { api: 'pika/pika-h3-flex/image-to-video', label: 'Pika H3 Flex', est: 0.12,
+    body: (img, prompt) => ({ image: img, last_frame_image: img, prompt, duration: 6, resolution: '768p', rewrite: false }) },
+  sales: { api: 'pika/pika-h3-flex/image-to-video#sales', path: 'pika/pika-h3-flex/image-to-video', label: 'Pika H3 Flex (sales page, 10 s)', est: 0.2,
+    body: (img, prompt) => ({ image: img, last_frame_image: img, prompt, duration: 10, resolution: '768p', rewrite: false }) },
   wan3: { api: 'alibaba/wan3.0-video/image-to-video', label: 'Wan 3.0', est: 0.325,
     body: (img, prompt) => ({ first_frame_url: img, last_frame_url: img, prompt, duration: FILM_SECONDS, resolution: '480p', ratio: '1:1', audio: false }) },
   seedmini: { api: 'bytedance/seedance-2.0-mini/image-to-video', label: 'Seedance 2.0 Mini', est: 0.388,
@@ -25,7 +29,8 @@ export const VIDEO_MODELS = {
     body: (img, prompt) => ({ image: img, prompt, duration_s: FILM_SECONDS, resolution: '480p' }) },
 };
 // Ognjen 23.11.2026: samo Pika H3 Flex (Wan 3.0 i Seedance 2.0 Mini ugašeni; vraćaju se sa FILM_MODELS=flex,wan3,seedmini).
-export const DEFAULT_FILM_MODELS = ['flex'];
+// 24.11.2026: uz kupčev kratki video ide i duži za stranicu kupca (sales).
+export const DEFAULT_FILM_MODELS = ['flex', 'sales'];
 export const filmModels = (env) => {
   const list = String(env.FILM_MODELS || '').split(',').map((x) => x.trim()).filter((x) => VIDEO_MODELS[x]);
   return [...new Set(list.length ? list : DEFAULT_FILM_MODELS)];
@@ -113,5 +118,5 @@ export async function pikaImage(env, model, prompt, images, mask = null, size = 
 export async function startFilm(env, bytes, mime, prompt, key, modelKey = 'flex') {
   const m = VIDEO_MODELS[modelKey] || VIDEO_MODELS.flex;
   const image_url = await upload(env, bytes, mime);
-  return submit(env, m.api, m.body(image_url, prompt), key);
+  return submit(env, m.path || m.api, m.body(image_url, prompt), key);
 }

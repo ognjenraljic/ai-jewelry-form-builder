@@ -229,24 +229,22 @@ export function filmDescription(form, a) {
   return parts.filter(Boolean).join(', ');
 }
 
-// Blago njihanje u petlji, 10 s (Ognjen 16.11: "ne mora puni krug, nego kako je i ranije bilo, ali da je loop").
-// Komad se malo okrene lijevo, pa desno, i vrati na početni ugao; zadnji kadar je ista slika kao prvi (last_frame_image).
-// Bez zabrana: samo opis onoga što je na slici, i pozitivno ponovljen isti dizajn kroz cijeli pokret.
+// Izabrani stil (Ognjen 24.11.2026, projects/jewelrylead/video-prompts.md): cinematic pan dok se komad okreće do boka,
+// blag zoom, mekan preokret kao klatno, uski snop lampe prelazi preko komada. Prvi i zadnji kadar su ista slika (petlja).
+// Pika svaku riječ shvata kao nešto za prikazati: samo pozitivan opis, kamenje se pominje samo kad ga komad ima.
 const HANGING = new Set(['pendant', 'earrings']);
-export function buildFilmPrompt(piece, type = '', desc = '') {
+export function buildFilmPrompt(piece, type = '', desc = '', { stones = true } = {}) {
   const name = clean(piece, 60).toLowerCase() || 'piece';
   const what = desc ? ` (${clean(desc, 400)})` : '';
-  const back = 'and settles back at exactly the starting angle, so the last frame matches the first frame and the video loops seamlessly';
-  const move = HANGING.has(type)
-    ? type === 'earrings'
-      ? `Both earrings sway gently on their hooks, turning slowly a little to the left, then a little to the right (about 15 degrees each way), ${back}; the hooks stay in place.`
-      : `The ${name} sways gently on its chain, turning slowly a little to the left, then a little to the right (about 15 degrees each way), ${back}; the chain stays in place.`
-    : `The ${name} turns slowly a little to the left, then a little to the right (about 15 degrees each way), ${back}.`;
+  const turn = HANGING.has(type)
+    ? `The ${type === 'earrings' ? 'earrings slowly turn on their hooks' : `${name} slowly turns on its chain`}, far enough to show the side, while the camera makes a slow cinematic pan around it and gently pushes in a little closer.`
+    : `The ${name} slowly turns in place on its surface, far enough to show the side, while the camera makes a slow cinematic pan around it and gently pushes in a little closer.`;
   return [
-    `Luxury jewelry commercial: one continuous shot of the exact ${name} shown in the input image${what}.`,
-    move,
-    'It keeps exactly the design of the input image throughout: identical shape, proportions, metal color, finish and pattern in every frame.',
-    'The camera stays still. A soft warm highlight glides across the polished metal as it moves. Same background, framing and lighting as the input image. Calm, slow and elegant.',
+    `Cinematic luxury jewelry commercial, real footage shot on a cinema camera with a macro lens: one continuous shot of the exact ${name} shown in the input image${what}, in the same setting, surface and background as the input image.`,
+    turn,
+    'The motion is soft and natural like a slow pendulum: it starts gently, flows at a calm steady pace, then gradually slows down, gently comes to rest for a moment at the closest point, and then very softly turns back the other way while the camera eases back out, gradually slowing again as it arrives at exactly the starting framing, so the last frame matches the first and the video loops seamlessly. Every change of speed is gradual and fluid; the turnaround is the slowest, gentlest moment of the shot.',
+    `A single narrow lamp beam sweeps slowly across the scene from left to right and back: a bright pool of light glides across the piece, the polished metal flares with long highlights${stones ? ' and the stones light up with crisp white brilliance and fine rainbow fire deep inside them' : ''}, then everything falls back into soft shadow as the beam moves on.`,
+    'Real light falloff, shallow depth of field, fine film grain, anamorphic cinema look. The same design, shape, proportions, metal color, finish and pattern as the input image in every frame. Calm, elegant, premium.',
   ].join(' ');
 }
 

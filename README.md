@@ -253,3 +253,7 @@ Renders without spending credit: start the fake OpenAI with `node scripts/mock-o
 ## Hiperrealni renderi (23.11.2026)
 
 Svaki prvi render ide sa `realism: 'ultra'` (`src/prompt.js`: `ultraScene`, `ULTRA_REAL`, `ULTRA_GRILLZ`): prava studijska fotka bez retuša (tamni kamen, Studio Light forme svijetli kamen), kamenje sa tamnim i svijetlim fasetama, ručno ugrađeno, tragovi poliranja, zrno i vinjeta fotoaparata; pravilo vjernosti (ništa što kupac nije izabrao: bez dodatnih crta, okvira, kamenja, ledovanog lanca); grillz kape po pravoj anatomiji zuba. Vraćanje bez deploya: `REALISM=off` na Workeru. Poređenje: `node scripts/hyperreal-test.mjs` (promptovi), slike na Desktopu `jewelrylead-hyperreal/`.
+
+## Video: kratki pregled + duži za stranicu kupca (24.11.2026)
+
+Pika H3 Flex 768p, izabrani stil (`buildFilmPrompt`: cinematic pan dok se komad okreće do boka, blag zoom, mekan preokret kao klatno, lampa prelazi; kamenje se pominje samo ako komad ima kamenje). `flex` = 6 s u formi (~20 s pravljenja, $0,12), `sales` = 10 s na stranici kupca `/p/<key>` ($0,20, api u bazi sa `#sales`, Piki ide ista putanja). Stranica kupca uzima sales video najnovijeg dizajna sa videom, inače kratki. `FILM_MODELS=flex` gasi sales. Provjera: `scripts/one-film-check.mjs` 11/11. Promptovi i probe: Ignis `projects/jewelrylead/video-prompts.md`.
