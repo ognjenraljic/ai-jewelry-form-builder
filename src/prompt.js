@@ -68,8 +68,16 @@ const INSIDE_FINAL = {
     'The NEAR half of the loop, at the bottom of the picture (with any lettering), shows the OUTER face of the links: this face is iced. ' +
     'The FAR half of the loop, at the top of the picture on both sides of the clasp, shows the INNER face of the links, the side that touches the wrist: ' +
     'every link there, left, middle and right, all the way around to where the loop turns, is smooth mirror-polished metal with ZERO stones, like the plain back of a real iced Cuban link. ' +
+    // Proba 24.11.2026: model je znao ostaviti led na gornjem luku daljih karika (pola karike ledovano, pola glatko).
+    'From this camera angle the far-half links are 100% plain polished metal: no pave on their upper curve, no pave on their rims, no half-iced links. Not a single stone is visible on the far half of the loop except on the clasp. ' +
+    'Stones first come into view only at the left and right ends of the oval, where the loop has turned far enough that the outward face of the links points toward the camera. ' +
     'Looking through the loop behind the near links and behind any letters, the inward-facing metal is also plain polished. ' +
-    'Pave appears ONLY on outward-facing surfaces (and on the top of the clasp). If a surface faces the center of the loop, it has no stones.',
+    'Pave appears ONLY on outward-facing surfaces (and on the top of the clasp). If a surface faces the center of the loop, it has no stones. ' +
+    // Ognjen 24.11.2026: kod kopče je ivica bila čista, a na skretanju petlje led se "prevalio" preko ruba na zadnju stranu.
+    'CLEAN EDGE all the way around: every link has two faces. Its outer face carries the pave inside a thin raised rim of polished metal; its top edge, bottom edge and inner face are plain polished metal. ' +
+    'The pave stops at that rim in one crisp straight line on every single link and never wraps, creeps or spills over the edge onto the inner face. ' +
+    'This holds at the left and right ends of the oval too, where the loop turns toward the camera and the links are seen from the side: there you see the plain polished edge and the plain polished inner face of each link, with the pave staying strictly on the face that points outward, away from the center. ' +
+    'The line between iced and plain is equally sharp at the clasp, along the far side and through both turns; the amount of pave on the inner side is zero everywhere, not gradually more as the loop comes forward.',
   chain: 'FINAL INSIDE CHECK (overrides "fully iced"): pave only on the front face of the links. Wherever the chain turns or twists so that the back of a link, or the face toward the center of the loop, is visible, that surface is smooth mirror-polished metal with ZERO stones.',
   ring: 'FINAL INSIDE CHECK (overrides "fully iced"): the inside of the band, visible through the ring opening, is smooth mirror-polished metal with ZERO stones all the way around; stones only on the outside of the band and on the head.',
   watch: 'FINAL INSIDE CHECK (overrides "fully iced"): the inner side of the bracelet loop and the case back are smooth polished metal with ZERO stones wherever they are visible; stones only on outward-facing surfaces.',
