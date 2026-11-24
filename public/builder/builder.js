@@ -2,6 +2,7 @@
 // Čuvanje forme: PUT /api/admin/forms/:id (server provjerava validateFormDef). Klijent: PUT /api/admin/clients/:id.
 import { artField, optionArt, styleArt, styleImage, withArt } from '/option-art.js';
 import { SUGGESTED, answersFor, suggestOptions, notTaken } from '/option-suggestions.js';
+import { tryOnCopy } from '/tryon-copy.js';
 
 const ICONS = {
   pendant: '<path d="M8 6c4 9 9 14 16 14s12-5 16-14"/><path d="M24 20v4"/><path d="M24 24l-7 8 7 11 7-11z"/><path d="M17 32h14M24 24v19"/>',
@@ -149,7 +150,7 @@ const H = {
   pieceName: `<b>Name shown to customers</b><p>The label on the piece card in the first step and in the lead details.</p>`,
   cardImage: `<b>Card image</b><p>The picture on the piece card in the first step. Built-in pieces have one already; your own photo replaces it.</p>`,
   subject: `<b>How the AI should describe this piece</b><p>The opening of every prompt, e.g. <i>a custom western belt buckle, oval, front view</i>. Built-in pieces already have a tested description, so leave it empty for them. New pieces need it.</p>`,
-  tryOn: `<b>See them on your smile</b><p>After a grillz render the customer can upload a smiling photo and see themselves wearing the design. Up to 2 per lead. Photos stay private and are deleted after 30 days.</p>`,
+  tryOn: `<b>Try-on on the customer photo</b><p>After the render the customer can upload a photo and see themselves wearing the design: a smiling photo for grillz, the ear for earrings, the wrist for a watch or bracelet, the hand for a ring, the neck and chest for a chain or pendant. One switch for every piece of this form. Up to 2 per lead. Photos stay private and are deleted after 30 days.</p>`,
   styles: `<b>Styles</b><p>The second step: customers pick the shape closest to their idea. The style picture is also sent to the AI as a shape reference, so photos of the jeweler's own pieces give the most faithful renders.</p><dl>
     <dt>Shape for the AI</dt><dd>Optional words about the construction (e.g. thick interlocking oval links). Helps when the picture alone is not clear.</dd>
     <dt>Something else</dt><dd>Added at the end: the customer describes their own style in words.</dd></dl>`,
@@ -1012,7 +1013,7 @@ function piecesView() {
         <div class="f"><span>${art ? 'Card image' : 'Card image (optional, replaces the icon)'} ${help(H.cardImage)}</span><div class="pick-row">${cardImagePick(`${op}.image`, art, optionArt('type', { ...o, image: '', noImage: false }))}</div></div>
         ${area(`${op}.subject`, 'How the AI should describe this piece', { ph: 'e.g. a custom western belt buckle, oval, front view', hint: 'Optional for built-in pieces (pendant, chain, ring, grillz, bracelet, earrings, watch). Needed for new ones.', tip: H.subject })}
       </div>
-      ${o.value === 'grillz' ? `<div class="toggles" style="margin:14px 0 4px">${toggle('tryOn', 'Offer "See them on your smile" after the render (customer uploads a smiling photo)', { invert: true, title: 'The AI shows the customer wearing the grillz. The photo stays private.' })} ${help(H.tryOn)}</div>` : ''}
+      <div class="toggles" style="margin:14px 0 4px">${toggle('tryOn', `Offer "${tryOnCopy(o.value).title}" after the render (one switch for every piece)`, { invert: true, title: `The customer uploads ${tryOnCopy(o.value).photoOf} and the AI shows them wearing the piece. The photo stays private.` })} ${help(H.tryOn)}</div>
       <h3>Styles for ${esc(o.label)} ${help(H.styles)}</h3>
       <p class="hint" style="margin:-6px 0 12px">Customers pick one of these. The picture also guides the AI's shape, so photos of the jeweler's own pieces work best. "Something else" is added automatically.</p>
       <div class="styles">${cards}</div>
