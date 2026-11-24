@@ -961,7 +961,7 @@ function render() {
         <div class="stat">Avg video time<b>${secs(stats.filmMs)}</b></div>
         ${speedTile(P.me.speed)}
       </div>
-      ${usageView()}`}
+      ${P.tab === 'leads' ? '' : usageView()}`}
       ${P.me.onboarding?.status === 'submitted' || P.me.onboarding?.status === 'building' ? `<div class="ob-sent"><b>Thank you, we have your answers.</b> We are building your form now and it will appear under Forms. Your leads will show up here as soon as customers use it.</div>` : ''}
       ${P.tab === 'leads' ? leadsView() : P.tab === 'pricing' ? pricingView() : P.tab === 'bookings' ? bookingsView() : P.tab === 'stats' ? statsView() : P.tab === 'notifications' ? notifView() : formsView()}
       <p class="note">Want to change a form, add styles or questions? Contact your JewelryLead team.</p>
@@ -996,7 +996,7 @@ function renderResults() {
 }
 function leadsView(resultsOnly = false) {
   const total = Object.values(P.counts).reduce((a, b) => a + b, 0);
-  if (!total && !P.q && !P.piece && !P.video && !P.tag && !P.budget && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
+  if (!total && !P.q && !P.piece && !P.video && !P.tag && !P.budget && !P.loading && !P.loadError) return usageView() + '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
   const forms = P.me.forms.filter((f) => f.leads);
   // Jedna traka (Ognjen 24.11.2026): lijevo pretraga i filteri u redovima sa natpisom, desno kalendar.
   const frow = (label, chips) => (chips ? `<div class="frow"><span class="frow-l">${label}</span>${chips}</div>` : '');
@@ -1063,7 +1063,7 @@ function leadsView(resultsOnly = false) {
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
   P.chartHtml = chart;
   if (resultsOnly) return `${cards}${more}`;
-  return `<section class="lead-bar"><div class="filters">${search}<div class="frows">${frow('Status', statusChips)}${frow('Piece', pieceChips)}${frow('Budget', budgetChips)}${frow('Tags', tagChips)}${frow('Video', videoChips)}${frow('Form', formChips)}</div></div><aside class="lead-cal">${chart}</aside></section><div class="lead-results">${cards}${more}</div>`;
+  return `<section class="lead-bar"><div class="filters">${usageView()}${search}<div class="frows">${frow('Status', statusChips)}${frow('Piece', pieceChips)}${frow('Budget', budgetChips)}${frow('Tags', tagChips)}${frow('Video', videoChips)}${frow('Form', formChips)}</div></div><aside class="lead-cal">${chart}</aside></section><div class="lead-results">${cards}${more}</div>`;
 }
 
 // Stranica kupca (19.11.2026): link ispod slike, otvaranje bez brojanja posjete, posjete i klikovi na Deposit / Book.
