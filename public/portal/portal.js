@@ -1001,9 +1001,8 @@ function leadsView(resultsOnly = false) {
   const forms = P.me.forms.filter((f) => f.leads);
   // Jedna traka (Ognjen 24.11.2026): lijevo pretraga i filteri u redovima sa natpisom, desno kalendar.
   const frow = (label, chips) => (chips ? `<div class="frow"><span class="frow-l">${label}</span>${chips}</div>` : '');
-  const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}</div>`;
-  // Arhiva je poseban red (Ognjen 24.11.2026): arhivirani nikad nisu u All; "Show archived" ih pokazuje, odatle se vraćaju.
-  const archChips = `<div class="chips" role="group" aria-label="Archived leads"><button class="chip ${P.archivedView ? 'on' : ''}" data-archived-view="${P.archivedView ? '0' : '1'}" aria-pressed="${P.archivedView}" ${P.archivedCount || P.archivedView ? '' : 'disabled'}>Show archived <span>${P.archivedCount}</span></button>${P.archivedView ? '<button class="chip" data-archived-view="0">Back to active leads</button><span class="arch-hint">Pick a status on a lead to restore it there.</span>' : ''}</div>`;
+  // Archived je crveni čip poslije Lost (Ognjen 24.11.2026); All i brojevi po statusu su samo aktivni leadovi.
+  const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status || P.archivedView ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${!P.archivedView && P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}<button class="chip chip-arch ${P.archivedView ? 'on' : ''}" data-archived-view="1" aria-pressed="${P.archivedView}" ${P.archivedCount || P.archivedView ? '' : 'disabled'}>Archived <span>${P.archivedCount}</span></button></div>`;
   const formChips = forms.length > 1
     ? `<div class="chips" role="group" aria-label="Filter by form"><button class="chip ${P.form ? '' : 'on'}" data-form="">All</button>${forms.map((f) => `<button class="chip ${P.form === f.id ? 'on' : ''}" data-form="${esc(f.id)}">${esc(f.name)}</button>`).join('')}</div>`
     : '';
@@ -1069,7 +1068,7 @@ function leadsView(resultsOnly = false) {
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
   P.chartHtml = chart;
   if (resultsOnly) return `${cards}${more}`;
-  return `<section class="lead-bar"><div class="filters">${usageView()}${search}<div class="frows">${frow('Status', statusChips)}${frow('Piece', pieceChips)}${frow('Budget', budgetChips)}${frow('Tags', tagChips)}${frow('Video', videoChips)}${frow('Form', formChips)}${frow('Archive', archChips)}</div></div><aside class="lead-cal">${chart}</aside></section><div class="lead-results">${cards}${more}</div>`;
+  return `<section class="lead-bar"><div class="filters">${usageView()}${search}<div class="frows">${frow('Status', statusChips)}${frow('Piece', pieceChips)}${frow('Budget', budgetChips)}${frow('Tags', tagChips)}${frow('Video', videoChips)}${frow('Form', formChips)}</div></div><aside class="lead-cal">${chart}</aside></section><div class="lead-results">${cards}${more}</div>`;
 }
 
 // Stranica kupca (19.11.2026): link ispod slike, otvaranje bez brojanja posjete, posjete i klikovi na Deposit / Book.
@@ -1292,7 +1291,7 @@ app.addEventListener('click', async (e) => {
   }
   if (t.dataset.archive) { archiveLead(t.dataset.archive); return; }
   if (t.dataset.restore) { setArchived(t.dataset.restore, false); return; }
-  if (t.dataset.archivedView != null) { P.archivedView = t.dataset.archivedView === '1'; P.status = ''; if (await loadLeads()) render(); return; }
+  if (t.dataset.archivedView != null) { P.archivedView = true; P.status = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.ltagAdd) { const l = P.leads.find((x) => x.id === t.dataset.ltagLead); if (l) saveTags(l.id, [...(l.tags || []), t.dataset.ltagAdd]); return; }
   if (t.dataset.ltagDel) { const l = P.leads.find((x) => x.id === t.dataset.ltagLead); if (l) saveTags(l.id, (l.tags || []).filter((x) => x !== t.dataset.ltagDel)); return; }
   if (t.dataset.calview != null) { P.calView = t.dataset.calview === '1'; safe(() => localStorage.setItem('jl_cal_view', P.calView ? '1' : '0')); if (P.calView && P.range !== 'month') { P.range = 'month'; P.shift = 0; if (await loadLeads()) render(); } else render(); return; }
@@ -1309,7 +1308,7 @@ app.addEventListener('click', async (e) => {
   if (t.dataset.budget !== undefined && t.classList.contains('chip')) { P.budget = t.dataset.budget; if (await loadLeads()) render(); }
   if (t.dataset.ftag !== undefined) { P.tag = t.dataset.ftag; if (await loadLeads()) render(); }
   if (t.dataset.video !== undefined) { P.video = t.dataset.video; if (await loadLeads()) render(); }
-  if (t.dataset.status !== undefined) { P.status = t.dataset.status; if (await loadLeads()) render(); }
+  if (t.dataset.status !== undefined) { P.status = t.dataset.status; P.archivedView = false; if (await loadLeads()) render(); }
   if (t.dataset.range) { P.range = t.dataset.range; P.shift = 0; if (await loadLeads()) render(); }
   if (t.dataset.shift) { P.shift = Math.max(0, P.shift + Number(t.dataset.shift)); if (await loadLeads()) render(); }
   if (t.dataset.day) { P.day = P.day === t.dataset.day ? '' : t.dataset.day; if (await loadLeads()) render(); }

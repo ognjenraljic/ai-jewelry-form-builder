@@ -1613,7 +1613,7 @@ async function portalApi(request, env, p, secure, ctx) {
         l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
     // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
-    env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND ${live}${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
+    env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
     env.DB.prepare(`SELECT json_extract(l.answers, '$.type') AS t, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND ${live} GROUP BY t`).bind(client.id).all(),
     // Upiti po danu (zlatar prati koliko mu dolazi dnevno): dan po vremenskoj zoni pregledača, zadnjih 90 dana, isti filteri kao lista.
     env.DB.prepare(`SELECT strftime('%Y-%m-%d', (l.created_at / 1000) - ? * 60, 'unixepoch') AS d, l.form_id AS fid, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id
