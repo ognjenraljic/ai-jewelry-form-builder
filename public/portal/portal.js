@@ -1141,7 +1141,68 @@ function formsView() {
         <div class="row"><h2>${esc(f.name)}</h2><span class="pill">${esc(f.label)}</span><span class="pill">Active</span><a class="btn" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open form ↗</a></div>
         <div class="fstats"><span><b>${f.leads}</b> lead${f.leads === 1 ? '' : 's'}</span><span><b>${f.renders}</b> AI render${f.renders === 1 ? '' : 's'}</span><span>Last lead: <b>${f.lastLead ? esc(day(f.lastLead)) : 'none yet'}</b></span>${f.leads ? `<button class="btn" data-see="${esc(f.id)}">See leads</button>` : ''}</div>
       </div>`;
-  }).join('') || '<p class="empty">No forms yet.</p>';
+  }).join('') + ghlCard() || '<p class="empty">No forms yet.</p>';
+}
+
+// GoHighLevel (24.11.2026, priprema): svaki novi lead ide kao kontakt + bilješka + opportunity u izabrani pipeline.
+const GHL_STAGE_LABELS = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
+function ghlCard() {
+  const g = P.me.ghl || {};
+  // Upisano a nesačuvano ostaje kroz ponovno crtanje (Load pipelines, greška).
+  const dr = P.ghlDraft || {};
+  const pipes = P.ghlPipes || null;
+  const pipe = pipes?.find((x) => x.id === (P.ghlPick ?? g.pipelineId)) || null;
+  const stages = { ...(pipe?.guess || {}), ...(pipe && pipe.id === g.pipelineId ? g.stages : {}) };
+  const status = !g.connected ? 'Not connected' : g.enabled ? 'On: new leads go to GoHighLevel' : 'Connected, sending is off';
+  const last = g.lastError && (!g.lastOk || g.lastError.at > g.lastOk) ? `<p class="ghl-err" role="alert">Last error ${esc(when(g.lastError.at))}: ${esc(g.lastError.msg)}</p>` : g.lastOk ? `<p class="ghl-ok">Last lead sent ${esc(when(g.lastOk))}</p>` : '';
+  return `<section class="form-card ghl" data-ghl>
+    <div class="row"><h2>GoHighLevel</h2><span class="pill ${g.enabled ? 'on' : ''}">${esc(status)}</span></div>
+    <p class="faint ghl-intro">Every new lead becomes a contact in your GoHighLevel sub-account with tags, a note with all their choices and their design page, and an opportunity in your pipeline. Status changes here move the opportunity.</p>
+    <div class="ghl-grid">
+      <label><span>Private Integration token</span><input class="in" type="password" autocomplete="off" data-ghl-f="token" value="${esc(dr.token || '')}" placeholder="${g.tokenHint ? `Saved ${esc(g.tokenHint)} · paste to replace` : 'pit-…'}" /></label>
+      <label><span>Location ID</span><input class="in" type="text" data-ghl-f="locationId" value="${esc(dr.locationId ?? g.locationId ?? '')}" placeholder="Sub-account ID" /></label>
+    </div>
+    <div class="ghl-acts"><button type="button" class="btn small" data-act="ghl-load">${pipes ? 'Reload pipelines' : 'Load pipelines'}</button><span class="ghl-msg" role="status">${esc(P.ghlMsg || '')}</span></div>
+    ${pipes ? `<div class="ghl-grid"><label><span>Pipeline</span><select class="in" data-ghl-pipe>${pipes.map((pl) => `<option value="${esc(pl.id)}" ${pipe?.id === pl.id ? 'selected' : ''}>${esc(pl.name)}</option>`).join('')}</select></label></div>
+      ${pipe ? `<div class="ghl-stages">${GHL_STAGE_LABELS.map(([k, t]) => `<label><span>${t} →</span><select class="in" data-ghl-stage="${k}"><option value="">${k === 'new' ? 'Pick a stage' : 'Keep the stage'}</option>${pipe.stages.map((st) => `<option value="${esc(st.id)}" ${stages[k] === st.id ? 'selected' : ''}>${esc(st.name)}</option>`).join('')}</select></label>`).join('')}</div>` : ''}` : g.pipelineId ? '<p class="faint">Pipeline saved. Load pipelines to change it.</p>' : ''}
+    <div class="ghl-grid">
+      <label><span>Tags on every contact</span><input class="in" type="text" data-ghl-f="tags" value="${esc((dr.tags || g.tags || ['jewelrylead']).join(', '))}" /></label>
+      <div class="ghl-checks"><label><input type="checkbox" data-ghl-f="pieceTag" ${g.pieceTag !== false ? 'checked' : ''} /> Tag with the piece (jewelrylead grillz…)</label><label><input type="checkbox" data-ghl-f="note" ${g.note !== false ? 'checked' : ''} /> Add a note with their choices</label></div>
+    </div>
+    <label class="ghl-on"><input type="checkbox" data-ghl-f="enabled" ${g.enabled ? 'checked' : ''} ${g.connected || P.ghlTokenTyped ? '' : 'disabled'} /><span><b>Send new leads to GoHighLevel</b><em>Only leads that arrive after you turn this on. Your tags and status changes follow.</em></span></label>
+    <div class="ghl-acts"><button type="button" class="btn primary small" data-act="ghl-save">Save</button>${g.connected ? '<button type="button" class="btn small warn" data-act="ghl-disconnect">Disconnect</button>' : ''}</div>
+  </section>`;
+}
+function ghlRead() {
+  const box = app.querySelector('[data-ghl]');
+  const v = (f) => box?.querySelector(`[data-ghl-f="${f}"]`);
+  const body = { locationId: v('locationId')?.value.trim() || '', tags: (v('tags')?.value || '').split(',').map((x) => x.trim()).filter(Boolean), pieceTag: !!v('pieceTag')?.checked, note: !!v('note')?.checked, enabled: !!v('enabled')?.checked };
+  const tok = v('token')?.value.trim();
+  if (tok) body.token = tok;
+  const pipe = box?.querySelector('[data-ghl-pipe]');
+  if (pipe) { body.pipelineId = pipe.value; body.stages = Object.fromEntries([...box.querySelectorAll('[data-ghl-stage]')].map((el) => [el.dataset.ghlStage, el.value])); }
+  return body;
+}
+async function ghlAction(act) {
+  const body = ghlRead();
+  P.ghlDraft = body;
+  try {
+    if (act === 'load') {
+      P.ghlMsg = 'Loading…'; render();
+      const r = await api('/api/portal/ghl/pipelines', { method: 'POST', body: JSON.stringify({ token: body.token, locationId: body.locationId }), json: true });
+      P.ghlPipes = r.pipelines; P.ghlPick = r.pipelines.some((x) => x.id === P.me.ghl?.pipelineId) ? P.me.ghl.pipelineId : r.pipelines[0]?.id;
+      P.ghlMsg = r.pipelines.length ? `${r.pipelines.length} pipeline${r.pipelines.length === 1 ? '' : 's'} found. Check the stages, then Save.` : 'No pipelines in this sub-account yet.';
+      if (body.token) { P.me.ghl = await api('/api/portal/ghl', { method: 'PUT', body: JSON.stringify({ token: body.token, locationId: body.locationId }), json: true }); }
+    } else {
+      const payload = act === 'disconnect' ? { disconnect: true } : body;
+      if (act === 'disconnect' && !(await JLUI.confirm('Disconnect GoHighLevel? New leads stop going there; nothing is deleted in GoHighLevel.'))) return;
+      P.me.ghl = await api('/api/portal/ghl', { method: 'PUT', body: JSON.stringify(payload), json: true });
+      P.ghlMsg = act === 'disconnect' ? 'Disconnected.' : P.me.ghl.enabled ? 'Saved. New leads go to GoHighLevel.' : 'Saved.';
+      P.ghlDraft = null;
+      P.ghlTokenTyped = false;
+    }
+  } catch (err) { P.ghlMsg = err.message || 'Something went wrong.'; }
+  render();
 }
 
 function zoom(src, caption = '') {
@@ -1216,6 +1277,8 @@ app.addEventListener('change', async (e) => {
   if (el.dataset.qshow) { const q = Q[el.dataset.qshow]; if (q) { q.show = el.checked; queueAdjSave(el.dataset.qshow); renderCalc(qkLead(el.dataset.qshow)); } return; }
   if (el.dataset.qprice) { if (Number(el.value) > 0) { priceLive(el.dataset.qprice, el.value); priceCommit(el.dataset.qprice); } else renderCalc(qkLead(el.dataset.qprice)); return; }
   if (el.dataset.q && el.dataset.qf) { quoteEdit(el.dataset.q, el.dataset.qf, el.value); return; }
+  if (el.dataset.ghlPipe !== undefined) { P.ghlPick = el.value; render(); return; }
+  if (el.dataset.ghlF === 'token') { P.ghlTokenTyped = !!el.value.trim(); const on = app.querySelector('[data-ghl-f="enabled"]'); if (on) on.disabled = !(P.me.ghl?.connected || P.ghlTokenTyped); return; }
   if (el.dataset.pickDay !== undefined) { P.day = el.value || ''; if (await loadLeads()) render(); return; }
   if (el.dataset.leadStatus) {
     const id = el.dataset.leadStatus;
@@ -1280,6 +1343,7 @@ app.addEventListener('click', async (e) => {
   if (t.dataset.act === 'stats-retry') { P.statsError = ''; render(); loadStats(); return; }
   if (t.dataset.sstatus != null) { P.tab = 'leads'; P.status = t.dataset.sstatus; P.q = ''; P.day = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.ftagGo) { P.tab = 'leads'; P.tag = t.dataset.ftagGo; P.q = ''; P.day = ''; if (await loadLeads()) render(); return; }
+  if (t.dataset.act === 'ghl-load' || t.dataset.act === 'ghl-save' || t.dataset.act === 'ghl-disconnect') { ghlAction(t.dataset.act.slice(4)); return; }
   if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }

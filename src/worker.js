@@ -15,6 +15,7 @@ import { mailOn, sendMail, validEmail, emailList } from './mail.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import { areaOf } from '../public/area-codes.js';
+import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES } from './ghl.js';
 import { ORDER_STAGES, orderPrefix, newOrderNo, normalizeOrderNo, orderView, nextOrder, parseOrder } from './orders.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
@@ -275,7 +276,8 @@ async function createLead(request, env, ctx) {
   // Poslije nje radnja dobija mejl sa leadom i gotovom porukom (21.11.2026), ako ima upisane adrese za obavještenja.
   const origin = new URL(request.url).origin;
   ctx?.waitUntil?.(autoQuote(env, id, origin).catch((e) => console.error('auto quote', id, e.message))
-    .then(() => alertShop(env, id, origin)).catch((e) => console.error('lead alert', id, e.message)));
+    .then(() => alertShop(env, id, origin)).catch((e) => console.error('lead alert', id, e.message))
+    .then(() => ghlSyncLead(env, id, origin)).catch((e) => console.error('ghl', id, e.message)));
   return json({ leadId: id, token, maxRenders: form.maxRenders });
 }
 
@@ -302,6 +304,7 @@ async function catchUp(env) {
   for (const q of noQuote) await autoQuote(env, q.id, ORIGIN.replace(/\/$/, '')).catch((e) => console.error('catch-up quote', q.id, e.message));
   // Obavještenja radnji koja nisu stigla odmah i automatska prva poruka kupcu (21.11.2026).
   await notifySweep(env).catch((e) => console.error('notify sweep', e.message));
+  await ghlSweep(env).catch((e) => console.error('ghl sweep', e.message));
   if (pikaOn(env)) {
     const need = (await env.DB.prepare(`SELECT l.* FROM leads l JOIN renders r ON r.lead_id = l.id AND r.n = 1 AND r.kind IS NULL AND r.status = 'ok' AND (r.checking IS NULL)
         WHERE l.created_at > ? AND r.created_at < ? AND NOT EXISTS (SELECT 1 FROM films f WHERE f.lead_id = l.id) ORDER BY l.created_at LIMIT ${CATCHUP_FILMS}`).bind(now - 864e5, now - 60_000).all()).results;
@@ -1551,6 +1554,7 @@ async function portalApi(request, env, p, secure, ctx) {
       })),
       stats: { leads: stats?.leads || 0, renders: stats?.renders || 0, recent: stats?.recent || 0, films: gen?.films || 0, renderMs: Math.round(gen?.render_ms || 0), filmMs: Math.round(gen?.film_ms || 0) },
       pricing: d.pricing || null,
+      ghl: ghlPublic(d.ghl),
       market,
       // Izbori formi koje kalkulator cijene treba (natpisi), po formi.
       formSpecs: Object.fromEntries(formRows.filter((r) => !r.archived_at).map((r) => [r.id, pricingSpec(forms[r.id])])),
@@ -1768,15 +1772,20 @@ async function portalApi(request, env, p, secure, ctx) {
       if (REPLY_STATUSES.includes(st)) await markReply(env, lm[1]);
     }
     // Won = narudžba: broj za praćenje se dodjeljuje jednom i ostaje i ako se status kasnije promijeni.
+    if (st === 'won' && (before.status || 'new') !== 'won') ctx?.waitUntil?.(ghlLeadChange(env, client, lm[1], { status: 'won', tags: tags ? JSON.parse(tags) : null }).catch((e) => console.error('ghl won', lm[1], e.message)));
     if (st === 'won') {
       const o = await assignOrder(env, lm[1], client);
       return json({ ok: true, order: o ? orderView(o.no, o.data) : null });
     }
+    // GoHighLevel: status pomjera opportunity, novi tagovi idu na kontakt (samo kad je GHL uključen i lead već poslat).
+    if ((st != null && st !== (before.status || 'new')) || tags) ctx?.waitUntil?.(ghlLeadChange(env, client, lm[1], { status: st != null && st !== (before.status || 'new') ? st : null, tags: tags ? JSON.parse(tags) : null }).catch((e) => console.error('ghl change', lm[1], e.message)));
     return json({ ok: true, ...(tags ? { tags: JSON.parse(tags) } : {}) });
   }
   // Statistika (24.11.2026, District: "Stats > tracking revenue, pipeline, opportunities, leads, budget total sum..."):
   // jedan red po upitu (bez slika), portal sam računa periode, pipeline i zbirove.
   if (p === '/api/portal/stats' && request.method === 'GET') return json(await portalStats(env, client));
+  // GoHighLevel podešavanje (24.11.2026). Kao cijene, smije ga mijenjati i admin u pregledu klijenta (Ognjen ga postavlja).
+  if (p.startsWith('/api/portal/ghl')) return portalGhl(request, env, p, client);
   // Obavještenja (24.11.2026): novi upiti, kupac otvorio stranicu, Deposit/Appointment, automatske poruke, greške slanja.
   if (p === '/api/portal/notifications' && request.method === 'GET') return json(await portalNotifications(env, client));
   if (p === '/api/portal/notifications/seen' && request.method === 'POST') {
@@ -1845,6 +1854,114 @@ async function portalNotifications(env, client) {
     if (items.length >= 150) break;
   }
   return { seenAt, unseen: items.filter((x) => x.at > seenAt).length, items };
+}
+
+// ---------- GoHighLevel (24.11.2026, priprema; isključeno dok radnja ne upiše token) ----------
+const GHL_RETRY = 5;
+async function ghlConfig(env, client) {
+  let d = {};
+  try { d = JSON.parse(client.data || '{}') || {}; } catch {}
+  const g = d.ghl;
+  if (!g?.enabled || !g.token || !g.locationId) return null;
+  const token = await openGhlToken(env, client.id, g.token).catch(() => '');
+  return token ? { token, cfg: g } : null;
+}
+async function ghlNote(env, clientId, ok, error) {
+  const patch = ok ? `'$.ghl.lastOk', ?` : `'$.ghl.lastError', json(?)`;
+  await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), ${patch}) WHERE id = ?`).bind(ok ? Date.now() : JSON.stringify({ at: Date.now(), msg: String(error).slice(0, 200) }), clientId).run().catch(() => {});
+}
+async function ghlSyncLead(env, leadId, origin = ORIGIN_BASE) {
+  const row = await notifyRow(env, leadId);
+  if (!row) return null;
+  const conf = await ghlConfig(env, { id: row.client_id, data: row.client_data });
+  if (!conf) return null;
+  let prev = {};
+  try { prev = JSON.parse(row.ghl || '{}') || {}; } catch {}
+  if (prev.oppId || (prev.contactId && prev.noted && !conf.cfg.pipelineId)) return prev;
+  if ((prev.tries || 0) >= GHL_RETRY) return prev;
+  const form = JSON.parse(row.form_data || '{}');
+  const a = JSON.parse(row.answers || '{}');
+  let quotes = {};
+  try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
+  let tags = [];
+  try { tags = JSON.parse(row.tags || '[]') || []; } catch {}
+  const lead = {
+    name: row.name, email: row.email, phone: row.phone, piece: pieceName(a), form: form.name || storeName(row), vision: a.vision || '',
+    details: leadDetails(form, a).slice(0, 20), area: areaOf(row.phone)?.label || '', tags,
+    pageUrl: row.page_key ? `${origin}/p/${row.page_key}?preview=1` : '', price: Number(quotes.picked?.price) || Number(quotes.picked?.total) || 0, quoteMsg: quotes.picked?.msg || '',
+  };
+  try {
+    const done = await ghlPushLead(conf.token, conf.cfg, lead, prev);
+    delete done.error;
+    await env.DB.prepare('UPDATE leads SET ghl = ? WHERE id = ?').bind(JSON.stringify(done), leadId).run();
+    await logEvent(env, leadId, 'ghl_sent', { contact: done.contactId || null, opp: done.oppId || null });
+    await ghlNote(env, row.client_id, true);
+    return done;
+  } catch (e) {
+    const next = { ...prev, error: String(e.message).slice(0, 200), tries: (prev.tries || 0) + 1, at: Date.now() };
+    await env.DB.prepare('UPDATE leads SET ghl = ? WHERE id = ?').bind(JSON.stringify(next), leadId).run();
+    await ghlNote(env, row.client_id, false, e.message);
+    if (next.tries >= GHL_RETRY) await logEvent(env, leadId, 'ghl_failed', { error: next.error });
+    throw e;
+  }
+}
+async function ghlLeadChange(env, client, leadId, { status, tags }) {
+  const conf = await ghlConfig(env, client);
+  if (!conf) return;
+  const row = await env.DB.prepare('SELECT ghl, quotes FROM leads WHERE id = ?').bind(leadId).first();
+  let sync = {};
+  try { sync = JSON.parse(row?.ghl || '{}') || {}; } catch {}
+  let quotes = {};
+  try { quotes = JSON.parse(row?.quotes || '{}') || {}; } catch {}
+  if (status) await ghlPushStatus(conf.token, conf.cfg, sync, status, Number(quotes.picked?.price) || 0);
+  if (tags?.length) await ghlPushTags(conf.token, sync, tags);
+}
+// Cron: leadovi zadnja 24 h koji još nisu u GHL-u (ili je slanje palo, do GHL_RETRY puta), za radnje sa uključenim GHL-om.
+async function ghlSweep(env) {
+  const rows = (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
+      WHERE json_extract(c.data, '$.ghl.enabled') = 1 AND l.created_at > ? AND l.created_at < ? AND l.created_at >= COALESCE(json_extract(c.data, '$.ghl.enabledAt'), 0)
+        AND (l.ghl IS NULL OR (json_extract(l.ghl, '$.error') IS NOT NULL AND COALESCE(json_extract(l.ghl, '$.tries'), 0) < ${GHL_RETRY}))
+      ORDER BY l.created_at LIMIT 8`).bind(Math.max(Date.now() - 864e5, 0), Date.now() - 2 * 60_000).all()).results;
+  for (const r of rows) await ghlSyncLead(env, r.id).catch(() => null);
+}
+async function portalGhl(request, env, p, client) {
+  let d = {};
+  try { d = JSON.parse(client.data || '{}') || {}; } catch {}
+  const cur = d.ghl || {};
+  const b = request.method === 'GET' ? {} : await request.json().catch(() => ({}));
+  if (p === '/api/portal/ghl' && request.method === 'GET') return json(ghlPublic(cur));
+  // Token iz polja (ako je upisan) ili sačuvani.
+  const tokenFrom = async () => (b.token ? String(b.token).trim() : await openGhlToken(env, client.id, cur.token).catch(() => ''));
+  if (p === '/api/portal/ghl/pipelines' && request.method === 'POST') {
+    const loc = String(b.locationId || cur.locationId || '').trim();
+    const token = await tokenFrom();
+    if (!token || !validLocationId(loc)) return json({ error: 'Paste the Private Integration token and the Location ID first.' }, 400);
+    try {
+      const pipelines = await ghlPipelines(token, loc);
+      return json({ pipelines: pipelines.map((pl) => ({ ...pl, guess: guessStages(pl) })) });
+    } catch (e) { return json({ error: e.status === 401 || e.status === 403 ? 'GoHighLevel refused the token. Check that it belongs to this sub-account and has the contacts and opportunities scopes.' : e.message }, 400); }
+  }
+  if (p === '/api/portal/ghl' && request.method === 'PUT') {
+    const next = { ...cur };
+    if (b.token) {
+      if (!validPit(b.token)) return json({ error: 'That does not look like a GoHighLevel Private Integration token.' }, 400);
+      next.token = await sealGhlToken(env, client.id, String(b.token).trim());
+      next.tokenHint = `…${String(b.token).trim().slice(-4)}`;
+    }
+    if (b.disconnect === true) { delete next.token; delete next.tokenHint; next.enabled = false; }
+    if ('locationId' in b) { if (b.locationId && !validLocationId(b.locationId)) return json({ error: 'The Location ID is the sub-account ID from Settings > Business Profile.' }, 400); next.locationId = String(b.locationId || '').trim(); }
+    if ('pipelineId' in b) next.pipelineId = String(b.pipelineId || '').slice(0, 60);
+    if (b.stages && typeof b.stages === 'object') next.stages = Object.fromEntries(GHL_STATUSES.map((k) => [k, String(b.stages[k] || '').slice(0, 60)]).filter(([, v]) => v));
+    if (Array.isArray(b.tags)) next.tags = [...new Set(b.tags.map((t) => cleanTag(t)).filter(Boolean))].slice(0, 6);
+    if ('pieceTag' in b) next.pieceTag = b.pieceTag !== false;
+    if ('note' in b) next.note = b.note !== false;
+    if ('enabled' in b) next.enabled = b.enabled === true && !!next.token && validLocationId(next.locationId);
+    // Uključenje važi samo za nove leadove (stari se ne šalju naknadno, cron gleda zadnja 24 h).
+    if (next.enabled && !cur.enabled) next.enabledAt = Date.now();
+    await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.ghl', json(?)) WHERE id = ?`).bind(JSON.stringify(next), client.id).run();
+    return json(ghlPublic(next));
+  }
+  return json({ error: 'Not found' }, 404);
 }
 
 // ---------- Quote poruka (portal) ----------
