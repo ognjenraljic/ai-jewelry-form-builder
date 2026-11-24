@@ -30,7 +30,7 @@ const STONES = {
 const COVERAGE = {
   accents: 'set as tasteful accents on key details only',
   half: 'pave-set across roughly half of the visible outer surface',
-  full: 'fully iced out with dense pave covering the entire visible outer surface',
+  full: 'fully iced out with dense pave covering the whole OUTER face of the piece (the side people see when it is worn), and only that face',
 };
 
 const CLARITY = {
@@ -45,7 +45,7 @@ const INNER = {
   ring: 'the inside of the band (the part that touches the finger) is always smooth polished metal, never set with stones; where the inside of the band is visible through the ring opening it shows plain polished metal',
   // Narukvica i lanac (District 24.11.2026): kod ledovane Cuban narukvice se na udaljenoj strani petlje vidjela unutrašnja
   // strana karika, i ona je bila ledovana. Unutrašnja strana petlje mora biti glatka i tamo gdje je kamera vidi.
-  bracelet: 'stones only on the outer face of the links that looks away from the wrist; the inner side of the loop that touches the wrist is smooth polished metal with no stones. On the far side of the loop, where the camera looks at the inner face of the links across the opening, those links show plain polished metal, never pave',
+  bracelet: 'stones only on the outer face of the links, the face that looks away from the wrist when the bracelet is worn; the inner face of every link, the side that lies on the skin, is smooth mirror-polished metal with no stones at all',
   grillz: 'the back of each cap that touches the tooth is plain metal; stones only on the front faces',
   pendant: 'the back of the pendant and the bail are plain polished metal; stones only on the front',
   earrings: 'the backs and posts are plain metal; stones only on the front',
@@ -63,6 +63,18 @@ export const SPLIT_SHANK =
   'Split shank band: on each side the band divides into two separate thin strands as it rises toward the head, leaving an open gap between the strands; ' +
   'inside that split, on each side of the head, sits ONE smaller round diamond held in its own small setting, so the ring shows exactly 2 smaller diamonds in the split shank (one left, one right), clearly smaller than any center or side stone. ' +
   'These two split-shank diamonds are always present with a split shank, also on an otherwise plain band; the inside of the band stays plain polished metal.';
+const INSIDE_FINAL = {
+  bracelet: 'FINAL INSIDE CHECK (overrides "fully iced"): the bracelet is a closed loop and the camera looks into it from the front. ' +
+    'The NEAR half of the loop, at the bottom of the picture (with any lettering), shows the OUTER face of the links: this face is iced. ' +
+    'The FAR half of the loop, at the top of the picture on both sides of the clasp, shows the INNER face of the links, the side that touches the wrist: ' +
+    'every link there, left, middle and right, all the way around to where the loop turns, is smooth mirror-polished metal with ZERO stones, like the plain back of a real iced Cuban link. ' +
+    'Looking through the loop behind the near links and behind any letters, the inward-facing metal is also plain polished. ' +
+    'Pave appears ONLY on outward-facing surfaces (and on the top of the clasp). If a surface faces the center of the loop, it has no stones.',
+  chain: 'FINAL INSIDE CHECK (overrides "fully iced"): pave only on the front face of the links. Wherever the chain turns or twists so that the back of a link, or the face toward the center of the loop, is visible, that surface is smooth mirror-polished metal with ZERO stones.',
+  ring: 'FINAL INSIDE CHECK (overrides "fully iced"): the inside of the band, visible through the ring opening, is smooth mirror-polished metal with ZERO stones all the way around; stones only on the outside of the band and on the head.',
+  watch: 'FINAL INSIDE CHECK (overrides "fully iced"): the inner side of the bracelet loop and the case back are smooth polished metal with ZERO stones wherever they are visible; stones only on outward-facing surfaces.',
+};
+export const insideFinal = (type) => INSIDE_FINAL[type] || '';
 const isSplitShank = (label, value) => value === 'split' || /split[\s-]*shank/i.test(String(label || ''));
 // "How iced?" = None (zlatar ga postavi kao prvo pitanje o kamenju): bez kamenja na metalu, čak i kad stil inače ima led.
 const NOT_ICED = (type) => `Not iced: no pave, no accent stones and no diamonds on the metal surfaces, even if the style is usually iced; clean polished metal${type === 'ring' ? '. A center stone is set only if one is specified in these instructions' : ''}.`;
@@ -420,6 +432,7 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
   );
   if (realism === 'hyper') lines.push(HYPER_REAL);
   if (realism === 'ultra') lines.push(ULTRA_REAL, ...(a.type === 'grillz' ? [ULTRA_GRILLZ] : []));
+  if (!notIced && INSIDE_FINAL[a.type]) lines.push(INSIDE_FINAL[a.type]);
   if (text) lines.push(`FINAL TEXT CHECK: the only lettering on the piece is "${text}" (${text.split('').join(' ')}), exactly as the customer typed it${placeholder && placeholder.toLowerCase() !== text.toLowerCase() ? `, never "${placeholder}"` : ''}.`);
   if (g?.lines) {
     lines.push(

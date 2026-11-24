@@ -29,10 +29,12 @@ cb.options = cb.options.map((o) => (o.value === 'split' ? { ...o, value: 'split-
 const p4 = buildPrompt(custom, { type: 'ring', metal: 'white-gold', coverage: 'none', band: 'split-shank-x' }, { realism: 'ultra' });
 ok('split shank po natpisu (drugi value)', /2 smaller diamonds/.test(p4));
 
-const p5 = buildPrompt(form, { type: 'bracelet', metal: 'yellow-gold', karat: '18K', coverage: 'full', stones: 'moissanite', inscription: 'ENRIQUE' }, { realism: 'ultra' });
-ok('narukvica: unutrašnja strana petlje bez leda (i daleka strana)', /far side of the loop/.test(p5) && /NO ICE ON THE INSIDE/.test(p5));
+const p5 = buildPrompt(ce, { type: 'bracelet', metal: 'yellow-gold', karat: '18K', coverage: 'full', stones: 'moissanite', inscription: 'ENRIQUE' }, { realism: 'ultra' });
+ok('narukvica: unutrašnja strana petlje bez leda (i daleka strana)', /FAR half of the loop/.test(p5) && /NO ICE ON THE INSIDE/.test(p5) && /only that face/.test(p5));
 const p6 = buildPrompt(form, { type: 'chain', metal: 'yellow-gold', coverage: 'full', stones: 'lab' }, { realism: 'ultra' });
 ok('lanac: poleđina karika bez leda', /back side faces the camera/.test(p6));
-ok('dorada narukvice nosi pravilo', /far side of the loop/.test(buildTweakPrompt('more ice', { type: 'bracelet' })));
+ok('dorada narukvice nosi pravilo', /inner face of every link/.test(buildTweakPrompt('more ice', { type: 'bracelet' })));
+const p7 = buildPrompt(ce, { type: 'bracelet', metal: 'yellow-gold', coverage: 'none' }, { realism: 'ultra' });
+ok('narukvica bez leda nema završnu provjeru leda', !/FINAL INSIDE CHECK/.test(p7));
 console.log(fails ? `${fails} FAILED` : 'Inside and split shank checks passed.');
 process.exit(fails ? 1 : 0);
