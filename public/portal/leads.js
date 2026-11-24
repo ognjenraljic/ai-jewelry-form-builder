@@ -3,17 +3,17 @@
 export function createLeadStore(request, now = Date.now) {
   const cache = new Map();
   const fresh = (entry) => entry && now() - entry.at < 30_000;
-  const keyOf = (status, q, day = '', dfrom = '', piece = '', video = '') => JSON.stringify([status, q.toLowerCase(), day, dfrom, piece, video]);
+  const keyOf = (status, q, day = '', dfrom = '', piece = '', video = '', tag = '', budget = '') => JSON.stringify([status, q.toLowerCase(), day, dfrom, piece, video, tag, budget]);
   let pending, sequence = 0;
   return {
-    async load({ status = '', q = '', day = '', dfrom = '', piece = '', video = '', before = null, previous = [] } = {}) {
+    async load({ status = '', q = '', day = '', dfrom = '', piece = '', video = '', tag = '', budget = '', before = null, previous = [] } = {}) {
       const seq = ++sequence;
       pending?.abort();
-      const key = keyOf(status, q, day, dfrom, piece, video);
+      const key = keyOf(status, q, day, dfrom, piece, video, tag, budget);
       const all = cache.get(keyOf('', ''));
       const cached = cache.get(key);
       // Izabran komad ide sa servera: on filtrira i brojeve po statusu i dane na traci.
-      if (!before && !day && !dfrom && !piece && !video && fresh(all) && !all.next) {
+      if (!before && !day && !dfrom && !piece && !video && !tag && !budget && fresh(all) && !all.next) {
         const search = q.toLowerCase();
         return { ...all, leads: all.leads.filter((l) => (!status || l.status === status) && (!search || [l.name, l.email, l.phone].some((s) => String(s || '').toLowerCase().includes(search)))) };
       }
@@ -26,12 +26,14 @@ export function createLeadStore(request, now = Date.now) {
       if (dfrom) qs.set('dfrom', dfrom);
       if (piece) qs.set('piece', piece);
       if (video) qs.set('video', video);
+      if (tag) qs.set('tag', tag);
+      if (budget) qs.set('budget', budget);
       if (before) qs.set('before', before);
       qs.set('tz', new Date().getTimezoneOffset());
       try {
         const r = await request(`/api/portal/leads?${qs}`, { signal: pending.signal });
         if (seq !== sequence) return null;
-        const entry = { leads: before ? [...previous, ...r.leads] : r.leads, next: r.next, counts: r.counts || {}, days: r.days || {}, pieces: r.pieces || {}, videoModels: r.videoModels || [], at: now() };
+        const entry = { leads: before ? [...previous, ...r.leads] : r.leads, next: r.next, counts: r.counts || {}, days: r.days || {}, pieces: r.pieces || {}, videoModels: r.videoModels || [], tags: r.tags || {}, budgets: r.budgets || {}, at: now() };
         cache.set(key, entry);
         return entry;
       } catch (error) {

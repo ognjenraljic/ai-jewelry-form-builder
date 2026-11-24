@@ -1,8 +1,9 @@
 import { createLeadStore } from './leads.js';
-import { estimate, stoneLayout, applyMarket, isLive, MARKET_METALS, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody, iceKey, iceFields } from '/pricing.js';
+import { estimate, stoneLayout, applyMarket, isLive, MARKET_METALS, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody, iceKey, iceFields, parseBudget } from '/pricing.js';
 import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
 import { SUGGESTED, suggestOptions } from '/option-suggestions.js';
+import { areaOf } from '/area-codes.js';
 
 // Portal klijenta: njegovi upiti, aktivne forme i odvojeni onboarding.
 // Prijava: link klijenta (/portal#k=...) ili admin pregled (/portal#v=...) se jednom zamijeni za HttpOnly kolačić
@@ -12,7 +13,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const safe = (fn) => { try { return fn(); } catch { return null; } };
 
 const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
-const P = { me: null, bookings: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, video: '', videoModels: [], status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false };
+const P = { me: null, bookings: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, video: '', videoModels: [], status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false, tag: '', budget: '', tagCounts: {}, budgets: {}, calView: safe(() => localStorage.getItem('jl_cal_view') === '1') || false, stats: null, statsPeriod: 'month', notif: null };
 const day = (t) => new Date(t).toLocaleDateString('en-US', { dateStyle: 'medium' });
 // Dan upita u zoni pregledača (isto kao server sa ?tz=), da zlatar prati koliko mu dolazi dnevno.
 const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -63,13 +64,29 @@ function daysChart(counts) {
   const label = P.shift ? `in ${rangeTitle(keys)}` : RANGES.find(([v]) => v === P.range)?.[1].toLowerCase() || 'last 14 days';
   const nav = `<div class="dnav"><button type="button" class="dnav-btn" data-shift="1" aria-label="Previous period">‹</button><span class="dnav-title">${esc(rangeTitle(keys))}</span><button type="button" class="dnav-btn" data-shift="-1" aria-label="Next period" ${P.shift ? '' : 'disabled'}>›</button></div>`;
   const many = keys.length > 14;
+  // Prikaz: stubci ili kalendar mjeseca (District 24.11.2026: "calendar view, more compact"); izbor se pamti u pregledaču.
+  const views = `<span class="dview" role="group" aria-label="Chart view"><button type="button" class="chip ${P.calView ? '' : 'on'}" data-calview="0" aria-pressed="${!P.calView}">Bars</button><button type="button" class="chip ${P.calView ? 'on' : ''}" data-calview="1" aria-pressed="${P.calView}">Calendar</button></span>`;
+  const foot = `<div class="days14-foot"><label class="dpick"><span>Another day</span><input class="in" type="date" data-pick-day value="${esc(P.day)}" max="${today}" /></label>${P.day ? `<span class="day-on">Showing <b>${esc(dayTitle(P.day))}</b></span><button type="button" class="chip" data-act="all-days">All days</button>` : ''}</div>`;
+  if (P.calView) return `<div class="days14 dcal-wrap" aria-label="Leads per day, ${esc(label)}"><div class="days14-head"><span>Leads per day · tap a day to see only its leads</span>${views}<b>${total} ${esc(label)}</b></div>${nav}${calendarGrid(keys, counts, max, today)}${foot}</div>`;
   // Klik na dan prikazuje samo leadove tog dana (District 16.11: umjesto beskonačnog skrolanja); stariji dan iz kalendara.
-  return `<div class="days14 ${many ? 'many' : ''}" aria-label="Leads per day, ${esc(label)}"><div class="days14-head"><span>Leads per day · tap a day to see only its leads</span><span class="drange" role="group" aria-label="Period">${RANGES.map(([v, l]) => `<button type="button" class="chip ${P.range === v ? 'on' : ''}" data-range="${v}" aria-pressed="${P.range === v}">${l}</button>`).join('')}</span><b>${total} ${esc(label)}</b></div>${nav}<div class="days14-bars" style="--n:${keys.length}">${keys.map((k) => {
+  return `<div class="days14 ${many ? 'many' : ''}" aria-label="Leads per day, ${esc(label)}"><div class="days14-head"><span>Leads per day · tap a day to see only its leads</span><span class="drange" role="group" aria-label="Period">${RANGES.map(([v, l]) => `<button type="button" class="chip ${P.range === v ? 'on' : ''}" data-range="${v}" aria-pressed="${P.range === v}">${l}</button>`).join('')}</span>${views}<b>${total} ${esc(label)}</b></div>${nav}<div class="days14-bars" style="--n:${keys.length}">${keys.map((k) => {
     const n = counts[k] || 0;
     const d = keyDate(k);
     const future = k > today;
     return `<button type="button" class="dbar ${n ? '' : 'zero'} ${P.day === k ? 'on' : ''} ${future ? 'future' : ''}" data-day="${k}" aria-pressed="${P.day === k}" ${future ? 'disabled' : ''} title="${esc(dayTitle(k))}: ${n} lead${n === 1 ? '' : 's'}"><b>${n || ''}</b><i style="height:${Math.round((n / max) * 100)}%"></i><span>${many ? '' : `${esc(d.toLocaleDateString('en-US', { weekday: 'narrow' }))}<br />`}${d.getDate()}</span></button>`;
-  }).join('')}</div><div class="days14-foot"><label class="dpick"><span>Another day</span><input class="in" type="date" data-pick-day value="${esc(P.day)}" max="${today}" /></label>${P.day ? `<span class="day-on">Showing <b>${esc(dayTitle(P.day))}</b></span><button type="button" class="chip" data-act="all-days">All days</button>` : ''}</div></div>`;
+  }).join('')}</div>${foot}</div>`;
+}
+// Kalendar mjeseca: sedmice u redovima (pon-ned), broj leadova u ćeliji, jačina boje po broju.
+function calendarGrid(keys, counts, max, today) {
+  const lead = (keyDate(keys[0]).getDay() + 6) % 7;
+  const head = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => `<span class="dcal-wd">${d}</span>`).join('');
+  const blanks = Array.from({ length: lead }, () => '<span class="dcal-x" aria-hidden="true"></span>').join('');
+  const cells = keys.map((k) => {
+    const n = counts[k] || 0;
+    const future = k > today;
+    return `<button type="button" class="dcal-d ${n ? '' : 'zero'} ${P.day === k ? 'on' : ''} ${k === today ? 'today' : ''}" data-day="${k}" aria-pressed="${P.day === k}" ${future ? 'disabled' : ''} style="--a:${n ? (0.18 + 0.62 * (n / max)).toFixed(2) : 0}" title="${esc(dayTitle(k))}: ${n} lead${n === 1 ? '' : 's'}"><span>${keyDate(k).getDate()}</span>${n ? `<b>${n}</b>` : ''}</button>`;
+  }).join('');
+  return `<div class="dcal">${head}${blanks}${cells}</div>`;
 }
 
 // Koliko se generisalo: ikonica sata i sekunde (slika iz renders.ms, video koliko je Pika radila).
@@ -820,7 +837,7 @@ async function boot() {
     catch (e) { return ended('This link no longer works', 'Ask your JewelryLead team for a new portal link.'); }
   }
   // Brzina (22.11.2026): lista upita i Bookings kreću odmah, uporedo sa /me.
-  const listsReady = Promise.all([loadLeads(), loadBookings()]);
+  const listsReady = Promise.all([loadLeads(), loadBookings(), loadNotif()]);
   try {
     P.me = await api(`/api/portal/me${P.obQuery || ''}`);
   } catch (e) {
@@ -834,6 +851,7 @@ async function boot() {
   render();
   setInterval(tick, 30_000);
   setInterval(pollBookings, 60_000);
+  setInterval(pollNotif, 60_000);
 }
 
 const obUrl = (path) => path + (P.obQuery || '');
@@ -851,7 +869,7 @@ async function loadLeads(more = false, quiet = false) {
   P.loading = !more;
   P.loadingMore = more;
   P.loadError = '';
-  const result = leadStore.load({ status: P.status, q: P.q, day: P.day, dfrom: rangeFrom(), piece: P.piece, video: P.video, before: more ? P.next : null, previous: P.leads });
+  const result = leadStore.load({ status: P.status, q: P.q, day: P.day, dfrom: rangeFrom(), piece: P.piece, video: P.video, tag: P.tag, budget: P.budget, before: more ? P.next : null, previous: P.leads });
   // Brzina (22.11.2026): iz keša nema međukoraka; sa servera stare kartice ostaju zatamnjene, "Loading" tek poslije 0,6 s.
   P.loading = false;
   let done = false;
@@ -870,6 +888,8 @@ async function loadLeads(more = false, quiet = false) {
     P.days = r.days || {};
     if (r.pieces && Object.keys(r.pieces).length) P.pieces = r.pieces;
     if (r.videoModels?.length) P.videoModels = r.videoModels;
+    if (r.tags) P.tagCounts = r.tags;
+    if (r.budgets) P.budgets = r.budgets;
   } catch (error) {
     if (seq !== leadRequest) return false;
     P.loadError = 'Could not load leads. Please try again.';
@@ -899,7 +919,8 @@ const media = (key) => `/media/${key}`;
 const hasDraftOnboarding = () => P.me.onboarding?.status === 'draft';
 function portalTabs() {
   const unseen = P.bookings?.unseen || 0;
-  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ['pricing', 'Pricing'], ['bookings', `Bookings${unseen ? ` <span class="tab-badge" aria-label="${unseen} new">${unseen}</span>` : ''}`], ...(P.onboardingFlow && hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
+  const nUnseen = P.tab === 'notifications' ? 0 : P.notif?.unseen || 0;
+  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ['pricing', 'Pricing'], ['bookings', `Bookings${unseen ? ` <span class="tab-badge" aria-label="${unseen} new">${unseen}</span>` : ''}`], ['stats', 'Stats'], ['notifications', `Notifications${nUnseen ? ` <span class="tab-badge nbadge" aria-label="${nUnseen} new">${nUnseen > 99 ? '99+' : nUnseen}</span>` : ''}`], ...(P.onboardingFlow && hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
   return `<nav class="tabs" aria-label="Client portal">${tabs.map(([key, label]) => `<button class="tab ${P.tab === key ? 'on' : ''}" data-tab="${key}" ${P.tab === key ? 'aria-current="page"' : ''}>${label}</button>`).join('')}</nav>`;
 }
 
@@ -926,7 +947,7 @@ function render() {
     <main class="wrap ${P.tab === 'leads' ? 'wide' : ''}">
       ${portalTabs()}
       ${bookingAlert()}
-      <div class="stats">
+      ${P.tab === 'stats' || P.tab === 'notifications' ? '' : `<div class="stats">
         <div class="stat">Leads<b>${stats.leads}</b></div>
         <div class="stat">Last 30 days<b>${stats.recent}</b></div>
         <div class="stat">AI renders<b>${stats.renders}</b></div>
@@ -935,9 +956,9 @@ function render() {
         <div class="stat">Avg video time<b>${secs(stats.filmMs)}</b></div>
         ${speedTile(P.me.speed)}
       </div>
-      ${usageView()}
+      ${usageView()}`}
       ${P.me.onboarding?.status === 'submitted' || P.me.onboarding?.status === 'building' ? `<div class="ob-sent"><b>Thank you, we have your answers.</b> We are building your form now and it will appear under Forms. Your leads will show up here as soon as customers use it.</div>` : ''}
-      ${P.tab === 'leads' ? leadsView() : P.tab === 'pricing' ? pricingView() : P.tab === 'bookings' ? bookingsView() : formsView()}
+      ${P.tab === 'leads' ? leadsView() : P.tab === 'pricing' ? pricingView() : P.tab === 'bookings' ? bookingsView() : P.tab === 'stats' ? statsView() : P.tab === 'notifications' ? notifView() : formsView()}
       <p class="note">Want to change a form, add styles or questions? Contact your JewelryLead team.</p>
     </main>`;
 }
@@ -968,7 +989,7 @@ function renderResults() {
 }
 function leadsView(resultsOnly = false) {
   const total = Object.values(P.counts).reduce((a, b) => a + b, 0);
-  if (!total && !P.q && !P.piece && !P.video && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
+  if (!total && !P.q && !P.piece && !P.video && !P.tag && !P.budget && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
   const forms = P.me.forms.filter((f) => f.leads);
   const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}</div>`;
   const formChips = forms.length > 1
@@ -984,6 +1005,15 @@ function leadsView(resultsOnly = false) {
   const vm = P.videoModels || [];
   const videoChips = vm.length > 1 || P.video
     ? `<div class="chips" role="group" aria-label="Filter by video model"><button class="chip ${P.video ? '' : 'on'}" data-video="" aria-pressed="${!P.video}">All videos</button>${vm.map((m) => `<button class="chip ${P.video === m.key ? 'on' : ''}" data-video="${esc(m.key)}" aria-pressed="${P.video === m.key}" title="${esc(`${m.label}${m.customer ? ', the video your customer sees' : ', only in your portal'}${m.ms ? `, about ${secs(m.ms)} to make` : ''}, about $${Number(m.cost).toFixed(2)} per video`)}">${esc(m.label)}${m.customer ? ' (customer)' : ''} <span>${m.count}</span></button>`).join('')}</div>`
+    : '';
+  // Budžet kupca i tagovi (District 24.11.2026) kao čipovi sa brojem upita.
+  const budgetList = Object.entries(P.budgets || {}).map(([v, n]) => ({ v, n, label: budgetLabelOf(v) })).sort((a, b) => (parseBudget(a.label)?.low ?? 1e12) - (parseBudget(b.label)?.low ?? 1e12));
+  const budgetChips = budgetList.length > 1 || P.budget
+    ? `<div class="chips" role="group" aria-label="Filter by budget"><button class="chip ${P.budget ? '' : 'on'}" data-budget="" aria-pressed="${!P.budget}">All budgets</button>${budgetList.map((b) => `<button class="chip ${P.budget === b.v ? 'on' : ''}" data-budget="${esc(b.v)}" aria-pressed="${P.budget === b.v}">${esc(b.label)} <span>${b.n}</span></button>`).join('')}</div>`
+    : '';
+  const tagList = Object.entries(P.tagCounts || {});
+  const tagChips = tagList.length || P.tag
+    ? `<div class="chips" role="group" aria-label="Filter by tag"><button class="chip ${P.tag ? '' : 'on'}" data-ftag="" aria-pressed="${!P.tag}">All tags</button>${tagList.map(([t, n]) => `<button class="chip ${P.tag === t ? 'on' : ''}" data-ftag="${esc(t)}" aria-pressed="${P.tag === t}">${esc(t)} <span>${n}</span></button>`).join('')}</div>`
     : '';
   const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email or phone" value="${esc(P.q)}" /></label>`;
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
@@ -1005,14 +1035,15 @@ function leadsView(resultsOnly = false) {
         <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}${pageBox(l)}</div>
         <div>
           <div class="lead-top"><h2>${esc(l.name)}</h2><span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
-          <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span></div>
+          <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span>${areaHint(l.phone)}</div>
           ${replyLine(l)}
           ${orderBox(l)}
-          <div class="tags">${l.details.map((d) => `<span class="tag">${esc(d.label)}: <b>${esc(d.value)}</b></span>`).join('')}</div>
+          ${specSheet(l.details)}
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
           <div class="thumbs">${strip}${photos}</div>
           ${changes ? `<div class="changes"><p class="changes-title">Changes the customer asked for</p><ol>${changes}</ol></div>` : ''}
           ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><button type="button" class="film-tile" data-film="${esc(f.url)}" data-poster="${esc(last?.url || '')}" aria-label="Play the highlight video of ${esc(l.name)}"><video src="${esc(f.url)}" ${last ? `poster="${esc(last.url)}"` : ''} muted loop playsinline preload="none" tabindex="-1" aria-hidden="true"></video><span class="film-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span></button><figcaption><span class="film-model ${f.customer ? 'cust' : ''}">${esc(f.label || 'Video')}${f.customer ? ' · customer' : ''}</span>${f.cost != null ? ` · $${Number(f.cost).toFixed(2)}` : ''} · <a href="${esc(f.url)}" download>Download</a></figcaption>${genTime(f.ms, 'Video made in')}</figure>` : `<p class="film-wait"><span class="film-model ${f.customer ? 'cust' : ''}">${esc(f.label || 'Video')}</span> is being made. It appears here in a few minutes.</p>`)).join('')}</div>` : ''}
+          ${tagsRow(l)}
           <label class="lead-note"><span class="sr-only">Note</span><textarea class="in" rows="1" data-lead-note="${esc(l.id)}" placeholder="Add a note (quote sent, follow up Friday…)" ${readOnly() ? 'disabled' : ''}>${esc(l.note)}</textarea></label>
         </div>
         ${calcView(l)}
@@ -1022,7 +1053,7 @@ function leadsView(resultsOnly = false) {
   // Traka ostaje i kad izabrani dan nema leadova, da se može izabrati drugi dan ili "All days".
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
   if (resultsOnly) return `${chart}${cards}${more}`;
-  return `<div class="filters">${search}${statusChips}${pieceChips}${videoChips}${formChips}</div><div class="lead-results">${chart}${cards}${more}</div>`;
+  return `<div class="filters">${search}${statusChips}${pieceChips}${budgetChips}${tagChips}${videoChips}${formChips}</div><div class="lead-results">${chart}${cards}${more}</div>`;
 }
 
 // Stranica kupca (19.11.2026): link ispod slike, otvaranje bez brojanja posjete, posjete i klikovi na Deposit / Book.
@@ -1207,6 +1238,13 @@ app.addEventListener('change', async (e) => {
   }
 });
 app.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.dataset?.ltagNew) {
+    e.preventDefault();
+    const v = e.target.value.replace(/\s+/g, ' ').trim().slice(0, 24);
+    const l = P.leads.find((x) => x.id === e.target.dataset.ltagNew);
+    if (v && l && !(l.tags || []).some((x) => x.toLowerCase() === v.toLowerCase())) saveTags(l.id, [...(l.tags || []), v]);
+    return;
+  }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.dataset?.zoom !== undefined) { e.preventDefault(); zoom(e.target.src, e.target.dataset.caption); }
 });
 
@@ -1235,11 +1273,21 @@ app.addEventListener('click', async (e) => {
     }
     return;
   }
-  if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'bookings') openBookings(); }
+  if (t.dataset.ltagAdd) { const l = P.leads.find((x) => x.id === t.dataset.ltagLead); if (l) saveTags(l.id, [...(l.tags || []), t.dataset.ltagAdd]); return; }
+  if (t.dataset.ltagDel) { const l = P.leads.find((x) => x.id === t.dataset.ltagLead); if (l) saveTags(l.id, (l.tags || []).filter((x) => x !== t.dataset.ltagDel)); return; }
+  if (t.dataset.calview != null) { P.calView = t.dataset.calview === '1'; safe(() => localStorage.setItem('jl_cal_view', P.calView ? '1' : '0')); if (P.calView && P.range !== 'month') { P.range = 'month'; P.shift = 0; if (await loadLeads()) render(); } else render(); return; }
+  if (t.dataset.speriod) { P.statsPeriod = t.dataset.speriod; render(); return; }
+  if (t.dataset.act === 'stats-retry') { P.statsError = ''; render(); loadStats(); return; }
+  if (t.dataset.sstatus != null) { P.tab = 'leads'; P.status = t.dataset.sstatus; P.q = ''; P.day = ''; if (await loadLeads()) render(); return; }
+  if (t.dataset.ftagGo) { P.tab = 'leads'; P.tag = t.dataset.ftagGo; P.q = ''; P.day = ''; if (await loadLeads()) render(); return; }
+  if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
-  if (t.dataset.seeLead) { P.tab = 'leads'; P.q = t.dataset.seeLead; P.status = ''; P.piece = ''; P.video = ''; P.day = ''; if (await loadLeads()) render(); return; }
+  if (t.dataset.seeLead) { P.tab = 'leads'; P.q = t.dataset.seeLead; P.status = ''; P.piece = ''; P.video = ''; P.day = ''; P.tag = ''; P.budget = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
   if (t.dataset.piece !== undefined) { P.piece = t.dataset.piece; if (await loadLeads()) render(); }
+  if (t.dataset.budget !== undefined && t.classList.contains('chip')) { P.budget = t.dataset.budget; if (await loadLeads()) render(); }
+  if (t.dataset.ftag !== undefined) { P.tag = t.dataset.ftag; if (await loadLeads()) render(); }
   if (t.dataset.video !== undefined) { P.video = t.dataset.video; if (await loadLeads()) render(); }
   if (t.dataset.status !== undefined) { P.status = t.dataset.status; if (await loadLeads()) render(); }
   if (t.dataset.range) { P.range = t.dataset.range; P.shift = 0; if (await loadLeads()) render(); }
@@ -1272,6 +1320,203 @@ app.addEventListener('click', async (e) => {
   }
   if (t.dataset.zoom !== undefined) zoom(t.src, t.dataset.caption);
 });
+
+
+// Izbori kupca kao mirna tabela specifikacija (Ognjen 24.11.2026: pilule su bile "previše nagurane").
+// Natpis sitno iznad, vrijednost ispod; zubi bez sirovih oznaka (T3 T4...), one su u title; dug tekst ide u širu ćeliju.
+function specSheet(details) {
+  if (!details?.length) return '';
+  const cells = details.map((d) => {
+    const label = String(d.label).replace(/\s*\((optional|required)\)\s*/gi, ' ').replace(/\?\s*$/, '').trim();
+    let value = String(d.value);
+    let sub = '';
+    let title = '';
+    const teeth = value.match(/^(.*?)\s*\((\d+ teeth?)\)\s*:\s*([TB]\d.*)$/);
+    if (teeth) { value = teeth[1]; sub = teeth[2]; title = teeth[3]; }
+    const wide = value.length > 30 || label.length > 26;
+    return `<div class="spec${wide ? ' wide' : ''}"${title ? ` title="${esc(title)}"` : ''}><dt>${esc(label)}</dt><dd>${esc(value)}${sub ? ` <small>${esc(sub)}</small>` : ''}</dd></div>`;
+  }).join('');
+  return `<dl class="specs">${cells}</dl>`;
+}
+
+// ---------- Grad po pozivnom broju, tagovi, statistika i obavještenja (District 24.11.2026) ----------
+const PIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-6.1-6.5-11A6.5 6.5 0 0 1 18.5 10c0 4.9-6.5 11-6.5 11z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="2.3" fill="currentColor"/></svg>';
+// +1 broj: grad i država po pozivnom broju (480 = Phoenix East Valley, AZ). To je mjesto broja, ne nužno gdje kupac živi.
+function areaHint(phone) {
+  const a = areaOf(phone);
+  return a ? `<span class="area-hint" title="Area code ${esc(a.code)} · ${esc(a.region)}. Where the number is from, not always where the customer lives.">${PIN}${esc(a.label)}</span>` : '';
+}
+// Natpis budžeta po vrijednosti odgovora (iz formi zlatara).
+function budgetLabelOf(v) {
+  for (const sp of Object.values(P.me?.formSpecs || {})) { const o = (sp.budget || []).find((x) => x.value === v); if (o) return o.label; }
+  return v;
+}
+const TAG_PRESETS = ['Friend', 'Family', 'In-store', 'Returning customer', 'Referral', 'VIP'];
+function tagsRow(l) {
+  const on = l.tags || [];
+  const ro = readOnly();
+  const chips = on.map((t) => `<span class="ltag">${esc(t)}${ro ? '' : `<button type="button" class="ltag-x" data-ltag-del="${esc(t)}" data-ltag-lead="${esc(l.id)}" aria-label="Remove tag ${esc(t)}" title="Remove">&times;</button>`}</span>`).join('');
+  if (ro) return on.length ? `<div class="ltags" data-ltags="${esc(l.id)}"><span class="ltags-l">Tags</span>${chips}</div>` : '';
+  const pool = [...new Set([...TAG_PRESETS, ...Object.keys(P.tagCounts || {})])].filter((t) => !on.includes(t));
+  const menu = on.length < 8 ? `<details class="ltag-add"><summary>+ Add tag</summary><div class="ltag-menu" role="group" aria-label="Add a tag">${pool.map((t) => `<button type="button" class="chip" data-ltag-add="${esc(t)}" data-ltag-lead="${esc(l.id)}">${esc(t)}</button>`).join('')}<input class="in ltag-in" type="text" maxlength="24" placeholder="Your own tag, then Enter" data-ltag-new="${esc(l.id)}" aria-label="New tag" /></div></details>` : '';
+  return `<div class="ltags" data-ltags="${esc(l.id)}"><span class="ltags-l">Tags</span>${chips}${menu}</div>`;
+}
+async function saveTags(id, tags) {
+  const l = P.leads.find((x) => x.id === id);
+  if (!l) return;
+  const before = l.tags || [];
+  l.tags = tags;
+  const row = app.querySelector(`[data-ltags="${CSS.escape(id)}"]`);
+  if (row) row.outerHTML = tagsRow(l);
+  try {
+    const r = await api(`/api/portal/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ tags }), json: true });
+    l.tags = r.tags || tags;
+    for (const t of before) if (!l.tags.includes(t)) P.tagCounts[t] = Math.max(0, (P.tagCounts[t] || 1) - 1);
+    for (const t of l.tags) if (!before.includes(t)) P.tagCounts[t] = (P.tagCounts[t] || 0) + 1;
+    for (const [t, n] of Object.entries(P.tagCounts)) if (!n) delete P.tagCounts[t];
+    leadStore.update(id, { tags: l.tags }, P.counts);
+    if (P.stats) P.stats = null;
+  } catch (err) {
+    l.tags = before;
+    JLUI.alert(err.message);
+  }
+  const fresh = app.querySelector(`[data-ltags="${CSS.escape(id)}"]`);
+  if (fresh) fresh.outerHTML = tagsRow(l);
+}
+
+// Stats: svi upiti zlatara jednom (bez slika), periodi i zbirovi se računaju ovdje.
+const PERIODS = [['month', 'This month'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['year', 'This year'], ['all', 'All time']];
+async function loadStats() {
+  try { P.stats = await api('/api/portal/stats'); P.statsError = ''; } catch (e) { P.statsError = e.message || 'Could not load stats.'; }
+  if (P.tab === 'stats') render();
+}
+function periodStart(k) {
+  const now = new Date();
+  if (k === 'month') return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  if (k === 'year') return new Date(now.getFullYear(), 0, 1).getTime();
+  if (k === 'all') return 0;
+  return Date.now() - Number(k) * 864e5;
+}
+const pieceName = (t) => ({ grillz: 'Grillz', pendant: 'Pendants', ring: 'Rings', chain: 'Chains', bracelet: 'Bracelets', earrings: 'Earrings', watch: 'Watches' }[t] || (t ? t[0].toUpperCase() + t.slice(1) : 'Other'));
+const OPEN = ['new', 'contacted', 'quoted'];
+function sumOf(list, f) { return list.reduce((n, x) => n + (f(x) || 0), 0); }
+function statsView() {
+  if (!P.stats) return P.statsError ? `<p class="empty" role="alert">${esc(P.statsError)} <button class="btn" data-act="stats-retry">Try again</button></p>` : '<div class="st-skel" role="status" aria-label="Loading stats"><i></i><i></i><i></i><i></i><i></i><i></i></div>';
+  const from = periodStart(P.statsPeriod);
+  const all = P.stats.leads.filter((l) => l.at >= from);
+  const label = PERIODS.find(([k]) => k === P.statsPeriod)?.[1] || '';
+  const periods = `<div class="chips st-periods" role="group" aria-label="Period">${PERIODS.map(([k, t]) => `<button type="button" class="chip ${P.statsPeriod === k ? 'on' : ''}" data-speriod="${k}" aria-pressed="${P.statsPeriod === k}">${t}</button>`).join('')}</div>`;
+  if (!all.length) return `${periods}<p class="empty">No leads ${esc(label.toLowerCase())}.</p>`;
+  const by = (st) => all.filter((l) => l.status === st);
+  const open = all.filter((l) => OPEN.includes(l.status));
+  const won = by('won');
+  const lost = by('lost');
+  const val = (l) => l.value || 0;
+  const priced = all.filter((l) => l.value);
+  // Budžeti kupaca: zbir od-do (raspon "20,000+" se broji od donje granice, pa zbir dobija "+").
+  let bLow = 0, bHigh = 0, bOpen = false, bN = 0;
+  for (const l of all) {
+    const b = l.budget ? parseBudget(budgetLabelOf(l.budget)) : null;
+    if (!b) continue;
+    bN++; bLow += b.low; if (Number.isFinite(b.high)) bHigh += b.high; else { bHigh += b.low; bOpen = true; }
+  }
+  const decided = won.length + lost.length;
+  const winRate = decided ? Math.round((won.length / decided) * 100) : null;
+  const tile = (t, v, sub = '', cls = '') => `<div class="st-tile ${cls}"><span>${t}</span><b>${v}</b>${sub ? `<small>${sub}</small>` : ''}</div>`;
+  const tiles = `<div class="st-tiles">
+    ${tile('Leads', all.length, `${priced.length} with a price`)}
+    ${tile('Pipeline value', money(sumOf(open, val)), `${open.length} open lead${open.length === 1 ? '' : 's'}: New, Contacted, Quoted`, 'is-accent')}
+    ${tile('Won revenue', money(sumOf(won, val)), `${won.length} order${won.length === 1 ? '' : 's'}${won.length ? ` · avg ${money(sumOf(won, val) / won.length)}` : ''}`, 'is-good')}
+    ${tile('Win rate', winRate == null ? '–' : `${winRate}%`, `${won.length} won · ${lost.length} lost`)}
+    ${tile('Customer budgets', bN ? `${money(bLow)} – ${money(bHigh)}${bOpen ? '+' : ''}` : '–', bN ? `${bN} lead${bN === 1 ? '' : 's'} · avg ${money(bLow / bN)} – ${money(bHigh / bN)}${bOpen ? '+' : ''}` : 'No budget answers', 'wide')}
+    ${tile('Total quoted', money(sumOf(all, val)), 'Estimated price of every lead, as you left it')}
+    ${tile('Lost value', money(sumOf(lost, val)), `${lost.length} lead${lost.length === 1 ? '' : 's'}`)}
+  </div>`;
+  // Pipeline: koliko je stiglo do svake faze (Won je prošao i Contacted i Quoted).
+  const reached = [['new', 'Leads', all], ['contacted', 'Contacted', all.filter((l) => ['contacted', 'quoted', 'won'].includes(l.status))], ['quoted', 'Quoted', all.filter((l) => ['quoted', 'won'].includes(l.status))], ['won', 'Won', won]];
+  const funnel = `<section class="st-card"><h3>Pipeline</h3><p class="st-sub">How far your leads got ${esc(label.toLowerCase())}, with the value at each stage.</p><div class="st-funnel">${reached.map(([k, t, list], i) => {
+    const pct = Math.round((list.length / all.length) * 100);
+    return `<button type="button" class="st-stage s-${k}" data-sstatus="${k === 'new' ? '' : k}"><span class="st-stage-t">${t}</span><span class="st-bar"><i style="width:${Math.max(2, pct)}%"></i></span><b>${list.length}</b><em>${i ? `${pct}%` : ''}</em><strong>${money(sumOf(list, val))}</strong></button>`;
+  }).join('')}</div><div class="st-now">${STATUSES.map(([k, t]) => `<span class="pill s-${k}">${t} <b>${by(k).length}</b> · ${money(sumOf(by(k), val))}</span>`).join('')}</div></section>`;
+  // Prilike: najvrjedniji otvoreni upiti.
+  const opp = [...open].filter((l) => l.value).sort((a, b) => b.value - a.value).slice(0, 8);
+  const opps = `<section class="st-card"><h3>Top opportunities</h3><p class="st-sub">Open leads with the highest quote. Follow these up first.</p>${opp.length ? `<ol class="st-opps">${opp.map((l) => `<li><button type="button" data-see-lead="${esc(l.email)}"><span class="st-opp-n">${esc(l.name)}</span><span class="st-opp-m">${esc(pieceName(l.type))}${l.budget ? ` · budget ${esc(budgetLabelOf(l.budget))}` : ''} · ${esc(day(l.at))}</span><span class="pill s-${esc(l.status)}">${esc((STATUSES.find(([v]) => v === l.status) || [, l.status])[1])}</span><b>${money(l.value)}</b></button></li>`).join('')}</ol>` : '<p class="faint">No open leads with a price.</p>'}</section>`;
+  // Po komadu.
+  const types = [...new Set(all.map((l) => l.type))];
+  const rows = types.map((t) => { const L = all.filter((l) => l.type === t); return { t, n: L.length, open: sumOf(L.filter((l) => OPEN.includes(l.status)), val), won: sumOf(L.filter((l) => l.status === 'won'), val), wonN: L.filter((l) => l.status === 'won').length }; }).sort((a, b) => b.n - a.n);
+  const pieces = `<section class="st-card"><h3>By piece</h3><table class="st-table"><thead><tr><th>Piece</th><th>Leads</th><th>Pipeline</th><th>Won</th></tr></thead><tbody>${rows.map((r) => `<tr><td>${esc(pieceName(r.t))}</td><td>${r.n}</td><td>${money(r.open)}</td><td>${money(r.won)}${r.wonN ? ` <small>(${r.wonN})</small>` : ''}</td></tr>`).join('')}</tbody></table></section>`;
+  // Upiti po sedmici (zadnjih 12 sedmica, bez obzira na period).
+  const mon = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); };
+  const w0 = mon(Date.now());
+  const weeks = Array.from({ length: 12 }, (_, i) => w0 - (11 - i) * 7 * 864e5);
+  const wc = weeks.map((w) => P.stats.leads.filter((l) => l.at >= w && l.at < w + 7 * 864e5));
+  const wmax = Math.max(1, ...wc.map((x) => x.length));
+  const trend = `<section class="st-card"><h3>Leads per week</h3><p class="st-sub">Last 12 weeks, with the quoted value of each week.</p><div class="st-weeks">${wc.map((L, i) => `<div class="st-week" title="Week of ${esc(new Date(weeks[i]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}: ${L.length} lead${L.length === 1 ? '' : 's'}, ${money(sumOf(L, val))}"><b>${L.length || ''}</b><i style="height:${Math.round((L.length / wmax) * 100)}%"></i><span>${esc(new Date(weeks[i]).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' }))}</span></div>`).join('')}</div></section>`;
+  // Odziv kupaca i brzina.
+  const viewed = all.filter((l) => l.views > 0).length;
+  const clicked = all.filter((l) => l.actions > 0).length;
+  const replied = all.filter((l) => l.replyAt);
+  const mins2 = replied.map((l) => (l.replyAt - l.at) / 60000).sort((a, b) => a - b);
+  const med = mins2.length ? mins2[Math.floor((mins2.length - 1) / 2)] : null;
+  const engage = `<section class="st-card"><h3>Customer response</h3><ul class="st-list">
+    <li><span>Opened their page</span><b>${viewed} of ${all.length}</b><em>${Math.round((viewed / all.length) * 100)}%</em></li>
+    <li><span>Pressed Deposit or Appointment</span><b>${clicked}</b><em>${Math.round((clicked / all.length) * 100)}%</em></li>
+    <li><span>Answered by you</span><b>${replied.length} of ${all.length}</b><em>${med == null ? '' : `median ${mins(med)}`}</em></li>
+  </ul></section>`;
+  const tagStats = Object.entries(all.reduce((m, l) => { for (const t of l.tags || []) (m[t] ||= []).push(l); return m; }, {})).sort((a, b) => b[1].length - a[1].length);
+  const tags = tagStats.length ? `<section class="st-card"><h3>By tag</h3><ul class="st-list">${tagStats.map(([t, L]) => `<li><button type="button" class="st-tag" data-ftag-go="${esc(t)}">${esc(t)}</button><b>${L.length}</b><em>${money(sumOf(L, val))}</em></li>`).join('')}</ul></section>` : '';
+  const note = priced.length < all.length ? `<p class="note st-note">${all.length - priced.length} lead${all.length - priced.length === 1 ? ' has' : 's have'} no price yet (missing prices in your Pricing tab), so ${all.length - priced.length === 1 ? 'it is' : 'they are'} not in the money totals.</p>` : '';
+  return `${periods}${tiles}<div class="st-grid">${funnel}${opps}${trend}${pieces}${engage}${tags}</div>${note}`;
+}
+
+// Notifications: novi upiti, otvorena stranica, Deposit/Appointment, automatske poruke i greške slanja (30 dana).
+async function loadNotif() {
+  try { P.notif = await api('/api/portal/notifications'); } catch { P.notif = P.notif || null; }
+}
+async function pollNotif() {
+  const before = P.notif?.unseen || 0;
+  const top = P.notif?.items?.[0]?.id || 0;
+  await loadNotif();
+  if ((P.notif?.unseen || 0) === before && (P.notif?.items?.[0]?.id || 0) === top) return;
+  const nav = app.querySelector('nav.tabs');
+  if (nav) nav.outerHTML = portalTabs();
+  if (P.tab === 'notifications') render();
+}
+async function openNotif() {
+  await loadNotif();
+  // Ono što je bilo novo kad je tab otvoren ostaje označeno dok je zlatar tu.
+  P.notifShownSeen = P.notif?.seenAt || 0;
+  render();
+  if (!P.notif?.unseen || readOnly()) return;
+  try { const r = await api('/api/portal/notifications/seen', { method: 'POST' }); if (P.notif) { P.notif.unseen = 0; P.notif.seenAt = r.seenAt || Date.now(); } } catch {}
+}
+const NT = {
+  created: ['new', (x) => `New lead: <b>${esc(x.name)}</b>${x.piece ? ` · ${esc(pieceName(x.piece))}` : ''}`],
+  page_view: ['view', (x) => `<b>${esc(x.name)}</b> opened their page`],
+  page_action: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.action === 'appointment' ? 'asked for an appointment' : 'wants to reserve with a deposit'}${x.meta.option === 'fit' ? ' · Option 2' : x.meta.option === 'picked' ? ' · Option 1' : ''}`],
+  auto_sent: ['mail', (x) => `First message emailed to <b>${esc(x.name)}</b> automatically`],
+  order_created: ['order', (x) => `<b>${esc(x.name)}</b> is now an order`],
+  auto_send_failed: ['warn', (x) => `Could not email <b>${esc(x.name)}</b> automatically. Reply to them yourself.`],
+  alert_failed: ['warn', (x) => `The new lead email for <b>${esc(x.name)}</b> did not go out`],
+};
+function notifView() {
+  const n = P.notif;
+  if (!n) return '<p class="empty" role="status">Loading notifications…</p>';
+  const pr = P.me.pricing || {};
+  const mails = (pr.alertEmails || []).length;
+  const settings = `<div class="nt-set"><div><b>Email alerts</b><span>${!P.me.mail ? 'Email sending is not set up yet; everything still shows here.' : mails ? `A new lead email goes to ${mails} address${mails === 1 ? '' : 'es'}${pr.autoSend ? ', and the first message goes to the customer automatically' : ''}.` : 'No address yet: add one to get an email for every new lead.'}</span></div><button type="button" class="btn small" data-act="alert-settings">Alert settings</button></div>`;
+  if (!n.items.length) return `${settings}<p class="empty">Nothing yet. New leads, customers opening their page and booking requests show up here.</p>`;
+  const seen = P.notifShownSeen ?? n.seenAt;
+  let last = '';
+  const list = n.items.map((x) => {
+    const [kind, text] = NT[x.type] || ['view', (y) => esc(y.name)];
+    const k = dayKey(x.at);
+    const head = k !== last ? `<h3 class="day-head"><span>${esc(dayTitle(k))}</span></h3>` : '';
+    last = k;
+    return `${head}<button type="button" class="nt nt-${kind} ${x.at > seen ? 'is-new' : ''}" data-see-lead="${esc(x.email)}"><i class="nt-ic" aria-hidden="true"></i><span class="nt-t">${text(x)}</span><time>${esc(new Date(x.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))}</time>${x.at > seen ? '<em>New</em>' : ''}</button>`;
+  }).join('');
+  return `${settings}<div class="nt-list">${list}</div><p class="note">Last 30 days. Tap a notification to open the lead.</p>`;
+}
 
 // ---------- Onboarding (vodič za zlatara) ----------
 // Zlatar popuni radnju i komade, pa svaki komad redom (stilovi, materijali i budžet, detalji), proizvode iz radnje i napomene.

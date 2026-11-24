@@ -8,12 +8,13 @@ import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
-import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ } from '../public/pricing.js';
+import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ, middleGround, specDiff } from '../public/pricing.js';
 import { leadPageHtml, PAGE_ACTIONS } from './leadpage.js';
 import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
+import { areaOf } from '../public/area-codes.js';
 import { ORDER_STAGES, orderPrefix, newOrderNo, normalizeOrderNo, orderView, nextOrder, parseOrder } from './orders.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
@@ -295,8 +296,9 @@ async function catchUp(env) {
   for (const lead of leads) await serverFirstRender(env, lead).catch((e) => console.error('catch-up render', lead.id, e.message));
   // Prva quote poruka za SVAKI upit koji je još nema (Ognjen 19.11.2026), ako zlatar ima cijene; svaki upit samo jednom ($.auto), najnoviji prvi.
   const noQuote = await (async () => (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
-      WHERE l.created_at < ? AND json_type(COALESCE(l.quotes, '{}'), '$.picked') IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.auto') IS NULL
-      AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' ORDER BY l.created_at DESC LIMIT ${CATCHUP_QUOTES}`).bind(now - 60_000).all()).results)().catch((e) => { console.error('catch-up quotes', e.message); return []; });
+      WHERE l.created_at < ? AND ((json_type(COALESCE(l.quotes, '{}'), '$.picked') IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.auto') IS NULL)
+        OR (json_type(COALESCE(l.quotes, '{}'), '$.fit') IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.autoFit') IS NULL AND l.created_at > ?))
+      AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' ORDER BY l.created_at DESC LIMIT ${CATCHUP_QUOTES}`).bind(now - 60_000, now - 30 * 864e5).all()).results)().catch((e) => { console.error('catch-up quotes', e.message); return []; });
   for (const q of noQuote) await autoQuote(env, q.id, ORIGIN.replace(/\/$/, '')).catch((e) => console.error('catch-up quote', q.id, e.message));
   // Obavještenja radnji koja nisu stigla odmah i automatska prva poruka kupcu (21.11.2026).
   await notifySweep(env).catch((e) => console.error('notify sweep', e.message));
@@ -1575,6 +1577,12 @@ async function portalApi(request, env, p, secure, ctx) {
     // Filter po komadu (District 19.11.2026: "filter po kategoriji proizvoda"): odgovor "type" iz upita.
     const piece = /^[a-z0-9-]{1,40}$/.test(u.searchParams.get('piece') || '') ? u.searchParams.get('piece') : '';
     if (piece) { where.push("json_extract(l.answers, '$.type') = ?"); args.push(piece); }
+    // Filter po tagu i po budžetu kupca (District 24.11.2026).
+    const tag = cleanTag(u.searchParams.get('tag'));
+    if (tag) { where.push('EXISTS (SELECT 1 FROM json_each(COALESCE(l.tags, \'[]\')) jt WHERE jt.value = ?)'); args.push(tag); }
+    // Vrijednost odgovora je slug ili (starije forme) sam natpis raspona; ide kao parametar upita.
+    const budget = clean(u.searchParams.get('budget'), 60);
+    if (budget) { where.push("json_extract(l.answers, '$.budget') = ?"); args.push(budget); }
     // Filter po video modelu (22.11.2026): samo upiti koji imaju video tog modela, i u kartici samo ti videi.
     const video = VIDEO_MODELS[u.searchParams.get('video')] ? u.searchParams.get('video') : '';
     if (video) { where.push("EXISTS (SELECT 1 FROM films vf WHERE vf.lead_id = l.id AND vf.model = ? AND vf.status IN ('ok', 'pending'))"); args.push(VIDEO_MODELS[video].api); }
@@ -1592,7 +1600,7 @@ async function portalApi(request, env, p, secure, ctx) {
     }
     // Brzina (22.11.2026): sve što ne zavisi od stranice ide u isto vrijeme kad i lista (ranije 7 upita zaredom).
     const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
-    const [leadRes, countRows, pieceRows, dayRes, vrowsRes] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page,
+    const [leadRes, countRows, pieceRows, dayRes, vrowsRes, tagRows, budgetRows] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page, l.tags,
         l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
     // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
@@ -1604,6 +1612,9 @@ async function portalApi(request, env, p, secure, ctx) {
     // Video modeli za filter: broj gotovih videa, prosječno vrijeme i cijena po modelu (za sve upite zlatara).
     env.DB.prepare(`SELECT fl.model, COUNT(*) AS n, AVG(CASE WHEN fl.ms > 0 THEN fl.ms END) AS ms, AVG(fl.cost_usd) AS cost FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
         WHERE f.client_id = ? AND fl.status = 'ok' GROUP BY fl.model`).bind(client.id).all(),
+    // Tagovi i budžeti sa brojem upita (za čipove filtera), za sve upite zlatara.
+    env.DB.prepare(`SELECT jt.value AS t, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id, json_each(COALESCE(l.tags, '[]')) jt WHERE f.client_id = ? GROUP BY jt.value ORDER BY n DESC LIMIT 40`).bind(client.id).all(),
+    env.DB.prepare(`SELECT json_extract(l.answers, '$.budget') AS b, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND json_extract(l.answers, '$.budget') IS NOT NULL GROUP BY b`).bind(client.id).all(),
     ]);
     const leads = leadRes.results;
     // Won lead bez broja narudžbe (npr. Won prije praćenja narudžbi) dobija broj sada.
@@ -1640,13 +1651,15 @@ async function portalApi(request, env, p, secure, ctx) {
     }).filter((m) => filmModelsOn(env).includes(m.key));   // samo modeli koji su uključeni (stari Wan/Seedance videi se ne pokazuju)
     return json({
       more, next: more ? oldest : null, counts, days, pieces, videoModels,
+      tags: Object.fromEntries(tagRows.results.filter((r) => typeof r.t === 'string').map((r) => [r.t, r.n])),
+      budgets: Object.fromEntries(budgetRows.results.filter((r) => r.b != null).map((r) => [String(r.b), r.n])),
       leads: pageLeads.map((l) => {
         const a = JSON.parse(l.answers);
         let files = {};
         try { files = JSON.parse(l.files || '{}'); } catch {}
         return {
           id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
-          status: l.status || 'new', note: l.note || '', quotes: leadQuotes(l.quotes), page: pageInfo(l),
+          status: l.status || 'new', note: l.note || '', tags: parseTags(l.tags), quotes: leadQuotes(l.quotes), page: pageInfo(l),
           alertedAt: l.alerted_at || null, autoSentAt: l.auto_sent_at || null, firstReplyAt: l.first_reply_at || null,
           order: orderView(l.order_no, l.order_data),
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a), answers: pricingAnswers(a),
@@ -1740,10 +1753,12 @@ async function portalApi(request, env, p, secure, ctx) {
     const b = await request.json().catch(() => ({}));
     const st = b.status != null ? String(b.status) : null;
     if (st != null && !LEAD_STATUSES.includes(st)) return json({ error: 'Unknown status.' }, 400);
+    // Tagovi (24.11.2026): cijela lista se šalje i zamjenjuje (do 8, svaki do 24 znaka).
+    const tags = Array.isArray(b.tags) ? JSON.stringify([...new Set(b.tags.map(cleanTag).filter(Boolean))].slice(0, 8)) : null;
     const before = await env.DB.prepare('SELECT l.status FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(lm[1], client.id).first();
     if (!before) return json({ error: 'Not found' }, 404);
-    const r = await env.DB.prepare(`UPDATE leads SET status = COALESCE(?, status), note = COALESCE(?, note), status_at = ? WHERE id = ? AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`)
-      .bind(st, b.note != null ? String(b.note).slice(0, 2000) : null, Date.now(), lm[1], client.id).run();
+    const r = await env.DB.prepare(`UPDATE leads SET status = COALESCE(?, status), note = COALESCE(?, note), tags = COALESCE(?, tags), status_at = CASE WHEN ? IS NULL THEN status_at ELSE ? END WHERE id = ? AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`)
+      .bind(st, b.note != null ? String(b.note).slice(0, 2000) : null, tags, st, Date.now(), lm[1], client.id).run();
     if (!r.meta.changes) return json({ error: 'Not found' }, 404);
     // Istorija statusa (status_at čuva samo zadnju promjenu); Contacted/Quoted/Won je odgovor kupcu.
     if (st != null && st !== (before.status || 'new')) {
@@ -1755,7 +1770,18 @@ async function portalApi(request, env, p, secure, ctx) {
       const o = await assignOrder(env, lm[1], client);
       return json({ ok: true, order: o ? orderView(o.no, o.data) : null });
     }
-    return json({ ok: true });
+    return json({ ok: true, ...(tags ? { tags: JSON.parse(tags) } : {}) });
+  }
+  // Statistika (24.11.2026, District: "Stats > tracking revenue, pipeline, opportunities, leads, budget total sum..."):
+  // jedan red po upitu (bez slika), portal sam računa periode, pipeline i zbirove.
+  if (p === '/api/portal/stats' && request.method === 'GET') return json(await portalStats(env, client));
+  // Obavještenja (24.11.2026): novi upiti, kupac otvorio stranicu, Deposit/Appointment, automatske poruke, greške slanja.
+  if (p === '/api/portal/notifications' && request.method === 'GET') return json(await portalNotifications(env, client));
+  if (p === '/api/portal/notifications/seen' && request.method === 'POST') {
+    if (sess.kind === 'view-as') return json({ ok: true, readOnly: true });
+    const at = Date.now();
+    await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.notifSeenAt', ?) WHERE id = ?`).bind(at, client.id).run();
+    return json({ ok: true, seenAt: at });
   }
   // Faza izrade i poruka kupcu za praćenje narudžbe (23.11.2026). Admin pregled ne mijenja podatke klijenta.
   if ((lm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/order$/)) && request.method === 'PATCH') {
@@ -1772,6 +1798,51 @@ async function portalApi(request, env, p, secure, ctx) {
     return json({ ok: true, order: orderView(row.order_no, JSON.stringify(next)) });
   }
   return json({ error: 'Not found' }, 404);
+}
+
+// ---------- Tagovi, statistika i obavještenja (24.11.2026) ----------
+const cleanTag = (v) => String(v ?? '').replace(/[\u0000-\u001f<>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24);
+function parseTags(raw) {
+  try { const t = JSON.parse(raw || '[]'); return Array.isArray(t) ? t.filter((x) => typeof x === 'string' && x).slice(0, 8) : []; } catch { return []; }
+}
+const STATS_MAX = 5000;
+async function portalStats(env, client) {
+  const rows = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.created_at, COALESCE(l.status, 'new') AS status, l.status_at, l.first_reply_at, l.tags,
+      json_extract(l.answers, '$.type') AS type, json_extract(l.answers, '$.budget') AS budget,
+      json_extract(l.quotes, '$.picked.price') AS p_price, json_extract(l.quotes, '$.picked.total') AS p_total,
+      json_extract(l.quotes, '$.fit.price') AS f_price, json_extract(l.quotes, '$.fit.total') AS f_total, json_extract(l.quotes, '$.fit.show') AS f_show,
+      json_extract(l.page, '$.views') AS views, json_array_length(COALESCE(json_extract(l.page, '$.actions'), '[]')) AS actions, l.order_no
+    FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? ORDER BY l.created_at DESC LIMIT ${STATS_MAX}`).bind(client.id).all()).results;
+  const num = (v) => (Number(v) > 0 ? Math.round(Number(v)) : null);
+  return {
+    max: STATS_MAX,
+    leads: rows.map((r) => ({
+      id: r.id, formId: r.form_id, name: r.name, email: r.email, at: r.created_at, status: r.status, statusAt: r.status_at || null, replyAt: r.first_reply_at || null,
+      type: r.type || '', budget: r.budget == null ? '' : String(r.budget), tags: parseTags(r.tags),
+      // Vrijednost upita: cijena koju je zlatar ostavio u Estimated price, inače izračunata; Fits the budget posebno.
+      value: num(r.p_price) ?? num(r.p_total), fit: num(r.f_price) ?? num(r.f_total), fitShown: r.f_show === 1 || r.f_show === true,
+      views: Number(r.views) || 0, actions: Number(r.actions) || 0, order: r.order_no || null,
+    })),
+  };
+}
+// Automatske quote poruke nisu ovdje: stižu uz svaki lead (dvije po leadu) i samo bi zatrpale listu.
+const NOTIFY_TYPES = ['created', 'page_view', 'page_action', 'auto_sent', 'auto_send_failed', 'alert_failed', 'order_created'];
+async function portalNotifications(env, client) {
+  const since = Date.now() - 30 * 864e5;
+  const rows = (await env.DB.prepare(`SELECT e.id, e.lead_id, e.type, e.at, e.meta, l.name, l.email, json_extract(l.answers, '$.type') AS piece
+      FROM lead_events e JOIN leads l ON l.id = e.lead_id
+      WHERE e.client_id = ? AND e.at > ? AND e.type IN (${NOTIFY_TYPES.map(() => '?').join(',')})
+      ORDER BY e.at DESC LIMIT 300`).bind(client.id, since, ...NOTIFY_TYPES).all()).results;
+  let seenAt = 0;
+  try { seenAt = Number(JSON.parse(client.data || '{}').notifSeenAt) || 0; } catch {}
+  const items = [];
+  for (const r of rows) {
+    let meta = {};
+    try { meta = JSON.parse(r.meta || '{}') || {}; } catch {}
+    items.push({ id: r.id, lead: r.lead_id, type: r.type, at: r.at, name: r.name, email: r.email, piece: r.piece || '', meta: { action: meta.action || null, option: meta.option || null } });
+    if (items.length >= 150) break;
+  }
+  return { seenAt, unseen: items.filter((x) => x.at > seenAt).length, items };
 }
 
 // ---------- Quote poruka (portal) ----------
@@ -1809,24 +1880,52 @@ async function writeQuote(env, client, lead, b, origin, { auto = false } = {}) {
 }
 // Prva poruka bez zlatara (Ognjen 19.11.2026: "neka se prva poruka odmah generiše sa leadom"): Estimated price, tačno
 // kako je kupac izabrao, istim računom kao portal. Ne dira poruku koju je zlatar već napravio; pokušava se samo jednom.
+// Od 24.11.2026 (District: "add generated message, no reason to wait") i Fits the budget dobija svoju poruku odmah
+// ($.autoFit), istim računom kao portal (middleGround + poređenje sa Estimated price); zlatar je i dalje podešava.
 async function autoQuote(env, leadId, origin) {
   const row = await env.DB.prepare(`SELECT l.id, l.name, l.answers, l.quotes, l.page_key, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data
       FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id WHERE l.id = ?`).bind(leadId).first();
   if (!row) return null;
-  const mark = () => env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.auto', ?) WHERE id = ?`).bind(Date.now(), leadId).run();
   let quotes = {};
   try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
-  if (quotes.picked) return null;
+  const doPicked = !quotes.picked && !quotes.auto;
+  const doFit = !quotes.fit && !quotes.autoFit;
+  if (!doPicked && !doFit) return null;
+  const mark = (k) => env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${k}', ?) WHERE id = ?`).bind(Date.now(), leadId).run();
   let pricing = null;
   try { pricing = JSON.parse(row.client_data || '{}').pricing || null; } catch {}
   pricing = await marketPricing(env, pricing);
   const form = JSON.parse(row.form_data || '{}');
   const ls = pricing && leadSpecFrom(pricingSpec(form), pricingAnswers(JSON.parse(row.answers || '{}')));
   const est = ls && estimate(pricing, ls.spec);
-  if (!est || est.total == null) { await mark(); return null; }
-  await mark();
+  if (!est || est.total == null) { if (doPicked) await mark('auto'); if (doFit) await mark('autoFit'); return null; }
   const client = { id: row.client_id, name: row.client_name, data: row.client_data };
-  return writeQuote(env, client, { id: row.id, name: row.name, page_key: row.page_key, form_data: row.form_data }, { ...quoteBody(ls, ls.spec, est), slot: 'picked', spec: ls.spec }, origin, { auto: true });
+  const lead = { id: row.id, name: row.name, page_key: row.page_key, form_data: row.form_data };
+  let out = null;
+  if (doPicked) {
+    await mark('auto');
+    out = await writeQuote(env, client, lead, { ...quoteBody(ls, ls.spec, est), slot: 'picked', spec: ls.spec }, origin, { auto: true });
+  }
+  // Fits the budget postoji samo kad kupac ima gornju granicu budžeta (inače je kartica "Your quote", ista kao izbor).
+  const high = ls.budget?.high;
+  if (doFit && Number.isFinite(high)) {
+    await mark('autoFit');
+    // Poređenje ide naspram Estimated price kako ga je zlatar ostavio (ako ga je već podesio), kao u portalu.
+    const pickedSaved = quotes.picked?.spec && quotes.picked.spec.type === ls.spec.type ? { ...ls.spec, ...quotes.picked.spec } : ls.spec;
+    const pe = estimate(pricing, pickedSaved);
+    const orig = pe.total == null ? null : Number(quotes.picked?.price) > 0 ? Number(quotes.picked.price) : pe.total;
+    const mg = middleGround(pricing, ls.spec, high, ls.choices);
+    const spec = mg?.spec || ls.spec;
+    const fe = estimate(pricing, spec);
+    if (fe.total != null) {
+      const b = { ...quoteBody(ls, spec, fe), slot: 'fit', spec };
+      b.changes = specDiff({ ...ls, spec: pickedSaved }, spec);
+      if (b.changes.length && orig != null && Math.round(orig) !== Math.round(fe.total)) Object.assign(b, { mode: 'fit', originalTotal: Math.round(orig), inBudget: fe.total <= high });
+      const fit = await writeQuote(env, client, lead, b, origin, { auto: true });
+      out = out || fit;
+    }
+  } else if (doFit) await mark('autoFit');
+  return out;
 }
 // ---------- Dnevnik koraka, obavještenje radnji i prva poruka kupcu (21.11.2026) ----------
 // Dokaz za zlatara (vrijeme do prvog odgovora, kopirane ponude, statusi) i brzina: radnja dobija mejl čim lead stigne,
@@ -1879,7 +1978,7 @@ function leadAlertMail(row, origin) {
   const first = String(row.name || '').split(/\s+/)[0] || 'the customer';
   const lines = [
     `New ${piece} lead from ${row.name}`,
-    [`Email: ${row.email}`, row.phone ? `Phone: ${row.phone}` : ''].filter(Boolean).join('\n'),
+    [`Email: ${row.email}`, row.phone ? `Phone: ${row.phone}${areaOf(row.phone) ? ` (${areaOf(row.phone).label}, by area code)` : ''}` : ''].filter(Boolean).join('\n'),
     a.vision ? `What they want:\n"${String(a.vision).slice(0, 600)}"` : '',
     leadDetails(form, a).slice(0, 14).map((d) => `${d.label}: ${d.value}`).join('\n'),
     quotes.picked?.msg ? `Ready-to-send quote message:\n\n${quotes.picked.msg}` : '',
