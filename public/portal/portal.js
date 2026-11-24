@@ -1020,10 +1020,12 @@ function leadsView(resultsOnly = false) {
   const budgetChips = budgetList.length > 1 || P.budget
     ? `<div class="chips" role="group" aria-label="Filter by budget"><button class="chip ${P.budget ? '' : 'on'}" data-budget="" aria-pressed="${!P.budget}">All</button>${budgetList.map((b) => `<button class="chip ${P.budget === b.v ? 'on' : ''}" data-budget="${esc(b.v)}" aria-pressed="${P.budget === b.v}" aria-label="Budget ${esc(b.label)}">${esc(shortBudget(b.label))} <span>${b.n}</span></button>`).join('')}</div>`
     : '';
-  const tagList = Object.entries(P.tagCounts || {});
-  const tagChips = tagList.length || P.tag
-    ? `<div class="chips" role="group" aria-label="Filter by tag"><button class="chip ${P.tag ? '' : 'on'}" data-ftag="" aria-pressed="${!P.tag}">All</button>${tagList.map(([t, n]) => `<button class="chip ${P.tag === t ? 'on' : ''}" data-ftag="${esc(t)}" aria-pressed="${P.tag === t}">${esc(t)} <span>${n}</span></button>`).join('')}</div>`
-    : '';
+  // Tagovi su uvijek u traci (Ognjen 24.11.2026): ponuđeni + oni koje zlatar koristi; tag bez ijednog leada je izblijeđen.
+  const tagNames = [...new Set([...TAG_PRESETS, ...Object.keys(P.tagCounts || {})])];
+  const tagChips = `<div class="chips" role="group" aria-label="Filter by tag"><button class="chip ${P.tag ? '' : 'on'}" data-ftag="" aria-pressed="${!P.tag}">All</button>${tagNames.map((t) => {
+    const n = P.tagCounts?.[t] || 0;
+    return `<button class="chip ${P.tag === t ? 'on' : ''}" data-ftag="${esc(t)}" aria-pressed="${P.tag === t}" ${n || P.tag === t ? '' : 'disabled'}>${esc(t)} <span>${n}</span></button>`;
+  }).join('')}</div>`;
   const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email or phone" value="${esc(P.q)}" /></label>`;
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
   const perDay = dayCounts(list);

@@ -876,3 +876,6 @@ button.dbar.future { opacity: .35; cursor: default; }
 .lead-bar .usage { margin: 0; padding: 12px 14px; background: color-mix(in srgb, var(--bg) 55%, var(--surface)); }
 .lead-bar .usage-bar { height: 6px; margin: 8px 0 6px; }
 .lead-bar .usage-top b { font-size: 16px; }
+
+/* Filter bez rezultata blijedi (tag koji još nijedan lead nema) */
+.frow .chip:disabled { opacity: .38; cursor: default; }
