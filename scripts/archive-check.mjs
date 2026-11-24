@@ -47,6 +47,10 @@ ok(!nt.items.some((x) => x.lead === b.leadId) && nt.items.some((x) => x.lead ===
 ok((await get('?q=bo')).leads.length === 0, 'pretraga ne nalazi arhiviranog u običnoj listi');
 // vraćanje
 ok((await patch(b.leadId, { archived: false })).body.archivedAt === null, 'zlatar vraća lead');
+await patch(b.leadId, { archived: true });
+const back = await patch(b.leadId, { archived: false, status: 'quoted' });
+l = await get();
+ok(back.status === 200 && l.leads.find((q) => q.id === b.leadId)?.status === 'quoted' && l.archived === 0 && l.counts.quoted === 1, 'vraćanje pravo u izabrani status (Quoted)');
 l = await get();
 ok(l.leads.length === 2 && l.archived === 0 && l.tags.VIP === 1, 'vraćeni lead je opet u listi sa svojim tagom');
 ok(JSON.stringify((await patch(a.leadId, { note: 'x' })).body) === '{"ok":true}', 'bilješka i dalje radi (arhiviranje se ne dira bez polja archived)');

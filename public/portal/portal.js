@@ -1001,7 +1001,9 @@ function leadsView(resultsOnly = false) {
   const forms = P.me.forms.filter((f) => f.leads);
   // Jedna traka (Ognjen 24.11.2026): lijevo pretraga i filteri u redovima sa natpisom, desno kalendar.
   const frow = (label, chips) => (chips ? `<div class="frow"><span class="frow-l">${label}</span>${chips}</div>` : '');
-  const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}${P.archivedCount || P.archivedView ? `<button class="chip chip-arch ${P.archivedView ? 'on' : ''}" data-archived-view="${P.archivedView ? '0' : '1'}" aria-pressed="${P.archivedView}">Archived <span>${P.archivedCount}</span></button>` : ''}</div>`;
+  const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}</div>`;
+  // Arhiva je poseban red (Ognjen 24.11.2026): arhivirani nikad nisu u All; "Show archived" ih pokazuje, odatle se vraćaju.
+  const archChips = `<div class="chips" role="group" aria-label="Archived leads"><button class="chip ${P.archivedView ? 'on' : ''}" data-archived-view="${P.archivedView ? '0' : '1'}" aria-pressed="${P.archivedView}" ${P.archivedCount || P.archivedView ? '' : 'disabled'}>Show archived <span>${P.archivedCount}</span></button>${P.archivedView ? '<button class="chip" data-archived-view="0">Back to active leads</button><span class="arch-hint">Pick a status on a lead to restore it there.</span>' : ''}</div>`;
   const formChips = forms.length > 1
     ? `<div class="chips" role="group" aria-label="Filter by form"><button class="chip ${P.form ? '' : 'on'}" data-form="">All</button>${forms.map((f) => `<button class="chip ${P.form === f.id ? 'on' : ''}" data-form="${esc(f.id)}">${esc(f.name)}</button>`).join('')}</div>`
     : '';
@@ -1057,7 +1059,7 @@ function leadsView(resultsOnly = false) {
           ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><button type="button" class="film-tile" data-film="${esc(f.url)}" data-poster="${esc(last?.url || '')}" aria-label="Play the highlight video of ${esc(l.name)}"><video src="${esc(f.url)}" ${last ? `poster="${esc(last.url)}"` : ''} muted loop playsinline preload="none" tabindex="-1" aria-hidden="true"></video><span class="film-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span></button><figcaption><span class="film-model ${f.customer ? 'cust' : ''}">${esc(f.label || 'Video')}${f.customer ? ' · customer' : ''}</span>${f.cost != null ? ` · $${Number(f.cost).toFixed(2)}` : ''} · <a href="${esc(f.url)}" download>Download</a></figcaption>${genTime(f.ms, 'Video made in')}</figure>` : `<p class="film-wait"><span class="film-model ${f.customer ? 'cust' : ''}">${esc(f.label || 'Video')}</span> is being made. It appears here in a few minutes.</p>`)).join('')}</div>` : ''}
           ${tagsRow(l)}
           <label class="lead-note"><span class="sr-only">Note</span><textarea class="in" rows="1" data-lead-note="${esc(l.id)}" placeholder="Add a note (quote sent, follow up Friday…)" ${readOnly() ? 'disabled' : ''}>${esc(l.note)}</textarea></label>
-          ${readOnly() ? '' : `<div class="lead-acts">${l.archivedAt ? `<span class="lead-arch-on">Archived ${esc(when(l.archivedAt))}</span><button type="button" class="lead-act" data-restore="${esc(l.id)}">Restore lead</button>` : `<button type="button" class="lead-act" data-archive="${esc(l.id)}">Archive lead</button>`}</div>`}
+          ${readOnly() ? '' : `<div class="lead-acts">${l.archivedAt ? `<span class="lead-arch-on">Archived ${esc(when(l.archivedAt))} · pick a status above to restore it there, or</span><button type="button" class="lead-act" data-restore="${esc(l.id)}">Restore as ${esc((STATUSES.find(([v]) => v === l.status) || [, 'New'])[1])}</button>` : `<button type="button" class="lead-act" data-archive="${esc(l.id)}">Archive lead</button>`}</div>`}
         </div>
         ${calcView(l)}
       </article>`;
@@ -1067,7 +1069,7 @@ function leadsView(resultsOnly = false) {
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
   P.chartHtml = chart;
   if (resultsOnly) return `${cards}${more}`;
-  return `<section class="lead-bar"><div class="filters">${usageView()}${search}<div class="frows">${frow('Status', statusChips)}${frow('Piece', pieceChips)}${frow('Budget', budgetChips)}${frow('Tags', tagChips)}${frow('Video', videoChips)}${frow('Form', formChips)}</div></div><aside class="lead-cal">${chart}</aside></section><div class="lead-results">${cards}${more}</div>`;
+  return `<section class="lead-bar"><div class="filters">${usageView()}${search}<div class="frows">${frow('Status', statusChips)}${frow('Piece', pieceChips)}${frow('Budget', budgetChips)}${frow('Tags', tagChips)}${frow('Video', videoChips)}${frow('Form', formChips)}${frow('Archive', archChips)}</div></div><aside class="lead-cal">${chart}</aside></section><div class="lead-results">${cards}${more}</div>`;
 }
 
 // Stranica kupca (19.11.2026): link ispod slike, otvaranje bez brojanja posjete, posjete i klikovi na Deposit / Book.
@@ -1234,6 +1236,7 @@ app.addEventListener('change', async (e) => {
   if (el.dataset.leadStatus) {
     const id = el.dataset.leadStatus;
     const prev = P.leads.find((l) => l.id === id)?.status;
+    if (P.leads.find((l) => l.id === id)?.archivedAt) { setArchived(id, false, el.value); return; }
     try {
       const r = await api(`/api/portal/leads/${id}`, { method: 'PATCH', body: JSON.stringify({ status: el.value }), json: true });
       const l = P.leads.find((x) => x.id === id);
@@ -1446,9 +1449,9 @@ async function archiveLead(id) {
   if (!l || readOnly()) return;
   if (await archiveDialog(l)) setArchived(id, true);
 }
-async function setArchived(id, archived) {
+async function setArchived(id, archived, status = null) {
   try {
-    await api(`/api/portal/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ archived }), json: true });
+    await api(`/api/portal/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ archived, ...(status ? { status } : {}) }), json: true });
     leadStore.clear();
     P.stats = null;
     if (!archived && P.archivedCount <= 1) P.archivedView = false;

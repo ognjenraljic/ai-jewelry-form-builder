@@ -1772,7 +1772,8 @@ async function portalApi(request, env, p, secure, ctx) {
       const at = b.archived ? Date.now() : null;
       await env.DB.prepare('UPDATE leads SET archived_at = ? WHERE id = ?').bind(at, lm[1]).run();
       if (!!before.archived_at !== b.archived) await logEvent(env, lm[1], b.archived ? 'archived' : 'restored');
-      return json({ ok: true, archivedAt: at });
+      // Vraćanje pravo u izabrani status (Ognjen 24.11.2026): { archived: false, status } nastavlja dole kao promjena statusa.
+      if (b.archived || st == null) return json({ ok: true, archivedAt: at });
     }
     const r = await env.DB.prepare(`UPDATE leads SET status = COALESCE(?, status), note = COALESCE(?, note), tags = COALESCE(?, tags), status_at = CASE WHEN ? IS NULL THEN status_at ELSE ? END WHERE id = ? AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`)
       .bind(st, b.note != null ? String(b.note).slice(0, 2000) : null, tags, st, Date.now(), lm[1], client.id).run();
