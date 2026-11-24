@@ -844,3 +844,30 @@ button.dbar.future { opacity: .35; cursor: default; }
 .spec dd { margin: 0; font-size: 13.5px; font-weight: 600; color: var(--ink); line-height: 1.35; overflow-wrap: anywhere; }
 .spec dd small { display: block; margin-top: 1px; font-size: 11.5px; font-weight: 500; color: var(--ink-faint); }
 @media (max-width: 560px) { .specs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; padding: 12px 14px; } .spec.wide { grid-column: 1 / -1; } }
+
+/* Jedna traka: lijevo pretraga i filteri, desno kalendar (Ognjen 24.11.2026) */
+.lead-bar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 430px); gap: 0 22px; align-items: start; margin-bottom: 10px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); }
+.lead-bar .filters { margin: 0; gap: 14px; min-width: 0; }
+.lead-bar .search .in { max-width: none; }
+.frows { display: grid; gap: 9px; }
+.frow { display: grid; grid-template-columns: 58px minmax(0, 1fr); align-items: start; gap: 10px; }
+.frow-l { padding-top: 7px; font-size: 10.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); }
+.frow .chips { margin: 0; gap: 5px; }
+.frow .chip { padding: 5px 10px; font-size: 11.5px; }
+.lead-cal { min-width: 0; padding-left: 22px; border-left: 1px solid var(--line); align-self: stretch; }
+.lead-cal .days14 { background: none; border: 0; border-radius: 0; padding: 0; margin: 0; }
+.lead-cal .days14-head { margin-bottom: 8px; align-items: baseline; }
+.lead-cal .days14-head span { font-size: 10.5px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; }
+.dtools { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.dtools .drange { margin: 0; }
+.lead-cal .dcal { max-width: none; margin: 0; gap: 3px; }
+.lead-cal .dcal-d { aspect-ratio: 1.5; min-height: 32px; border-radius: 8px; }
+.lead-cal .dcal-d b { font-size: 13px; }
+.lead-cal .dcal-d span { font-size: 10px; }
+.lead-cal .days14-bars { height: 150px; }
+.lead-cal .dnav { margin: 0 0 8px; }
+@media (max-width: 980px) {
+  .lead-bar { grid-template-columns: 1fr; gap: 16px 0; padding: 14px; }
+  .lead-cal { padding: 16px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (max-width: 520px) { .frow { grid-template-columns: 1fr; gap: 4px; } .frow-l { padding-top: 0; } }

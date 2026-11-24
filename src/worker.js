@@ -287,18 +287,22 @@ async function createLead(request, env, ctx) {
 // video prvog rendera ako ga nema; 3) videi "u toku" se preuzmu u R2. Po krugu ograničeno, da cron ostane kratak.
 const CATCHUP_RENDERS = 6;
 const CATCHUP_FILMS = 10;
-const CATCHUP_QUOTES = 8;
+const CATCHUP_QUOTES = 16;
 const ORIGIN = 'https://jewelrylead.com/';
 async function catchUp(env) {
   const now = Date.now();
   const leads = (await env.DB.prepare(`SELECT l.* FROM leads l WHERE l.created_at < ? AND l.created_at > ?
       AND NOT EXISTS (SELECT 1 FROM renders r WHERE r.lead_id = l.id AND r.kind IS NULL) ORDER BY l.created_at LIMIT ${CATCHUP_RENDERS}`).bind(now - 3 * 60_000, now - 864e5).all()).results;
   for (const lead of leads) await serverFirstRender(env, lead).catch((e) => console.error('catch-up render', lead.id, e.message));
-  // Prva quote poruka za SVAKI upit koji je još nema (Ognjen 19.11.2026), ako zlatar ima cijene; svaki upit samo jednom ($.auto), najnoviji prvi.
+  // Quote poruke za SVAKI upit koji ih još nema (Ognjen 19.11. i 24.11.2026: "retroaktivno za sve, napisane ne dirati"):
+  // Estimated price i Fits the budget, bez ograničenja starosti, najnoviji prvi. Upit se pokušava jednom ($.auto / $.autoFit
+  // nose vrijeme pokušaja); ako tada nije bilo cijene ("Missing prices"), pokušava se ponovo tek kad zlatar sačuva cijene
+  // (pricing.updatedAt noviji od pokušaja). Postojeća poruka i ponuda koju je zlatar podesio se nikad ne prepisuju.
   const noQuote = await (async () => (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
-      WHERE l.created_at < ? AND ((json_type(COALESCE(l.quotes, '{}'), '$.picked') IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.auto') IS NULL)
-        OR (json_type(COALESCE(l.quotes, '{}'), '$.fit') IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.autoFit') IS NULL AND l.created_at > ?))
-      AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' ORDER BY l.created_at DESC LIMIT ${CATCHUP_QUOTES}`).bind(now - 60_000, now - 30 * 864e5).all()).results)().catch((e) => { console.error('catch-up quotes', e.message); return []; });
+      WHERE l.created_at < ? AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' AND (
+        (json_type(COALESCE(l.quotes, '{}'), '$.picked') IS NULL AND COALESCE(json_extract(l.quotes, '$.auto'), 0) < COALESCE(json_extract(c.data, '$.pricing.updatedAt'), 1))
+        OR (json_type(COALESCE(l.quotes, '{}'), '$.fit') IS NULL AND COALESCE(json_extract(l.quotes, '$.autoFit'), 0) < COALESCE(json_extract(c.data, '$.pricing.updatedAt'), 1)))
+      ORDER BY l.created_at DESC LIMIT ${CATCHUP_QUOTES}`).bind(now - 60_000).all()).results)().catch((e) => { console.error('catch-up quotes', e.message); return []; });
   for (const q of noQuote) await autoQuote(env, q.id, ORIGIN.replace(/\/$/, '')).catch((e) => console.error('catch-up quote', q.id, e.message));
   // Obavještenja radnji koja nisu stigla odmah i automatska prva poruka kupcu (21.11.2026).
   await notifySweep(env).catch((e) => console.error('notify sweep', e.message));
@@ -1890,8 +1894,11 @@ async function autoQuote(env, leadId, origin) {
   if (!row) return null;
   let quotes = {};
   try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
-  const doPicked = !quotes.picked && !quotes.auto;
-  const doFit = !quotes.fit && !quotes.autoFit;
+  // Jedan pokušaj po upitu; novi tek kad su cijene sačuvane poslije tog pokušaja (isto pravilo kao upit u catchUp).
+  let pricedAt = 1;
+  try { pricedAt = Number(JSON.parse(row.client_data || '{}').pricing?.updatedAt) || 1; } catch {}
+  const doPicked = !quotes.picked && (Number(quotes.auto) || 0) < pricedAt;
+  const doFit = !quotes.fit && (Number(quotes.autoFit) || 0) < pricedAt;
   if (!doPicked && !doFit) return null;
   const mark = (k) => env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${k}', ?) WHERE id = ?`).bind(Date.now(), leadId).run();
   let pricing = null;

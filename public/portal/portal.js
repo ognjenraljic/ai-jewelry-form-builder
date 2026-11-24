@@ -67,9 +67,11 @@ function daysChart(counts) {
   // Prikaz: stubci ili kalendar mjeseca (District 24.11.2026: "calendar view, more compact"); izbor se pamti u pregledaču.
   const views = `<span class="dview" role="group" aria-label="Chart view"><button type="button" class="chip ${P.calView ? '' : 'on'}" data-calview="0" aria-pressed="${!P.calView}">Bars</button><button type="button" class="chip ${P.calView ? 'on' : ''}" data-calview="1" aria-pressed="${P.calView}">Calendar</button></span>`;
   const foot = `<div class="days14-foot"><label class="dpick"><span>Another day</span><input class="in" type="date" data-pick-day value="${esc(P.day)}" max="${today}" /></label>${P.day ? `<span class="day-on">Showing <b>${esc(dayTitle(P.day))}</b></span><button type="button" class="chip" data-act="all-days">All days</button>` : ''}</div>`;
-  if (P.calView) return `<div class="days14 dcal-wrap" aria-label="Leads per day, ${esc(label)}"><div class="days14-head"><span>Leads per day · tap a day to see only its leads</span>${views}<b>${total} ${esc(label)}</b></div>${nav}${calendarGrid(keys, counts, max, today)}${foot}</div>`;
+  // Od 24.11.2026 kalendar stoji desno od filtera (jedna traka): zaglavlje je kratko, alati u svom redu.
+  const head = `<div class="days14-head"><span>Leads per day</span><b>${total} ${esc(label)}</b></div>`;
+  if (P.calView) return `<div class="days14 dcal-wrap" aria-label="Leads per day, ${esc(label)}">${head}<div class="dtools">${views}</div>${nav}${calendarGrid(keys, counts, max, today)}${foot}</div>`;
   // Klik na dan prikazuje samo leadove tog dana (District 16.11: umjesto beskonačnog skrolanja); stariji dan iz kalendara.
-  return `<div class="days14 ${many ? 'many' : ''}" aria-label="Leads per day, ${esc(label)}"><div class="days14-head"><span>Leads per day · tap a day to see only its leads</span><span class="drange" role="group" aria-label="Period">${RANGES.map(([v, l]) => `<button type="button" class="chip ${P.range === v ? 'on' : ''}" data-range="${v}" aria-pressed="${P.range === v}">${l}</button>`).join('')}</span>${views}<b>${total} ${esc(label)}</b></div>${nav}<div class="days14-bars" style="--n:${keys.length}">${keys.map((k) => {
+  return `<div class="days14 ${many ? 'many' : ''}" aria-label="Leads per day, ${esc(label)}">${head}<div class="dtools">${views}<span class="drange" role="group" aria-label="Period">${RANGES.map(([v, l]) => `<button type="button" class="chip ${P.range === v ? 'on' : ''}" data-range="${v}" aria-pressed="${P.range === v}">${l}</button>`).join('')}</span></div>${nav}<div class="days14-bars" style="--n:${keys.length}">${keys.map((k) => {
     const n = counts[k] || 0;
     const d = keyDate(k);
     const future = k > today;
@@ -984,6 +986,8 @@ function renderResults() {
   const box = app.querySelector('.lead-results');
   if (P.tab !== 'leads' || !box) return render();
   box.innerHTML = leadsView(true);
+  const cal = app.querySelector('.lead-cal');
+  if (cal) cal.innerHTML = P.chartHtml || '';
   const s = app.querySelector('[data-search]');
   if (s && s.value.trim() !== P.q) filterCardsNow(s.value);
 }
@@ -991,29 +995,31 @@ function leadsView(resultsOnly = false) {
   const total = Object.values(P.counts).reduce((a, b) => a + b, 0);
   if (!total && !P.q && !P.piece && !P.video && !P.tag && !P.budget && !P.loading && !P.loadError) return '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
   const forms = P.me.forms.filter((f) => f.leads);
+  // Jedna traka (Ognjen 24.11.2026): lijevo pretraga i filteri u redovima sa natpisom, desno kalendar.
+  const frow = (label, chips) => (chips ? `<div class="frow"><span class="frow-l">${label}</span>${chips}</div>` : '');
   const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}</div>`;
   const formChips = forms.length > 1
-    ? `<div class="chips" role="group" aria-label="Filter by form"><button class="chip ${P.form ? '' : 'on'}" data-form="">All forms</button>${forms.map((f) => `<button class="chip ${P.form === f.id ? 'on' : ''}" data-form="${esc(f.id)}">${esc(f.name)}</button>`).join('')}</div>`
+    ? `<div class="chips" role="group" aria-label="Filter by form"><button class="chip ${P.form ? '' : 'on'}" data-form="">All</button>${forms.map((f) => `<button class="chip ${P.form === f.id ? 'on' : ''}" data-form="${esc(f.id)}">${esc(f.name)}</button>`).join('')}</div>`
     : '';
   // Filter po komadu (District 19.11.2026): grillz, privjesci, prstenje... sa brojem upita.
   const PIECE_NAMES = { grillz: 'Grillz', pendant: 'Pendants', ring: 'Rings', chain: 'Chains', bracelet: 'Bracelets', earrings: 'Earrings', watch: 'Watches' };
   const pieceList = Object.entries(P.pieces || {}).sort((a, b) => b[1] - a[1]);
   const pieceChips = pieceList.length > 1 || P.piece
-    ? `<div class="chips" role="group" aria-label="Filter by piece"><button class="chip ${P.piece ? '' : 'on'}" data-piece="" aria-pressed="${!P.piece}">All pieces</button>${pieceList.map(([v, n]) => `<button class="chip ${P.piece === v ? 'on' : ''}" data-piece="${esc(v)}" aria-pressed="${P.piece === v}">${esc(PIECE_NAMES[v] || v[0].toUpperCase() + v.slice(1))} <span>${n}</span></button>`).join('')}</div>`
+    ? `<div class="chips" role="group" aria-label="Filter by piece"><button class="chip ${P.piece ? '' : 'on'}" data-piece="" aria-pressed="${!P.piece}">All</button>${pieceList.map(([v, n]) => `<button class="chip ${P.piece === v ? 'on' : ''}" data-piece="${esc(v)}" aria-pressed="${P.piece === v}">${esc(PIECE_NAMES[v] || v[0].toUpperCase() + v.slice(1))} <span>${n}</span></button>`).join('')}</div>`
     : '';
   // Filter po video modelu (22.11.2026): svaki upit ima do tri videa (kupčev + dva za poređenje); čip pokazuje broj, a title vrijeme i cijenu.
   const vm = P.videoModels || [];
   const videoChips = vm.length > 1 || P.video
-    ? `<div class="chips" role="group" aria-label="Filter by video model"><button class="chip ${P.video ? '' : 'on'}" data-video="" aria-pressed="${!P.video}">All videos</button>${vm.map((m) => `<button class="chip ${P.video === m.key ? 'on' : ''}" data-video="${esc(m.key)}" aria-pressed="${P.video === m.key}" title="${esc(`${m.label}${m.customer ? ', the video your customer sees' : ', only in your portal'}${m.ms ? `, about ${secs(m.ms)} to make` : ''}, about $${Number(m.cost).toFixed(2)} per video`)}">${esc(m.label)}${m.customer ? ' (customer)' : ''} <span>${m.count}</span></button>`).join('')}</div>`
+    ? `<div class="chips" role="group" aria-label="Filter by video model"><button class="chip ${P.video ? '' : 'on'}" data-video="" aria-pressed="${!P.video}">All</button>${vm.map((m) => `<button class="chip ${P.video === m.key ? 'on' : ''}" data-video="${esc(m.key)}" aria-pressed="${P.video === m.key}" title="${esc(`${m.label}${m.customer ? ', the video your customer sees' : ', only in your portal'}${m.ms ? `, about ${secs(m.ms)} to make` : ''}, about $${Number(m.cost).toFixed(2)} per video`)}">${m.customer ? 'Customer' : m.key === 'sales' ? 'Sales page' : esc(m.label)} <span>${m.count}</span></button>`).join('')}</div>`
     : '';
   // Budžet kupca i tagovi (District 24.11.2026) kao čipovi sa brojem upita.
   const budgetList = Object.entries(P.budgets || {}).map(([v, n]) => ({ v, n, label: budgetLabelOf(v) })).sort((a, b) => (parseBudget(a.label)?.low ?? 1e12) - (parseBudget(b.label)?.low ?? 1e12));
   const budgetChips = budgetList.length > 1 || P.budget
-    ? `<div class="chips" role="group" aria-label="Filter by budget"><button class="chip ${P.budget ? '' : 'on'}" data-budget="" aria-pressed="${!P.budget}">All budgets</button>${budgetList.map((b) => `<button class="chip ${P.budget === b.v ? 'on' : ''}" data-budget="${esc(b.v)}" aria-pressed="${P.budget === b.v}">${esc(b.label)} <span>${b.n}</span></button>`).join('')}</div>`
+    ? `<div class="chips" role="group" aria-label="Filter by budget"><button class="chip ${P.budget ? '' : 'on'}" data-budget="" aria-pressed="${!P.budget}">All</button>${budgetList.map((b) => `<button class="chip ${P.budget === b.v ? 'on' : ''}" data-budget="${esc(b.v)}" aria-pressed="${P.budget === b.v}" aria-label="Budget ${esc(b.label)}">${esc(shortBudget(b.label))} <span>${b.n}</span></button>`).join('')}</div>`
     : '';
   const tagList = Object.entries(P.tagCounts || {});
   const tagChips = tagList.length || P.tag
-    ? `<div class="chips" role="group" aria-label="Filter by tag"><button class="chip ${P.tag ? '' : 'on'}" data-ftag="" aria-pressed="${!P.tag}">All tags</button>${tagList.map(([t, n]) => `<button class="chip ${P.tag === t ? 'on' : ''}" data-ftag="${esc(t)}" aria-pressed="${P.tag === t}">${esc(t)} <span>${n}</span></button>`).join('')}</div>`
+    ? `<div class="chips" role="group" aria-label="Filter by tag"><button class="chip ${P.tag ? '' : 'on'}" data-ftag="" aria-pressed="${!P.tag}">All</button>${tagList.map(([t, n]) => `<button class="chip ${P.tag === t ? 'on' : ''}" data-ftag="${esc(t)}" aria-pressed="${P.tag === t}">${esc(t)} <span>${n}</span></button>`).join('')}</div>`
     : '';
   const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email or phone" value="${esc(P.q)}" /></label>`;
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
@@ -1052,8 +1058,9 @@ function leadsView(resultsOnly = false) {
   const more = P.next && !P.loading && !P.loadError ? `<div class="more"><button class="btn" data-act="more" ${P.loadingMore ? 'disabled' : ''}>${P.loadingMore ? 'Loading…' : 'Show older leads'}</button></div>` : '';
   // Traka ostaje i kad izabrani dan nema leadova, da se može izabrati drugi dan ili "All days".
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
-  if (resultsOnly) return `${chart}${cards}${more}`;
-  return `<div class="filters">${search}${statusChips}${pieceChips}${budgetChips}${tagChips}${videoChips}${formChips}</div><div class="lead-results">${chart}${cards}${more}</div>`;
+  P.chartHtml = chart;
+  if (resultsOnly) return `${cards}${more}`;
+  return `<section class="lead-bar"><div class="filters">${search}<div class="frows">${frow('Status', statusChips)}${frow('Piece', pieceChips)}${frow('Budget', budgetChips)}${frow('Tags', tagChips)}${frow('Video', videoChips)}${frow('Form', formChips)}</div></div><aside class="lead-cal">${chart}</aside></section><div class="lead-results">${cards}${more}</div>`;
 }
 
 // Stranica kupca (19.11.2026): link ispod slike, otvaranje bez brojanja posjete, posjete i klikovi na Deposit / Book.
@@ -1350,6 +1357,15 @@ function areaHint(phone) {
 function budgetLabelOf(v) {
   for (const sp of Object.values(P.me?.formSpecs || {})) { const o = (sp.budget || []).find((x) => x.value === v); if (o) return o.label; }
   return v;
+}
+// "$1,000 - $1,500" -> "$1k–1.5k", "$20,000+" -> "$20k+", "Under $1,500" -> "Under $1.5k" (čipovi filtera u jednom redu).
+function shortBudget(label) {
+  const k = (n) => { const v = parseFloat(String(n).replace(/,/g, '')); return v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : String(v); };
+  const nums = [...String(label).matchAll(/\d[\d,.]*/g)].map((m) => m[0]);
+  if (!nums.length) return label;
+  if (/\+|over|above/i.test(label)) return `$${k(nums[0])}+`;
+  if (/under|up to|below/i.test(label)) return `Under $${k(nums[0])}`;
+  return nums.length > 1 ? `$${k(nums[0])}–${k(nums[1])}` : `$${k(nums[0])}`;
 }
 const TAG_PRESETS = ['Friend', 'Family', 'In-store', 'Returning customer', 'Referral', 'VIP'];
 function tagsRow(l) {
