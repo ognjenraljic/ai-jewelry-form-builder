@@ -299,7 +299,7 @@ async function catchUp(env) {
   // nose vrijeme pokušaja); ako tada nije bilo cijene ("Missing prices"), pokušava se ponovo tek kad zlatar sačuva cijene
   // (pricing.updatedAt noviji od pokušaja). Postojeća poruka i ponuda koju je zlatar podesio se nikad ne prepisuju.
   const noQuote = await (async () => (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
-      WHERE l.created_at < ? AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' AND (
+      WHERE l.created_at < ? AND l.archived_at IS NULL AND json_type(COALESCE(c.data, '{}'), '$.pricing') = 'object' AND (
         (json_type(COALESCE(l.quotes, '{}'), '$.picked') IS NULL AND COALESCE(json_extract(l.quotes, '$.auto'), 0) < COALESCE(json_extract(c.data, '$.pricing.updatedAt'), 1))
         OR (json_type(COALESCE(l.quotes, '{}'), '$.fit') IS NULL AND COALESCE(json_extract(l.quotes, '$.autoFit'), 0) < COALESCE(json_extract(c.data, '$.pricing.updatedAt'), 1)))
       ORDER BY l.created_at DESC LIMIT ${CATCHUP_QUOTES}`).bind(now - 60_000).all()).results)().catch((e) => { console.error('catch-up quotes', e.message); return []; });
@@ -1527,10 +1527,10 @@ async function portalApi(request, env, p, secure, ctx) {
   if (p === '/api/portal/me' && request.method === 'GET') {
     const d = JSON.parse(client.data || '{}');
     const [stats, perRows, gen, ob, speed, market, spent] = await Promise.all([env.DB.prepare(`SELECT COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, COUNT(DISTINCT CASE WHEN l.created_at > ? THEN l.id END) AS recent
-      FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ?`).bind(Date.now() - 30 * 86400_000, client.id).first(),
+      FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? AND l.archived_at IS NULL`).bind(Date.now() - 30 * 86400_000, client.id).first(),
     // Po formi: upiti, renderi i zadnji upit. Trošak po formi klijent ne vidi; vidi samo mjesečnu potrošnju naspram budžeta.
     env.DB.prepare(`SELECT l.form_id, COUNT(DISTINCT l.id) AS leads, COUNT(r.id) AS renders, MAX(l.created_at) AS last_lead
-      FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? GROUP BY l.form_id`).bind(client.id).all(),
+      FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN renders r ON r.lead_id = l.id AND r.status = 'ok' WHERE f.client_id = ? AND l.archived_at IS NULL GROUP BY l.form_id`).bind(client.id).all(),
     // Prosječno vrijeme generisanja (slika i video) i broj videa, za statistiku na vrhu portala.
     env.DB.prepare(`SELECT
         (SELECT AVG(r.ms) FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND r.status = 'ok' AND r.kind IS NULL AND r.ms > 0) AS render_ms,
@@ -1576,7 +1576,10 @@ async function portalApi(request, env, p, secure, ctx) {
     const before = Number(u.searchParams.get('before')) || Date.now() + 1;
     const status = u.searchParams.get('status');
     const q = clean(u.searchParams.get('q'), 80).toLowerCase();
-    const where = ['f.client_id = ?', 'l.created_at < ?'];
+    // Arhivirani leadovi (24.11.2026) nisu u listi ni u brojevima; ?archived=1 pokazuje samo njih (za vraćanje).
+    const archivedView = u.searchParams.get('archived') === '1';
+    const live = archivedView ? 'l.archived_at IS NOT NULL' : 'l.archived_at IS NULL';
+    const where = ['f.client_id = ?', 'l.created_at < ?', live];
     const args = [client.id, before];
     if (LEAD_STATUSES.includes(status)) { where.push(status === 'new' ? "(l.status IS NULL OR l.status = 'new')" : 'l.status = ?'); if (status !== 'new') args.push(status); }
     if (q) { where.push('(lower(l.name) LIKE ? OR lower(l.email) LIKE ? OR l.phone LIKE ?)'); args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
@@ -1606,12 +1609,12 @@ async function portalApi(request, env, p, secure, ctx) {
     }
     // Brzina (22.11.2026): sve što ne zavisi od stranice ide u isto vrijeme kad i lista (ranije 7 upita zaredom).
     const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
-    const [leadRes, countRows, pieceRows, dayRes, vrowsRes, tagRows, budgetRows] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page, l.tags,
+    const [leadRes, countRows, pieceRows, dayRes, vrowsRes, tagRows, budgetRows, archRow] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page, l.tags, l.archived_at,
         l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
     // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
-    env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
-    env.DB.prepare(`SELECT json_extract(l.answers, '$.type') AS t, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? GROUP BY t`).bind(client.id).all(),
+    env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND ${live}${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
+    env.DB.prepare(`SELECT json_extract(l.answers, '$.type') AS t, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND ${live} GROUP BY t`).bind(client.id).all(),
     // Upiti po danu (zlatar prati koliko mu dolazi dnevno): dan po vremenskoj zoni pregledača, zadnjih 90 dana, isti filteri kao lista.
     env.DB.prepare(`SELECT strftime('%Y-%m-%d', (l.created_at / 1000) - ? * 60, 'unixepoch') AS d, l.form_id AS fid, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id
         WHERE ${baseWhere.filter((w) => w !== 'l.created_at < ?').join(' AND ')} AND l.created_at >= ? GROUP BY d, fid`).bind(tz, ...baseArgs.filter((_, k) => k !== 1), dayFrom).all(),
@@ -1619,8 +1622,9 @@ async function portalApi(request, env, p, secure, ctx) {
     env.DB.prepare(`SELECT fl.model, COUNT(*) AS n, AVG(CASE WHEN fl.ms > 0 THEN fl.ms END) AS ms, AVG(fl.cost_usd) AS cost FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id
         WHERE f.client_id = ? AND fl.status = 'ok' GROUP BY fl.model`).bind(client.id).all(),
     // Tagovi i budžeti sa brojem upita (za čipove filtera), za sve upite zlatara.
-    env.DB.prepare(`SELECT jt.value AS t, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id, json_each(COALESCE(l.tags, '[]')) jt WHERE f.client_id = ? GROUP BY jt.value ORDER BY n DESC LIMIT 40`).bind(client.id).all(),
-    env.DB.prepare(`SELECT json_extract(l.answers, '$.budget') AS b, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND json_extract(l.answers, '$.budget') IS NOT NULL GROUP BY b`).bind(client.id).all(),
+    env.DB.prepare(`SELECT jt.value AS t, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id, json_each(COALESCE(l.tags, '[]')) jt WHERE f.client_id = ? AND l.archived_at IS NULL GROUP BY jt.value ORDER BY n DESC LIMIT 40`).bind(client.id).all(),
+    env.DB.prepare(`SELECT json_extract(l.answers, '$.budget') AS b, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND ${live} AND json_extract(l.answers, '$.budget') IS NOT NULL GROUP BY b`).bind(client.id).all(),
+    env.DB.prepare('SELECT COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NOT NULL').bind(client.id).first(),
     ]);
     const leads = leadRes.results;
     // Won lead bez broja narudžbe (npr. Won prije praćenja narudžbi) dobija broj sada.
@@ -1656,7 +1660,7 @@ async function portalApi(request, env, p, secure, ctx) {
       return { key: k, label: m.label, customer: k === primaryFilm(env), count: r?.n || 0, ms: Math.round(r?.ms || 0) || null, cost: r ? +Number(r.cost || 0).toFixed(3) : m.est };
     }).filter((m) => filmModelsOn(env).includes(m.key));   // samo modeli koji su uključeni (stari Wan/Seedance videi se ne pokazuju)
     return json({
-      more, next: more ? oldest : null, counts, days, pieces, videoModels,
+      more, next: more ? oldest : null, counts, days, pieces, videoModels, archived: archRow?.n || 0,
       tags: Object.fromEntries(tagRows.results.filter((r) => typeof r.t === 'string').map((r) => [r.t, r.n])),
       budgets: Object.fromEntries(budgetRows.results.filter((r) => r.b != null).map((r) => [String(r.b), r.n])),
       leads: pageLeads.map((l) => {
@@ -1665,7 +1669,7 @@ async function portalApi(request, env, p, secure, ctx) {
         try { files = JSON.parse(l.files || '{}'); } catch {}
         return {
           id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
-          status: l.status || 'new', note: l.note || '', tags: parseTags(l.tags), quotes: leadQuotes(l.quotes), page: pageInfo(l),
+          status: l.status || 'new', note: l.note || '', archivedAt: l.archived_at || null, tags: parseTags(l.tags), quotes: leadQuotes(l.quotes), page: pageInfo(l),
           alertedAt: l.alerted_at || null, autoSentAt: l.auto_sent_at || null, firstReplyAt: l.first_reply_at || null,
           order: orderView(l.order_no, l.order_data),
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a), answers: pricingAnswers(a),
@@ -1761,8 +1765,15 @@ async function portalApi(request, env, p, secure, ctx) {
     if (st != null && !LEAD_STATUSES.includes(st)) return json({ error: 'Unknown status.' }, 400);
     // Tagovi (24.11.2026): cijela lista se šalje i zamjenjuje (do 8, svaki do 24 znaka).
     const tags = Array.isArray(b.tags) ? JSON.stringify([...new Set(b.tags.map(cleanTag).filter(Boolean))].slice(0, 8)) : null;
-    const before = await env.DB.prepare('SELECT l.status FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(lm[1], client.id).first();
+    const before = await env.DB.prepare('SELECT l.status, l.archived_at FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(lm[1], client.id).first();
     if (!before) return json({ error: 'Not found' }, 404);
+    // Arhiviranje i vraćanje (24.11.2026): lead nestaje iz liste, brojeva, statistike i obavještenja; ništa se ne briše.
+    if (typeof b.archived === 'boolean') {
+      const at = b.archived ? Date.now() : null;
+      await env.DB.prepare('UPDATE leads SET archived_at = ? WHERE id = ?').bind(at, lm[1]).run();
+      if (!!before.archived_at !== b.archived) await logEvent(env, lm[1], b.archived ? 'archived' : 'restored');
+      return json({ ok: true, archivedAt: at });
+    }
     const r = await env.DB.prepare(`UPDATE leads SET status = COALESCE(?, status), note = COALESCE(?, note), tags = COALESCE(?, tags), status_at = CASE WHEN ? IS NULL THEN status_at ELSE ? END WHERE id = ? AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`)
       .bind(st, b.note != null ? String(b.note).slice(0, 2000) : null, tags, st, Date.now(), lm[1], client.id).run();
     if (!r.meta.changes) return json({ error: 'Not found' }, 404);
@@ -1818,7 +1829,7 @@ async function portalStats(env, client) {
       json_extract(l.quotes, '$.picked.price') AS p_price, json_extract(l.quotes, '$.picked.total') AS p_total,
       json_extract(l.quotes, '$.fit.price') AS f_price, json_extract(l.quotes, '$.fit.total') AS f_total, json_extract(l.quotes, '$.fit.show') AS f_show,
       json_extract(l.page, '$.views') AS views, json_array_length(COALESCE(json_extract(l.page, '$.actions'), '[]')) AS actions, l.order_no
-    FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? ORDER BY l.created_at DESC LIMIT ${STATS_MAX}`).bind(client.id).all()).results;
+    FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL ORDER BY l.created_at DESC LIMIT ${STATS_MAX}`).bind(client.id).all()).results;
   const num = (v) => (Number(v) > 0 ? Math.round(Number(v)) : null);
   return {
     max: STATS_MAX,
@@ -1837,7 +1848,7 @@ async function portalNotifications(env, client) {
   const since = Date.now() - 30 * 864e5;
   const rows = (await env.DB.prepare(`SELECT e.id, e.lead_id, e.type, e.at, e.meta, l.name, l.email, json_extract(l.answers, '$.type') AS piece
       FROM lead_events e JOIN leads l ON l.id = e.lead_id
-      WHERE e.client_id = ? AND e.at > ? AND e.type IN (${NOTIFY_TYPES.map(() => '?').join(',')})
+      WHERE e.client_id = ? AND e.at > ? AND l.archived_at IS NULL AND e.type IN (${NOTIFY_TYPES.map(() => '?').join(',')})
       ORDER BY e.at DESC LIMIT 300`).bind(client.id, since, ...NOTIFY_TYPES).all()).results;
   let seenAt = 0;
   try { seenAt = Number(JSON.parse(client.data || '{}').notifSeenAt) || 0; } catch {}
@@ -2065,7 +2076,7 @@ async function notifySweep(env) {
       ORDER BY l.created_at LIMIT ${NOTIFY_PER_RUN}`).bind(now - alertDelay, now - ALERT_WINDOW_MS).all()).results;
   for (const r of alerts) await alertShop(env, r.id, ORIGIN_BASE).catch((e) => console.error('sweep alert', r.id, e.message));
   const sends = (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
-      WHERE l.auto_sent_at IS NULL AND l.first_reply_at IS NULL AND COALESCE(l.status, 'new') = 'new' AND json_extract(c.data, '$.pricing.autoSend') = 1
+      WHERE l.auto_sent_at IS NULL AND l.first_reply_at IS NULL AND l.archived_at IS NULL AND COALESCE(l.status, 'new') = 'new' AND json_extract(c.data, '$.pricing.autoSend') = 1
         AND json_type(COALESCE(l.quotes, '{}'), '$.picked') = 'object' AND l.created_at > ? AND l.created_at < ?
         AND (l.created_at < ? OR EXISTS (SELECT 1 FROM renders r WHERE r.lead_id = l.id AND r.kind IS NULL AND r.status = 'ok'))
       ORDER BY l.created_at LIMIT ${NOTIFY_PER_RUN}`).bind(now - AUTO_SEND_WINDOW_MS, now - sendDelay, now - noRender).all()).results;
@@ -2702,7 +2713,7 @@ async function portalBookings(env, client) {
   try { seenAt = Number(JSON.parse(client.data || '{}').bookingsSeenAt) || 0; } catch {}
   const rows = (await env.DB.prepare(`SELECT l.id, l.name, l.email, l.phone, l.created_at, l.status, l.page, l.page_key, l.quotes, l.answers,
       (SELECT r.image_key FROM renders r WHERE r.lead_id = l.id AND r.status = 'ok' AND r.kind IS NULL AND r.image_key IS NOT NULL ORDER BY r.created_at DESC LIMIT 1) AS img
-      FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND json_array_length(COALESCE(l.page, '{}'), '$.actions') > 0
+      FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL AND json_array_length(COALESCE(l.page, '{}'), '$.actions') > 0
       ORDER BY l.created_at DESC LIMIT 300`).bind(client.id).all()).results;
   const items = rows.map((l) => {
     const pg = JSON.parse(l.page || '{}') || {};

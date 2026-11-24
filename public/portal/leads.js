@@ -3,17 +3,17 @@
 export function createLeadStore(request, now = Date.now) {
   const cache = new Map();
   const fresh = (entry) => entry && now() - entry.at < 30_000;
-  const keyOf = (status, q, day = '', dfrom = '', piece = '', video = '', tag = '', budget = '') => JSON.stringify([status, q.toLowerCase(), day, dfrom, piece, video, tag, budget]);
+  const keyOf = (status, q, day = '', dfrom = '', piece = '', video = '', tag = '', budget = '', archived = false) => JSON.stringify([status, q.toLowerCase(), day, dfrom, piece, video, tag, budget, archived ? 1 : 0]);
   let pending, sequence = 0;
   return {
-    async load({ status = '', q = '', day = '', dfrom = '', piece = '', video = '', tag = '', budget = '', before = null, previous = [] } = {}) {
+    async load({ status = '', q = '', day = '', dfrom = '', piece = '', video = '', tag = '', budget = '', archived = false, before = null, previous = [] } = {}) {
       const seq = ++sequence;
       pending?.abort();
-      const key = keyOf(status, q, day, dfrom, piece, video, tag, budget);
+      const key = keyOf(status, q, day, dfrom, piece, video, tag, budget, archived);
       const all = cache.get(keyOf('', ''));
       const cached = cache.get(key);
       // Izabran komad ide sa servera: on filtrira i brojeve po statusu i dane na traci.
-      if (!before && !day && !dfrom && !piece && !video && !tag && !budget && fresh(all) && !all.next) {
+      if (!before && !day && !dfrom && !piece && !video && !tag && !budget && !archived && fresh(all) && !all.next) {
         const search = q.toLowerCase();
         return { ...all, leads: all.leads.filter((l) => (!status || l.status === status) && (!search || [l.name, l.email, l.phone].some((s) => String(s || '').toLowerCase().includes(search)))) };
       }
@@ -28,12 +28,13 @@ export function createLeadStore(request, now = Date.now) {
       if (video) qs.set('video', video);
       if (tag) qs.set('tag', tag);
       if (budget) qs.set('budget', budget);
+      if (archived) qs.set('archived', '1');
       if (before) qs.set('before', before);
       qs.set('tz', new Date().getTimezoneOffset());
       try {
         const r = await request(`/api/portal/leads?${qs}`, { signal: pending.signal });
         if (seq !== sequence) return null;
-        const entry = { leads: before ? [...previous, ...r.leads] : r.leads, next: r.next, counts: r.counts || {}, days: r.days || {}, pieces: r.pieces || {}, videoModels: r.videoModels || [], tags: r.tags || {}, budgets: r.budgets || {}, at: now() };
+        const entry = { leads: before ? [...previous, ...r.leads] : r.leads, next: r.next, counts: r.counts || {}, days: r.days || {}, pieces: r.pieces || {}, videoModels: r.videoModels || [], tags: r.tags || {}, budgets: r.budgets || {}, archived: r.archived || 0, at: now() };
         cache.set(key, entry);
         return entry;
       } catch (error) {
@@ -41,6 +42,8 @@ export function createLeadStore(request, now = Date.now) {
         throw error;
       }
     },
+    // Arhiviranje ili vraćanje leada mijenja sve liste: keš se prazni.
+    clear() { cache.clear(); },
     update(id, patch, counts) {
       // A changed status invalidates filtered pages. Preserve a complete pool for
       // immediate switching and update notes there as well as on visible cards.

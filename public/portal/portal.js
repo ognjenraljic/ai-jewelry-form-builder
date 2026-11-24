@@ -13,7 +13,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const safe = (fn) => { try { return fn(); } catch { return null; } };
 
 const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
-const P = { me: null, bookings: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, video: '', videoModels: [], status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false, tag: '', budget: '', tagCounts: {}, budgets: {}, calView: safe(() => localStorage.getItem('jl_cal_view') === '1') || false, stats: null, statsPeriod: 'month', notif: null };
+const P = { me: null, bookings: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, video: '', videoModels: [], status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false, tag: '', budget: '', archivedView: false, archivedCount: 0, tagCounts: {}, budgets: {}, calView: safe(() => localStorage.getItem('jl_cal_view') === '1') || false, stats: null, statsPeriod: 'month', notif: null };
 // Kalendar je uvijek cijeli mjesec (Ognjen 24.11.2026: poslije ponovnog učitavanja je pokazivao samo zadnjih 14 dana, tri reda).
 if (P.calView) P.range = 'month';
 const day = (t) => new Date(t).toLocaleDateString('en-US', { dateStyle: 'medium' });
@@ -874,7 +874,7 @@ async function loadLeads(more = false, quiet = false) {
   P.loading = !more;
   P.loadingMore = more;
   P.loadError = '';
-  const result = leadStore.load({ status: P.status, q: P.q, day: P.day, dfrom: rangeFrom(), piece: P.piece, video: P.video, tag: P.tag, budget: P.budget, before: more ? P.next : null, previous: P.leads });
+  const result = leadStore.load({ status: P.status, q: P.q, day: P.day, dfrom: rangeFrom(), piece: P.piece, video: P.video, tag: P.tag, budget: P.budget, archived: P.archivedView, before: more ? P.next : null, previous: P.leads });
   // Brzina (22.11.2026): iz keša nema međukoraka; sa servera stare kartice ostaju zatamnjene, "Loading" tek poslije 0,6 s.
   P.loading = false;
   let done = false;
@@ -895,6 +895,7 @@ async function loadLeads(more = false, quiet = false) {
     if (r.videoModels?.length) P.videoModels = r.videoModels;
     if (r.tags) P.tagCounts = r.tags;
     if (r.budgets) P.budgets = r.budgets;
+    P.archivedCount = r.archived || 0;
   } catch (error) {
     if (seq !== leadRequest) return false;
     P.loadError = 'Could not load leads. Please try again.';
@@ -996,11 +997,11 @@ function renderResults() {
 }
 function leadsView(resultsOnly = false) {
   const total = Object.values(P.counts).reduce((a, b) => a + b, 0);
-  if (!total && !P.q && !P.piece && !P.video && !P.tag && !P.budget && !P.loading && !P.loadError) return usageView() + '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
+  if (!total && !P.q && !P.piece && !P.video && !P.tag && !P.budget && !P.archivedView && !P.archivedCount && !P.loading && !P.loadError) return usageView() + '<p class="empty">No leads yet. They appear here as soon as a customer finishes one of your forms.</p>';
   const forms = P.me.forms.filter((f) => f.leads);
   // Jedna traka (Ognjen 24.11.2026): lijevo pretraga i filteri u redovima sa natpisom, desno kalendar.
   const frow = (label, chips) => (chips ? `<div class="frow"><span class="frow-l">${label}</span>${chips}</div>` : '');
-  const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}</div>`;
+  const statusChips = `<div class="chips" role="group" aria-label="Filter by status"><button class="chip ${P.status ? '' : 'on'}" data-status="">All <span>${total}</span></button>${STATUSES.map(([v, l]) => `<button class="chip ${P.status === v ? 'on' : ''}" data-status="${v}">${l} <span>${P.counts[v] || 0}</span></button>`).join('')}${P.archivedCount || P.archivedView ? `<button class="chip chip-arch ${P.archivedView ? 'on' : ''}" data-archived-view="${P.archivedView ? '0' : '1'}" aria-pressed="${P.archivedView}">Archived <span>${P.archivedCount}</span></button>` : ''}</div>`;
   const formChips = forms.length > 1
     ? `<div class="chips" role="group" aria-label="Filter by form"><button class="chip ${P.form ? '' : 'on'}" data-form="">All</button>${forms.map((f) => `<button class="chip ${P.form === f.id ? 'on' : ''}" data-form="${esc(f.id)}">${esc(f.name)}</button>`).join('')}</div>`
     : '';
@@ -1056,10 +1057,11 @@ function leadsView(resultsOnly = false) {
           ${(l.films || []).length ? `<div class="films">${l.films.map((f) => (f.url ? `<figure><button type="button" class="film-tile" data-film="${esc(f.url)}" data-poster="${esc(last?.url || '')}" aria-label="Play the highlight video of ${esc(l.name)}"><video src="${esc(f.url)}" ${last ? `poster="${esc(last.url)}"` : ''} muted loop playsinline preload="none" tabindex="-1" aria-hidden="true"></video><span class="film-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg></span></button><figcaption><span class="film-model ${f.customer ? 'cust' : ''}">${esc(f.label || 'Video')}${f.customer ? ' · customer' : ''}</span>${f.cost != null ? ` · $${Number(f.cost).toFixed(2)}` : ''} · <a href="${esc(f.url)}" download>Download</a></figcaption>${genTime(f.ms, 'Video made in')}</figure>` : `<p class="film-wait"><span class="film-model ${f.customer ? 'cust' : ''}">${esc(f.label || 'Video')}</span> is being made. It appears here in a few minutes.</p>`)).join('')}</div>` : ''}
           ${tagsRow(l)}
           <label class="lead-note"><span class="sr-only">Note</span><textarea class="in" rows="1" data-lead-note="${esc(l.id)}" placeholder="Add a note (quote sent, follow up Friday…)" ${readOnly() ? 'disabled' : ''}>${esc(l.note)}</textarea></label>
+          ${readOnly() ? '' : `<div class="lead-acts">${l.archivedAt ? `<span class="lead-arch-on">Archived ${esc(when(l.archivedAt))}</span><button type="button" class="lead-act" data-restore="${esc(l.id)}">Restore lead</button>` : `<button type="button" class="lead-act" data-archive="${esc(l.id)}">Archive lead</button>`}</div>`}
         </div>
         ${calcView(l)}
       </article>`;
-  }).join('') || `<p class="empty">${P.day ? `No leads on ${esc(dayTitle(P.day))}.` : 'No leads match.'}</p>`;
+  }).join('') || `<p class="empty">${P.archivedView ? 'No archived leads.' : P.day ? `No leads on ${esc(dayTitle(P.day))}.` : 'No leads match.'}</p>`;
   const more = P.next && !P.loading && !P.loadError ? `<div class="more"><button class="btn" data-act="more" ${P.loadingMore ? 'disabled' : ''}>${P.loadingMore ? 'Loading…' : 'Show older leads'}</button></div>` : '';
   // Traka ostaje i kad izabrani dan nema leadova, da se može izabrati drugi dan ili "All days".
   const chart = !P.loading && !P.loadError && (list.length || P.day) ? daysChart(perDay) : '';
@@ -1285,6 +1287,9 @@ app.addEventListener('click', async (e) => {
     }
     return;
   }
+  if (t.dataset.archive) { archiveLead(t.dataset.archive); return; }
+  if (t.dataset.restore) { setArchived(t.dataset.restore, false); return; }
+  if (t.dataset.archivedView != null) { P.archivedView = t.dataset.archivedView === '1'; P.status = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.ltagAdd) { const l = P.leads.find((x) => x.id === t.dataset.ltagLead); if (l) saveTags(l.id, [...(l.tags || []), t.dataset.ltagAdd]); return; }
   if (t.dataset.ltagDel) { const l = P.leads.find((x) => x.id === t.dataset.ltagLead); if (l) saveTags(l.id, (l.tags || []).filter((x) => x !== t.dataset.ltagDel)); return; }
   if (t.dataset.calview != null) { P.calView = t.dataset.calview === '1'; safe(() => localStorage.setItem('jl_cal_view', P.calView ? '1' : '0')); if (P.calView && P.range !== 'month') { P.range = 'month'; P.shift = 0; if (await loadLeads()) render(); } else render(); return; }
@@ -1295,7 +1300,7 @@ app.addEventListener('click', async (e) => {
   if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
-  if (t.dataset.seeLead) { P.tab = 'leads'; P.q = t.dataset.seeLead; P.status = ''; P.piece = ''; P.video = ''; P.day = ''; P.tag = ''; P.budget = ''; if (await loadLeads()) render(); return; }
+  if (t.dataset.seeLead) { P.archivedView = false; P.tab = 'leads'; P.q = t.dataset.seeLead; P.status = ''; P.piece = ''; P.video = ''; P.day = ''; P.tag = ''; P.budget = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
   if (t.dataset.piece !== undefined) { P.piece = t.dataset.piece; if (await loadLeads()) render(); }
   if (t.dataset.budget !== undefined && t.classList.contains('chip')) { P.budget = t.dataset.budget; if (await loadLeads()) render(); }
@@ -1403,6 +1408,53 @@ async function saveTags(id, tags) {
   }
   const fresh = app.querySelector(`[data-ltags="${CSS.escape(id)}"]`);
   if (fresh) fresh.outerHTML = tagsRow(l);
+}
+
+// Arhiviranje leada (Ognjen 24.11.2026): prozor pokazuje KOJI lead se arhivira i traži da se upiše CONFIRM.
+// Arhivirani lead nestaje iz liste, brojeva, statistike i obavještenja; ništa se ne briše, vraća se iz filtera Archived.
+function archiveDialog(l) {
+  return new Promise((resolve) => {
+    const previous = document.activeElement;
+    const el = document.createElement('dialog');
+    el.className = 'jl-dialog arch-dialog';
+    const last = l.renders?.[l.renders.length - 1];
+    const piece = (l.details || []).find((d) => /^piece$/i.test(d.label))?.value || '';
+    el.innerHTML = `<form method="dialog"><h2>Archive this lead?</h2>
+      <div class="arch-lead">${last ? `<img src="${esc(last.url)}" alt="" width="72" height="72" />` : '<span class="arch-noimg" aria-hidden="true"></span>'}
+        <div><b>${esc(l.name)}</b><span>${esc([piece, new Date(l.created_at).toLocaleDateString('en-US', { dateStyle: 'medium' })].filter(Boolean).join(' · '))}</span><span>${esc(l.email)}</span><span>${esc(l.phone || '')}</span></div></div>
+      <p>It leaves your leads, counts, stats and notifications. Nothing is deleted, and you can bring it back from the Archived filter.</p>
+      <label class="arch-type"><span>Type <b>CONFIRM</b> to archive ${esc(l.name)}</span><input class="jl-input" name="word" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CONFIRM" /></label>
+      <div class="jl-actions"><button class="jl-button" value="cancel" formnovalidate>Cancel</button><button class="jl-button primary arch-go" value="ok" disabled>Archive lead</button></div></form>`;
+    const input = el.querySelector('[name="word"]');
+    const go = el.querySelector('.arch-go');
+    const typed = () => input.value.trim().toLowerCase() === 'confirm';
+    input.addEventListener('input', () => { go.disabled = !typed(); });
+    let result = false;
+    el.querySelector('form').addEventListener('submit', (e) => {
+      if (e.submitter?.value !== 'ok') return;
+      if (!typed()) { e.preventDefault(); input.focus(); return; }
+      result = true;
+    });
+    el.addEventListener('close', () => { el.remove(); previous?.focus?.({ preventScroll: true }); resolve(result); }, { once: true });
+    document.body.appendChild(el);
+    el.showModal();
+    input.focus();
+  });
+}
+async function archiveLead(id) {
+  const l = P.leads.find((x) => x.id === id);
+  if (!l || readOnly()) return;
+  if (await archiveDialog(l)) setArchived(id, true);
+}
+async function setArchived(id, archived) {
+  try {
+    await api(`/api/portal/leads/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ archived }), json: true });
+    leadStore.clear();
+    P.stats = null;
+    if (!archived && P.archivedCount <= 1) P.archivedView = false;
+    if (await loadLeads()) render();
+    try { P.me = await api(`/api/portal/me${P.obQuery || ''}`); render(); } catch {}
+  } catch (err) { JLUI.alert(err.message); }
 }
 
 // Stats: svi upiti zlatara jednom (bez slika), periodi i zbirovi se računaju ovdje.
