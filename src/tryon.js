@@ -40,7 +40,7 @@ function grillzTryOnPrompt(answers = {}) {
 const PLACEMENT = {
   ring: {
     piece: 'ring', behind: 'finger',
-    where: 'Put the ring on one finger of the hand in IMAGE 1: the ring finger when it is clearly visible, otherwise the most visible finger. It sits at the base of the finger, between the knuckle and the palm, with the top or center stone facing up on the back of the finger. The band wraps all the way around the finger: its far side disappears behind the finger, and the skin above and below the band stays visible.',
+    where: 'Put the ring on the RING FINGER of the hand in IMAGE 1 (real test 24.11.2026: the model chose the middle finger). Find it from the outer edge of the hand: the little finger is the smallest finger, on the side of the hand opposite the thumb; the ring finger is the finger RIGHT NEXT TO the little finger, the second finger from that outer edge. The ring goes on that finger and on no other finger: not on the longest middle finger, not on the index finger next to the thumb. Only if the ring finger is hidden, use the most visible finger. It sits at the base of the finger, between the knuckle and the palm, with the top or center stone facing up on the back of the finger. The band wraps all the way around the finger: its far side disappears behind the finger, and the skin above and below the band stays visible.',
     scale: 'REAL SIZE: the band is about 2 to 6 mm wide and fits the finger snugly, never wider than the finger is thick; the head and any center stone stay in proportion to that finger (a 1 carat round stone is about 6.5 mm across, clearly narrower than the finger). Never enlarge the ring to show its detail.',
     hidden: 'If no finger is visible, do not invent a hand.',
   },
