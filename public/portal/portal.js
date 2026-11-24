@@ -14,6 +14,8 @@ const safe = (fn) => { try { return fn(); } catch { return null; } };
 
 const STATUSES = [['new', 'New'], ['contacted', 'Contacted'], ['quoted', 'Quoted'], ['won', 'Won'], ['lost', 'Lost']];
 const P = { me: null, bookings: null, leads: [], tab: 'leads', form: '', piece: '', pieces: {}, video: '', videoModels: [], status: '', q: '', next: null, counts: {}, days: {}, day: '', range: 'last14', shift: 0, loadingMore: false, loading: false, loadError: '', onboardingFlow: false, tag: '', budget: '', tagCounts: {}, budgets: {}, calView: safe(() => localStorage.getItem('jl_cal_view') === '1') || false, stats: null, statsPeriod: 'month', notif: null };
+// Kalendar je uvijek cijeli mjesec (Ognjen 24.11.2026: poslije ponovnog učitavanja je pokazivao samo zadnjih 14 dana, tri reda).
+if (P.calView) P.range = 'month';
 const day = (t) => new Date(t).toLocaleDateString('en-US', { dateStyle: 'medium' });
 // Dan upita u zoni pregledača (isto kao server sa ?tz=), da zlatar prati koliko mu dolazi dnevno.
 const dayKey = (t) => { const d = new Date(t); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
@@ -57,6 +59,7 @@ function rangeTitle(keys) {
   return `${f(a)} – ${f(b)}${b.getFullYear() !== new Date().getFullYear() ? `, ${b.getFullYear()}` : ''}`;
 }
 function daysChart(counts) {
+  if (P.calView) P.range = 'month';
   const keys = rangeKeys(P.range);
   const today = dayKey(Date.now());
   const max = Math.max(1, ...keys.map((k) => counts[k] || 0));
