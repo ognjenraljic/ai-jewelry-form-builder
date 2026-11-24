@@ -4,6 +4,7 @@ import { stepNeedsAnswer, fieldRequired, conditionsMet } from './step-rules.js';
 import { phoneHtml, phoneValid, mountPhone } from './phone.js';
 import { artCategory, detailArt, metalFamily } from './option-art.js';
 import { letteringOf, letteringCss } from './lettering.js';
+import { tryOnCopy } from './tryon-copy.js';
 
 // Widget forme: crta korake iz konfiguracije, šalje lead, traži render i doradu.
 const formId = location.pathname.split('/')[2] || 'demo';
@@ -317,21 +318,23 @@ function focusField(id) {
   el.addEventListener('animationend', () => el.classList.remove('flash'), { once: true });
 }
 
-// Grillz na osmijehu kupca: poslije rendera kupac ubaci svoju fotografiju i vidi sebe sa tim grillzima.
+// Try-on: poslije rendera kupac ubaci svoju fotografiju i vidi sebe sa tim komadom (osmijeh, uho, zglob, šaka,
+// vrat; tekstovi po komadu u tryon-copy.js, od 24.11.2026 za sve komade, ne samo grillz).
 function tryOnView() {
-  if (S.cfg.tryOn === false || S.a.type !== 'grillz' || !S.lead || S.test || !S.renders.length || S.busy) return '';
+  if (S.cfg.tryOn === false || !S.a.type || !S.lead || S.test || !S.renders.length || S.busy) return '';
+  const c = tryOnCopy(S.a.type);
   const current = S.tryons.filter((t) => t.base === S.shown + 1);
   const earlier = S.tryons.filter((t) => t.base == null);
-  const imgs = [...current, ...earlier].map((t) => `<figure><img src="${esc(t.url)}" alt="You wearing your grillz" /><figcaption>${t.base == null ? 'Earlier try-on' : 'On your smile'}</figcaption></figure>`).join('');
+  const imgs = [...current, ...earlier].map((t) => `<figure><img src="${esc(t.url)}" alt="${esc(c.alt)}" /><figcaption>${t.base == null ? 'Earlier try-on' : esc(c.caption)}</figcaption></figure>`).join('');
   const action = S.tryBusy
-    ? `<div class="tryon-wait"><span class="spin"></span>Putting them on your smile… about 20 to 40 seconds</div>`
+    ? `<div class="tryon-wait"><span class="spin"></span>${esc(c.wait)}… about 20 to 40 seconds</div>`
     : S.tryLeft > 0
       ? `<label class="check tryon-ok"><input type="checkbox" data-tryok ${S.tryOk ? 'checked' : ''} /><span>I agree that my photo is used only to create this preview. It is deleted after 30 days.</span></label>
-         <label class="btn ghost tryon-btn ${S.tryOk ? '' : 'off'}">${icon('upload')}<span>${current.length ? 'Try another photo' : 'Upload a smiling photo'}<small>or drag & drop here</small></span><input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-tryon ${S.tryOk ? '' : 'disabled'} /></label>`
+         <label class="btn ghost tryon-btn ${S.tryOk ? '' : 'off'}">${icon('upload')}<span>${current.length ? 'Try another photo' : esc(c.button)}<small>or drag & drop here</small></span><input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-tryon ${S.tryOk ? '' : 'disabled'} /></label>`
       : '<p class="fine">You have used all your try-ons.</p>';
   return `
     <section class="tryon">
-      <div class="tryon-head"><b>See them on your smile</b><span>Upload a photo of you smiling with your teeth showing. We will show you wearing the design above.</span></div>
+      <div class="tryon-head"><b>${esc(c.title)}</b><span>${esc(c.intro)}</span></div>
       ${imgs ? `<div class="tryon-imgs">${imgs}</div>` : ''}
       ${!imgs && S.tryons.length ? '<p class="fine">Choose another design preview above to see its try-on.</p>' : ''}
       ${action}
@@ -362,7 +365,7 @@ async function doTryOn(file) {
     const fd = new FormData();
     fd.set('token', S.lead.token);
     fd.set('base', String(base));
-    fd.set('photo', blob, 'smile.jpg');
+    fd.set('photo', blob, 'photo.jpg');
     fd.set('consent', 'yes');
     const res = await fetch(`/api/leads/${S.lead.leadId}/tryon`, { method: 'POST', body: fd });
     const data = await res.json();

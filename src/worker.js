@@ -1,7 +1,7 @@
 import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
 import { buildPrompt, buildTweakPrompt, buildFilmPrompt, filmDescription, placeholderWord } from './prompt.js';
 import { parseTeeth, teethSummary, teethPlan } from './teeth.js';
-import { buildTryOnPrompt } from './tryon.js';
+import { buildTryOnPrompt, tryOnCopy } from './tryon.js';
 import { applyPresetTeeth } from '../public/grillz-selection.js';
 import { stepNeedsAnswer, fieldRequired, conditionsMet } from '../public/step-rules.js';
 import { onboardingProblems } from '../public/onboarding-check.js';
@@ -695,7 +695,8 @@ async function budgetNotice(env, block, formId) {
   await notify(env, 'budget', title, ref).run();
 }
 
-// Grillz na fotografiji kupca: njegov osmijeh + render koji gleda -> ista osoba sa tim grillzima.
+// Try-on na fotografiji kupca: osmijeh (grillz), uho (minđuše), ručni zglob (sat, narukvica), šaka (prsten),
+// vrat i grudi (lanac, privjesak) + render koji gleda -> ista osoba sa tim komadom (svi komadi od 24.11.2026).
 // Fotografija i rezultat su privatni (refs/): vide ih kupac (token upita), zlatar i admin. Najviše TRYONS_PER_LEAD po upitu.
 const TRYONS_PER_LEAD = 2;
 async function createTryOn(request, env, leadId, ctx) {
@@ -704,7 +705,8 @@ async function createTryOn(request, env, leadId, ctx) {
   if (!lead || !fd.get('token') || !safeEqual(fd.get('token'), lead.token)) return json({ error: 'Not allowed.' }, 403);
   const form = await loadForm(env, lead.form_id);
   const answers = JSON.parse(lead.answers);
-  if (!form || form.tryOn === false || answers.type !== 'grillz') return json({ error: 'Try-on is not available for this piece.' }, 400);
+  const copy = tryOnCopy(answers.type);
+  if (!form || form.tryOn === false || !answers.type) return json({ error: 'Try-on is not available for this piece.' }, 400);
   if (fd.get('consent') !== 'yes') return json({ error: 'Please confirm that we may use your photo for this preview.' }, 400);
   const all = (await env.DB.prepare('SELECT * FROM renders WHERE lead_id = ? ORDER BY created_at').bind(leadId).all()).results;
   const tries = all.filter((r) => r.kind === 'tryon');
@@ -712,7 +714,7 @@ async function createTryOn(request, env, leadId, ctx) {
   const design = all.filter((r) => r.kind !== 'tryon' && r.status === 'ok');
   const n = Number(fd.get('base'));
   const pick = design[Number.isInteger(n) && n >= 1 && n <= design.length ? n - 1 : design.length - 1];
-  if (!pick) return json({ error: 'Create your grillz preview first.' }, 400);
+  if (!pick) return json({ error: `Create your ${copy.noun} preview first.` }, 400);
   const photo = fd.get('photo');
   if (!photo || typeof photo !== 'object' || !photo.size) return json({ error: 'Please upload a JPG, PNG or WebP photo.' }, 400);
   if (photo.size > MAX_REF_BYTES) return json({ error: 'The photo is too large (max 8 MB).' }, 400);
@@ -720,7 +722,7 @@ async function createTryOn(request, env, leadId, ctx) {
   if (!type) return json({ error: 'Please upload a JPG, PNG or WebP photo.' }, 400);
   const buf = await photo.arrayBuffer();
   const selfie = { mime: type, b64: toB64(buf) };
-  if (await flagged(env, { image: selfie })) return json({ error: "We can't use this photo. Please upload a clear photo of your own smile." }, 400);
+  if (await flagged(env, { image: selfie })) return json({ error: `We can't use this photo. Please upload a clear photo of ${copy.own}.` }, 400);
   const block = await spendBlock(env, lead.form_id);
   if (block) { await budgetNotice(env, block, lead.form_id); return json({ error: SPEND_MESSAGE, paused: true }, 503); }
 
@@ -735,7 +737,7 @@ async function createTryOn(request, env, leadId, ctx) {
     // Selfi je privatan i briše se poslije SELFIE_DAYS dana (noćno čišćenje).
     await env.MEDIA.put(`refs/${leadId}-selfie-${rid(8)}.${type.split('/')[1]}`, buf, { httpMetadata: { contentType: type } });
     const base = await r2Image(env, pick.image_key);
-    const prompt = buildTryOnPrompt(answers);
+    const prompt = buildTryOnPrompt(answers, form);
     try {
       const out = await runModel(env, model, prompt, [selfie, base], null, model.mask ? 'auto' : '1024x1024');
       const key = `refs/${leadId}-tryon-${rid(8)}.${out.mime.split('/')[1] || 'png'}`;
@@ -1653,7 +1655,7 @@ async function portalApi(request, env, p, secure, ctx) {
           photos: [
             ...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []),
             ...Object.entries(files).map(([k, key]) => ({ label: k.replace(/__more$/, ' (extra)').replace(/_/g, ' '), key })),
-            ...renders.filter((r) => r.lead_id === l.id && r.kind === 'tryon').map((r) => ({ label: 'On their smile', key: r.image_key })),
+            ...renders.filter((r) => r.lead_id === l.id && r.kind === 'tryon').map((r) => ({ label: tryOnCopy(a.type).portal, key: r.image_key })),
           ],
           renders: renders.filter((r) => r.lead_id === l.id && r.kind !== 'tryon').map((r) => ({ url: `/media/${r.image_key}`, tweak: r.tweak, ms: r.ms || null })),
           films: films.filter((fl) => fl.lead_id === l.id && fl.status !== 'error' && filmModelsOn(env).includes(modelKeyOf(fl.model))).map((fl) => {
