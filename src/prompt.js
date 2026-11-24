@@ -42,17 +42,28 @@ const CLARITY = {
 
 // Kamenje ide samo spolja: model je okivao i unutrašnjost prstena (Ognjen 15.11). Dio koji dodiruje kožu je uvijek gladak metal.
 const INNER = {
-  ring: 'the inside of the band (the part that touches the finger) is always smooth polished metal, never set with stones',
-  bracelet: 'the inner side of the bracelet that touches the wrist is smooth polished metal, never set with stones',
+  ring: 'the inside of the band (the part that touches the finger) is always smooth polished metal, never set with stones; where the inside of the band is visible through the ring opening it shows plain polished metal',
+  // Narukvica i lanac (District 24.11.2026): kod ledovane Cuban narukvice se na udaljenoj strani petlje vidjela unutrašnja
+  // strana karika, i ona je bila ledovana. Unutrašnja strana petlje mora biti glatka i tamo gdje je kamera vidi.
+  bracelet: 'stones only on the outer face of the links that looks away from the wrist; the inner side of the loop that touches the wrist is smooth polished metal with no stones. On the far side of the loop, where the camera looks at the inner face of the links across the opening, those links show plain polished metal, never pave',
   grillz: 'the back of each cap that touches the tooth is plain metal; stones only on the front faces',
-  pendant: 'the back of the pendant is plain polished metal; stones only on the front',
+  pendant: 'the back of the pendant and the bail are plain polished metal; stones only on the front',
   earrings: 'the backs and posts are plain metal; stones only on the front',
-  watch: 'the case back and the inner side of the band are plain metal; stones only on the bezel, dial, case sides and outer links',
-  chain: 'stones only on the outer face of the links; the side that lies against the skin is plain metal',
+  watch: 'the case back and the inner side of the band are plain metal; stones only on the bezel, dial, case sides and outer links; where the inside of the bracelet loop is visible it shows plain polished metal',
+  chain: 'stones only on the outer face of the links; the side that lies against the skin is plain polished metal, and where the chain turns so its back side faces the camera, those links show plain polished metal, never pave',
+  necklace: 'stones only on the outer face; the side that lies against the skin is plain polished metal, never set with stones',
 };
 // Opšte pravilo za svaki render i svaku doradu, i kad kupac led traži samo opisom ili doradom ("make it more iced"):
 // iznutra (prsten, sat, narukvica, poleđina) nikad nema leda (Ognjen 16.11: "i to kao pravilo").
-export const INSIDE_RULE = (type) => `Rule for any icing, pave or stones on this piece, now or in any change: ${INNER[type] || 'any surface that touches the skin stays smooth polished metal'}. Never ice or set stones on the inside or the back.`;
+export const INSIDE_RULE = (type) => `NO ICE ON THE INSIDE (strict rule for any icing, pave or stones on this piece, now or in any change): ${INNER[type] || 'any surface that touches the skin stays smooth polished metal'}. Never ice or set stones on the inside, the back or any skin side, even where the inside is visible in the picture; real iced jewelry is only set on the outside.`;
+
+// Split shank (District 24.11.2026, "make it a rule"): krak se dijeli na dva i u svakom dijelu ispod glave stoji po
+// jedan manji dijamant, dakle dva mala kamena uz glavu. Važi i kad je How iced? = None (to su dio izgleda split shanka).
+export const SPLIT_SHANK =
+  'Split shank band: on each side the band divides into two separate thin strands as it rises toward the head, leaving an open gap between the strands; ' +
+  'inside that split, on each side of the head, sits ONE smaller round diamond held in its own small setting, so the ring shows exactly 2 smaller diamonds in the split shank (one left, one right), clearly smaller than any center or side stone. ' +
+  'These two split-shank diamonds are always present with a split shank, also on an otherwise plain band; the inside of the band stays plain polished metal.';
+const isSplitShank = (label, value) => value === 'split' || /split[\s-]*shank/i.test(String(label || ''));
 // "How iced?" = None (zlatar ga postavi kao prvo pitanje o kamenju): bez kamenja na metalu, čak i kad stil inače ima led.
 const NOT_ICED = (type) => `Not iced: no pave, no accent stones and no diamonds on the metal surfaces, even if the style is usually iced; clean polished metal${type === 'ring' ? '. A center stone is set only if one is specified in these instructions' : ''}.`;
 
@@ -315,8 +326,12 @@ export function buildPrompt(form, answers, { refs = [], style = null, cinematic 
   // Dental gold ne nosi kamenje (Ognjen 16.11), čak i ako je kupac led tražio opisom.
   const noIceMetal = a.metal === 'dental-gold' || /dental/i.test(optLabel('metal'));
   const notIced = noIceMetal || a.coverage === 'none' || /^(none|no|not iced|no icing|no ice)$/i.test(optLabel('coverage'));
+  // Split shank (24.11.2026): dva manja dijamanta u rascjepu kraka uvijek, i uz "Not iced".
+  const bandF = allFields.find((f) => /(^|_)band$/.test(f.id) || /^band$/i.test(clean(f.label, 20)));
+  const split = a.type === 'ring' && bandF && isSplitShank((bandF.options || []).find((o) => o.value === a[bandF.id])?.label, a[bandF.id]);
+  if (split) lines.push(SPLIT_SHANK);
   if (notIced) {
-    lines.push(NOT_ICED(a.type));
+    lines.push(NOT_ICED(a.type) + (split ? ' The only exception: the 2 smaller diamonds in the split shank described above.' : ''));
   } else if (a.stones && a.stones !== 'none') {
     const clarity = CLARITY[a.clarity] ? `, ${CLARITY[a.clarity]}` : optLabel('clarity') ? `, ${optLabel('clarity')} clarity` : '';
     const coverage = COVERAGE[a.coverage] || (optLabel('coverage') ? `set as ${optLabel('coverage')}` : fieldOf('coverage') ? COVERAGE.accents : 'set where it suits the design');
