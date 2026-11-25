@@ -2125,9 +2125,11 @@ async function portalGhl(request, env, p, client) {
       if ('vision' in b.prod) pr.vision = b.prod.vision === true;
       if ('enabled' in b.prod) pr.enabled = b.prod.enabled === true;
       if (pr.enabled && (!pr.pipelineId || !pr.stages?.placed)) return json({ error: 'Pick the production pipeline and at least the "Order placed" stage first.' }, 400);
-      if (pr.enabled && pr.pipelineId && pr.pipelineId === (next.pipelineId || cur.pipelineId)) return json({ error: 'Use a separate pipeline for production, not the sales pipeline, so workers never see sales cards.' }, 400);
       next.prod = pr;
     }
+    // Prodajni i proizvodni pipeline nikad isti, ni u jednom smjeru (Ognjen 25.11.2026 izabrao Production kao prodajni):
+    // inače bi leadovi sa imenom, mejlom i telefonom išli na tablu radnika.
+    if (next.pipelineId && next.prod?.pipelineId && next.pipelineId === next.prod.pipelineId) return json({ error: 'The sales pipeline and the production pipeline must be different, so workers never see customer details.' }, 400);
     if (!next.enabled) next.backfill = false;
     // Uključenje važi samo za nove leadove (stari se ne šalju naknadno, cron gleda zadnja 24 h).
     if (next.enabled && !cur.enabled) next.enabledAt = Date.now();

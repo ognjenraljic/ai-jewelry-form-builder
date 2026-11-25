@@ -77,6 +77,8 @@ ok(users.some((u) => u.id === 'userWorker01') && users.some((u) => u.name === 'E
 ok((await put({ prod: { assignTo: 'bad id!' } })).status === 400, 'pogrešan User ID odbijen');
 g = (await put({ prod: { enabled: true, pipelineId: 'prod1', stages: prod.guessOrder, assignTo: 'userWorker01', assignName: 'Moissanite Worker' } })).body;
 ok(g.prod?.enabled && g.prod.assignTo === 'userWorker01', 'proizvodna tabla uključena, radnik izabran');
+ok((await put({ pipelineId: 'prod1' })).status === 400, 'proizvodni pipeline kao prodajni odbijen (podaci kupca nikad na tablu)');
+ok((await fetch(`${BASE}/api/portal/ghl`, { headers: C }).then(j)).body.pipelineId === 'pipe1', 'prodajni pipeline ostao isti');
 
 // Won -> narudžba na tabli: kontakt bez podataka kupca, bilješka samo sa specifikacijama.
 const won = await fetch(`${BASE}/api/portal/leads/${c.leadId}`, { method: 'PATCH', headers: C, body: JSON.stringify({ status: 'won' }) }).then(j);
