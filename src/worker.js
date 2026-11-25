@@ -1,4 +1,5 @@
-import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth } from './forms.js';
+import { legalHtml } from './legal.js';
+import { FORMS, TEMPLATES, PIECE_OPTIONS, ONBOARDING_DEFAULTS, formFromOnboarding, publicForm, styleOf, optionsOf, offeredFor, validateFormDef, fromTemplate, enabledSteps, withStyleTeeth, contactTexts } from './forms.js';
 import { buildPrompt, buildTweakPrompt, buildFilmPrompt, filmDescription, placeholderWord } from './prompt.js';
 import { parseTeeth, teethSummary, teethPlan } from './teeth.js';
 import { buildTryOnPrompt, tryOnCopy } from './tryon.js';
@@ -153,6 +154,8 @@ async function route(request, env, ctx, url) {
   if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/appointments\/([a-z0-9]{16})\.ics$/)) && read) return pageIcs(request, env, m[1], m[2]);
   if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/next$/)) && request.method === 'POST') return pageNext(request, env, ctx, m[1]);
   if (p === '/deposit/done' && read) return depositDone(request, env, url);
+  // A2P (25.11.2026): Privacy Policy i Terms radnje koja nema svoje linkove u formi.
+  if ((m = p.match(/^\/legal\/([a-z0-9][a-z0-9-]{0,39})\/(privacy|terms)$/)) && read) return legalPage(request, env, m[1], m[2]);
   if ((m = p.match(/^\/api\/hooks\/ghl\/([a-z0-9]{32})$/)) && request.method === 'POST') return ghlHook(request, env, ctx, m[1]);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/renders$/)) && request.method === 'POST') return createRender(request, env, m[1], ctx);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/check$/)) && request.method === 'POST') return teethCheckRoute(request, env, m[1], ctx);
@@ -170,6 +173,16 @@ async function page(env, url, request, opts) {
   const res = await env.ASSETS.fetch(new Request(url, { method: 'GET', headers: request.headers }));
   const out = withSecurity(res, { page: true, ...opts });
   return request.method === 'HEAD' ? new Response(null, { status: out.status, headers: out.headers }) : out;
+}
+
+async function legalPage(request, env, formId, kind) {
+  const form = await loadForm(env, formId, { live: true });
+  if (!form) return notFoundPage();
+  const row = await env.DB.prepare('SELECT c.data FROM forms f JOIN clients c ON c.id = f.client_id WHERE f.id = ?').bind(formId).first();
+  const d = parseJson(row?.data);
+  const html = legalHtml(kind, { brand: form.brand?.name || 'The jeweler', email: validEmail(d.pricing?.replyTo) || '', info: quoteInfoText(d.pricing?.quoteInfo) || '' });
+  const res = withSecurity(new Response(request.method === 'HEAD' ? null : html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' } }), { page: true });
+  return res;
 }
 
 function notFoundPage() {
@@ -228,6 +241,13 @@ async function createLead(request, env, ctx) {
   if (fd.get('consent') !== 'yes') return json({ error: 'Please accept to be contacted.' }, 400);
   const ip = request.headers.get('cf-connecting-ip') || 'local';
   if (!(await turnstileOk(env, fd.get('cf-turnstile-response'), ip))) return json({ error: 'Please confirm you are human and try again.' }, 400);
+  // A2P 10DLC: SMS pristanak je neobavezan; čuva se sa vremenom, IP-om, stranicom i tačnim tekstom (dokaz za registraciju i TCPA).
+  const ct = contactTexts(form);
+  const consent = {
+    contact: 1, sms: fd.get('sms_consent') === 'yes' ? 1 : 0, mkt: fd.get('sms_marketing') === 'yes' ? 1 : 0,
+    at: Date.now(), ip, page: clean(request.headers.get('referer') || '', 300),
+    text: { contact: ct.consent, sms: ct.smsConsent, mkt: ct.smsMarketing },
+  };
 
   let answers;
   try { answers = JSON.parse(fd.get('answers') || '{}'); } catch { return json({ error: 'Invalid answers.' }, 400); }
@@ -265,10 +285,10 @@ async function createLead(request, env, ctx) {
   const token = rid(24);
   const ins = await env.DB.prepare(
     // lead_no (25.11.2026): sljedeći redni broj radnje u istom upisu (D1 izvršava jedan upis odjednom, pa nema duplikata).
-    `INSERT INTO leads (id, form_id, token, name, email, phone, answers, ip, ip_net, created_at, page_key, lead_no)
-     SELECT ?,?,?,?,?,?,?,?,?,?,?, (SELECT COALESCE(MAX(l2.lead_no), 0) + 1 FROM leads l2 JOIN forms f2 ON f2.id = l2.form_id WHERE f2.client_id = (SELECT client_id FROM forms WHERE id = ?))
+    `INSERT INTO leads (id, form_id, token, name, email, phone, answers, ip, ip_net, created_at, page_key, consent, lead_no)
+     SELECT ?,?,?,?,?,?,?,?,?,?,?,?, (SELECT COALESCE(MAX(l2.lead_no), 0) + 1 FROM leads l2 JOIN forms f2 ON f2.id = l2.form_id WHERE f2.client_id = (SELECT client_id FROM forms WHERE id = ?))
      WHERE (SELECT COUNT(*) FROM leads WHERE ip_net = ? AND created_at > ?) < ?`
-  ).bind(id, form.id, token, name, email, phone, JSON.stringify(answers), ip, net, Date.now(), rid(24), form.id, net, Date.now() - 3600_000, limit).run();
+  ).bind(id, form.id, token, name, email, phone, JSON.stringify(answers), ip, net, Date.now(), rid(24), JSON.stringify(consent), form.id, net, Date.now() - 3600_000, limit).run();
   if (!ins.meta.changes) return json({ error: 'Too many requests. Please try again later.' }, 429);
 
   // Fotografije tek poslije upisa, pa nema fajlova bez upita.
@@ -1638,7 +1658,7 @@ async function portalApi(request, env, p, secure, ctx) {
     }
     // Brzina (22.11.2026): sve što ne zavisi od stranice ide u isto vrijeme kad i lista (ranije 7 upita zaredom).
     const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
-    const [leadRes, countRows, pieceRows, dayRes, vrowsRes, tagRows, budgetRows, archRow] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page, l.tags, l.archived_at,
+    const [leadRes, countRows, pieceRows, dayRes, vrowsRes, tagRows, budgetRows, archRow] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page, l.tags, l.archived_at, l.consent,
         l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data, l.lead_no, l.ghl_order, l.deposit, l.fulfillment,
         (SELECT json_object('kind', a.kind, 'start', a.start_at, 'via', a.via, 'purpose', a.purpose) FROM appointments a WHERE a.lead_id = l.id AND a.status = 'booked' AND a.end_at > CAST(strftime('%s', 'now') AS INTEGER) * 1000 ORDER BY a.start_at LIMIT 1) AS appt
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
@@ -1700,7 +1720,7 @@ async function portalApi(request, env, p, secure, ctx) {
         try { files = JSON.parse(l.files || '{}'); } catch {}
         return {
           id: l.id, ref: leadRef(l.lead_no), formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
-          status: l.status || 'new', note: l.note || '', archivedAt: l.archived_at || null, tags: parseTags(l.tags), quotes: leadQuotes(l.quotes), page: pageInfo(l),
+          status: l.status || 'new', note: l.note || '', archivedAt: l.archived_at || null, tags: parseTags(l.tags), quotes: leadQuotes(l.quotes), page: pageInfo(l), sms: smsState(l.consent),
           alertedAt: l.alerted_at || null, autoSentAt: l.auto_sent_at || null, firstReplyAt: l.first_reply_at || null,
           order: orderView(l.order_no, l.order_data), prodBoard: ghlOrderInfo(l.ghl_order),
           ...leadBookingInfo(l, bcfg),
@@ -1941,7 +1961,7 @@ async function ghlSyncLead(env, leadId, origin = ORIGIN_BASE, { retry = false } 
   try { tags = JSON.parse(row.tags || '[]') || []; } catch {}
   const lead = {
     ref: leadRef(row.lead_no), name: row.name, email: row.email, phone: row.phone, status: row.status || 'new', piece: pieceName(a), form: form.name || storeName(row), vision: a.vision || '',
-    details: leadDetails(form, a).slice(0, 20), area: areaOf(row.phone)?.label || '', tags,
+    details: leadDetails(form, a).slice(0, 20), area: areaOf(row.phone)?.label || '', tags, consent: parseJson(row.consent, null),
     pageUrl: row.page_key ? `${origin}/p/${row.page_key}?preview=1` : '', price: Number(quotes.picked?.price) || Number(quotes.picked?.total) || 0, quoteMsg: quotes.picked?.msg || '',
   };
   try {
@@ -1981,6 +2001,8 @@ function ghlOrderInfo(raw) {
   if (!o) return null;
   return { on: !!o.oppId, error: o.oppId ? null : o.error || null };
 }
+// A2P: za portal samo da li kupac prima SMS ('yes' / 'no' / null = lead od prije zapisa pristanka) i marketing.
+const smsState = (raw) => { const c = parseJson(raw, null); return c ? { ok: !!c.sms, mkt: !!c.mkt } : null; };
 const parseJson = (raw, dflt = {}) => { try { const v = JSON.parse(raw || 'null'); return v && typeof v === 'object' ? v : dflt; } catch { return dflt; } };
 async function ghlSyncOrder(env, leadId, origin = ORIGIN_BASE) {
   const row = await notifyRow(env, leadId);
@@ -3287,7 +3309,7 @@ async function ghlHook(request, env, ctx, hookKey) {
   const pl = hookPayload(parseJson(raw));
   const note = (patch) => env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.ghl.lastHook', json(?)) WHERE id = ?`).bind(JSON.stringify({ at: Date.now(), ...patch }), client.id).run().catch(() => {});
   if (!/deposit|payment|paid|order|invoice/.test(pl.event)) { await note({ matched: false, ignored: pl.event }); return json({ ok: true, ignored: true }); }
-  const base = `SELECT l.id, l.name, l.email, l.phone, l.page_key, l.deposit, l.lead_no, l.ghl, l.answers FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL`;
+  const base = `SELECT l.id, l.name, l.email, l.phone, l.page_key, l.deposit, l.lead_no, l.ghl, l.answers, l.consent FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL`;
   let lead = null;
   if (pl.contactId) lead = await env.DB.prepare(`${base} AND json_extract(l.ghl, '$.contactId') = ? ORDER BY l.created_at DESC LIMIT 1`).bind(client.id, pl.contactId).first();
   if (!lead && pl.email) lead = await env.DB.prepare(`${base} AND lower(l.email) = ? ORDER BY l.created_at DESC LIMIT 1`).bind(client.id, pl.email).first();
@@ -3314,6 +3336,11 @@ async function ghlAfterDeposit(env, client, lead, origin, contactFromHook) {
   const link = `${origin}/p/${lead.page_key}?next=1`;
   await ghlAddNote(conf.token, contactId, `JewelryLead${leadRef(lead.lead_no) ? ` ${leadRef(lead.lead_no)}` : ''}: deposit received. The customer's next-step questions (in the area or not, studio visit or shipping): ${link}`, ghlFetch(env));
   if (!conf.cfg.smsNext) return;
+  // A2P: bez SMS pristanka (ili stari lead bez zapisa) nema poruke; kupac i dalje dobija pitanja na stranici poslije plaćanja.
+  if (!parseJson(lead.consent).sms) {
+    await env.DB.prepare(`UPDATE leads SET deposit = json_set(deposit, '$.smsSkipped', 'no consent') WHERE id = ?`).bind(lead.id).run();
+    return;
+  }
   const d = parseJson(client.data);
   const first = String(lead.name || '').trim().split(/\s+/)[0] || 'there';
   const piece = pieceName(parseJson(lead.answers));

@@ -47,10 +47,10 @@ const V = { 'x-portal-token': viewAs, 'content-type': 'application/json' };
 const link = (await fetch(`${BASE}/api/admin/clients/${client.id}/portal-link`, { method: 'POST', headers: H, body: '{}' }).then(j)).body.url;
 const C = { 'x-portal-token': link.match(/k=([a-z0-9]+)/)[1], 'content-type': 'application/json' };
 await fetch(`${BASE}/api/portal/pricing`, { method: 'PUT', headers: C, body: JSON.stringify({ pricing: { depositUrl: 'https://link.fastpaydirect.com/payment-link/test', quoteInfo: 'Calendar Check\n1 Main St, Denver' } }) });
-const mk = async (name, type = 'grillz') => {
+const mk = async (name, type = 'grillz', sms = 'no') => {
   const fd = new FormData();
   const email = `${name.split(' ')[0].toLowerCase()}${Date.now() % 1e6}@example.com`;
-  for (const [k, v] of Object.entries({ formId: form.id, name, email, phone: '303 555 0101', consent: 'yes' })) fd.set(k, v);
+  for (const [k, v] of Object.entries({ formId: form.id, name, email, phone: '303 555 0101', consent: 'yes', sms_consent: sms })) fd.set(k, v);
   fd.set('answers', JSON.stringify(type === 'grillz' ? { type: 'grillz', style: 'set', metal: 'yellow-gold', karat: '14K', teeth: 'T3,T4,T5,T6,T7,T8', stones: 'lab', coverage: 'full', budget: '$1,500 - $2,500' } : { type: 'ring', style: 'halo', metal: 'white-gold', karat: '14K', stones: 'lab', coverage: 'accents', budget: '$1,500 - $2,500' }));
   return { ...(await fetch(`${BASE}/api/leads`, { method: 'POST', body: fd }).then(j)).body, email };
 };
@@ -137,7 +137,7 @@ const cals = await fetch(`${BASE}/api/portal/ghl/calendars`, { method: 'POST', h
 ok(cals.body.calendars?.length === 2, `GHL kalendari učitani ${cals.body.error || ''}`);
 const g1 = await fetch(`${BASE}/api/portal/ghl`, { method: 'PUT', headers: C, body: JSON.stringify({ enabled: true, calendars: { online: 'calOnline01', visit: '' }, smsNext: true, hook: 'create' }) }).then(j);
 ok(g1.body.calendars?.online === 'calOnline01' && /\/api\/hooks\/ghl\/[a-z0-9]{32}$/.test(g1.body.hookUrl || '') && g1.body.smsNext, 'kalendar, SMS i webhook adresa sačuvani');
-const c = await mk('Cara Ghl');
+const c = await mk('Cara Ghl', 'grillz', 'yes'); // A2P: SMS poslije depozita ide samo uz SMS pristanak sa forme
 await sleep(1500);
 const kc = (await fetch(`${BASE}/api/portal/leads`, { headers: C }).then(j)).body.leads.find((l) => l.id === c.leadId)?.page?.url.slice(3);
 const gs = await fetch(`${BASE}/api/page/${kc}/slots?kind=online`).then(j);
@@ -179,6 +179,17 @@ ok(nx3.status === 200 && c3.tags.includes('jewelrylead ship mold kit') && c3.tag
 const pb2 = (await fetch(`${BASE}/api/portal/bookings`, { headers: C }).then(j)).body;
 const d3 = pb2.deposits.find((x) => x.leadId === c.leadId);
 ok(d3?.paidAt && d3.amount === 500 && d3.smsAt && /mold kit/.test(d3.fulfillment?.text || ''), 'portal: depozit plaćen, SMS poslat, odgovor upisan');
+// A2P (25.11.2026): kupac bez SMS pristanka plati depozit -> bilješka da, SMS ne.
+const dn = await mk('Dan Nosms');
+await sleep(400);
+const before = (await fetch(`${GHL}/_state`).then((r) => r.json())).messages.length;
+const hitNo = await fetch(hook, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: dn.email, customData: { amount: '300', event: 'deposit' } }) }).then(j);
+await sleep(1200);
+const stNo = await fetch(`${GHL}/_state`).then((r) => r.json());
+const dNo = (await fetch(`${BASE}/api/portal/bookings`, { headers: C }).then(j)).body.deposits.find((x) => x.leadId === dn.leadId);
+ok(hitNo.body.matched === true && stNo.messages.length === before && dNo?.paidAt && !dNo.smsAt, 'bez SMS pristanka: depozit upisan, SMS ne ide');
+const pl = (await fetch(`${BASE}/api/portal/leads`, { headers: C }).then(j)).body.leads;
+ok(pl.find((x) => x.id === c.leadId)?.sms?.ok === true && pl.find((x) => x.id === dn.leadId)?.sms?.ok === false, 'portal: Texts OK / No texts po leadu');
 
 console.log(fails ? `\n${fails} FAIL` : '\nSve prošlo.');
 process.exit(fails ? 1 : 0);

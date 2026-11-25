@@ -127,6 +127,15 @@ export function splitName(name) {
   return { firstName: parts[0] || '', lastName: parts.slice(1).join(' ') };
 }
 
+// A2P pristanak (25.11.2026): tagovi po kojima GHL workflowi biraju kome smiju slati SMS, i red u bilješci.
+export const SMS_TAG = 'sms consent';
+export const SMS_MKT_TAG = 'sms marketing consent';
+export const consentTags = (c) => (c ? [...(c.sms ? [SMS_TAG] : []), ...(c.mkt ? [SMS_MKT_TAG] : [])] : []);
+function smsLine(c) {
+  const when = c.at ? new Date(c.at).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : '';
+  return `Text messages: ${c.sms ? 'YES' : 'NO'} about this request, ${c.mkt ? 'YES' : 'NO'} marketing${when ? ` (form, ${when})` : ''}. Email and phone contact: yes.`;
+}
+
 // Tekst bilješke: sve što je kupac izabrao i linkovi, da prodavac u GHL-u ne mora otvarati portal.
 export function ghlNoteText(lead) {
   return [
@@ -134,6 +143,7 @@ export function ghlNoteText(lead) {
     lead.details?.length ? lead.details.map((d) => `${d.label}: ${d.value}`).join('\n') : '',
     lead.vision ? `What they want: "${String(lead.vision).slice(0, 800)}"` : '',
     lead.area ? `Phone area: ${lead.area}` : '',
+    lead.consent ? smsLine(lead.consent) : '',
     lead.renderUrl ? `AI design: ${lead.renderUrl}` : '',
     lead.pageUrl ? `Their design and quote page: ${lead.pageUrl}` : '',
     lead.price ? `Estimated price: $${Math.round(lead.price).toLocaleString('en-US')}` : '',
@@ -221,7 +231,7 @@ export async function ghlPushLead(token, cfg, lead, prev = {}, fetchFn = fetch) 
   }
   if (!done.tagged) {
     // Tagovi odvojeno: upsert sa tags bi zamijenio tagove koje kontakt već ima.
-    const tags = [...new Set([...(cfg.tags?.length ? cfg.tags : ['jewelrylead']), ...(cfg.pieceTag !== false && lead.piece ? [`jewelrylead ${lead.piece}`] : []), ...(lead.tags || [])].map(tagOf).filter(Boolean))];
+    const tags = [...new Set([...(cfg.tags?.length ? cfg.tags : ['jewelrylead']), ...(cfg.pieceTag !== false && lead.piece ? [`jewelrylead ${lead.piece}`] : []), ...(lead.tags || []), ...consentTags(lead.consent)].map(tagOf).filter(Boolean))];
     if (tags.length) await ghlCall(token, 'POST', `/contacts/${encodeURIComponent(done.contactId)}/tags`, { tags }, fetchFn);
     done.tagged = true;
   }

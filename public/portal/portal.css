@@ -734,6 +734,8 @@ button.dbar.future { opacity: .35; cursor: default; }
 .tab-badge.nbadge { background: var(--accent); color: var(--accent-ink); }
 .area-hint { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--ink-soft); font-size: 12px; font-weight: 600; cursor: help; }
 .area-hint svg { width: 13px; height: 13px; color: var(--accent); }
+.sms-hint { display: inline-flex; align-items: center; padding: 2px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink-soft); font-size: 12px; font-weight: 600; }
+.sms-hint.ok { color: var(--accent); }
 
 .ltags { position: relative; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .ltags-l { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); margin-right: 2px; }

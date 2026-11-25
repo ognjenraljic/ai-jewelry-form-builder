@@ -29,7 +29,7 @@ const S = {
   cfg: null,
   i: 0,
   a: {},
-  contact: { name: '', email: '', phone: '', consent: false },
+  contact: { name: '', email: '', phone: '', consent: false, sms: false, smsMarketing: false },
   files: {}, // polje (ili polje__more) -> { blob, url, name }
   uploading: new Set(),
   forge: null, // scena čekanja rendera (forgeScene)
@@ -579,6 +579,9 @@ function contactView() {
         <div class="field"><span class="label">Phone</span>${phoneHtml()}</div>
       </div>
       <label class="check"><input type="checkbox" data-c="consent" ${c.consent ? 'checked' : ''} /><span>${esc(k.consent)}</span></label>
+      ${k.smsConsent ? `<label class="check"><input type="checkbox" data-c="sms" ${c.sms ? 'checked' : ''} /><span>${esc(k.smsConsent)} <em class="opt">Optional</em></span></label>` : ''}
+      ${k.smsMarketing ? `<label class="check"><input type="checkbox" data-c="smsMarketing" ${c.smsMarketing ? 'checked' : ''} /><span>${esc(k.smsMarketing)} <em class="opt">Optional</em></span></label>` : ''}
+      <p class="legal">Consent to text messages is not a condition of purchase. <a href="${esc(k.privacyUrl)}" target="_blank" rel="noopener">Privacy Policy</a> · <a href="${esc(k.termsUrl)}" target="_blank" rel="noopener">Terms</a></p>
       ${S.cfg.turnstile ? '<div class="ts" id="ts"></div>' : ''}
       ${S.error ? `<p class="error" role="alert">${esc(S.error)}</p>` : ''}
       <div class="foot">
@@ -1057,6 +1060,9 @@ async function submit() {
   fd.set('email', S.contact.email);
   fd.set('phone', S.contact.phone);
   fd.set('consent', S.contact.consent ? 'yes' : 'no');
+  // A2P: SMS pristanak je neobavezan i ide sa tačnim tekstom koji je kupac vidio (dokaz pristanka).
+  fd.set('sms_consent', S.contact.sms ? 'yes' : 'no');
+  fd.set('sms_marketing', S.contact.smsMarketing ? 'yes' : 'no');
   // Šaljemo samo fajlove pitanja koja su i dalje vidljiva (i dodatni fajl samo uz odgovor na pitanje).
   const shown = new Set(S.cfg.steps.filter((st) => st.enabled !== false).flatMap((st) => st.fields.filter((f) => f.enabled !== false && visible(f)).map((f) => f.id)));
   for (const [key, file] of Object.entries(S.files)) {

@@ -1229,7 +1229,7 @@ function leadsView(resultsOnly = false) {
         <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}${pageBox(l)}</div>
         <div>
           <div class="lead-top"><h2>${esc(l.name)}</h2>${l.ref ? `<span class="lead-ref" title="Lead ID: search it here or in GoHighLevel">${esc(l.ref)}${copyBtn(l.ref, 'lead ID')}</span>` : ''}<span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
-          <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span>${areaHint(l.phone)}</div>
+          <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span>${areaHint(l.phone)}${smsHint(l.sms)}</div>
           ${replyLine(l)}
           ${bookingLine(l)}
           ${orderBox(l)}
@@ -1710,6 +1710,13 @@ const PIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-6.
 function areaHint(phone) {
   const a = areaOf(phone);
   return a ? `<span class="area-hint" title="Area code ${esc(a.code)} · ${esc(a.region)}. Where the number is from, not always where the customer lives.">${PIN}${esc(a.label)}</span>` : '';
+}
+// A2P (25.11.2026): da li je kupac na formi pristao na SMS. Stari leadovi nemaju zapis pa nema ni oznake.
+function smsHint(sms) {
+  if (!sms) return '';
+  return sms.ok
+    ? `<span class="sms-hint ok">Texts OK${sms.mkt ? ' · offers too' : ''}</span>`
+    : '<span class="sms-hint no">No texts · email or call</span>';
 }
 // Natpis budžeta po vrijednosti odgovora (iz formi zlatara).
 function budgetLabelOf(v) {

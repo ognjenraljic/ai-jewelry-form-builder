@@ -121,6 +121,10 @@ h1 em { font-style: italic; color: var(--accent); }
 .check input::after { content: ''; width: 10px; height: 10px; border-radius: 3px; background: var(--accent); transform: scale(0); transition: transform 0.15s var(--ease); }
 .check input:checked { border-color: var(--accent); }
 .check input:checked::after { transform: scale(1); }
+.check .opt { font-style: normal; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-faint, var(--ink-soft)); opacity: 0.75; white-space: nowrap; }
+.check + .check { margin-top: 10px; }
+.legal { margin: 10px 0 0 32px; font-size: 12px; line-height: 1.5; color: var(--ink-soft); opacity: 0.85; }
+.legal a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 /* Footer */
 .foot { position: sticky; bottom: 0; padding: 18px 0 4px; background: linear-gradient(to top, var(--bg) 70%, transparent); margin-top: 26px; }

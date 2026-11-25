@@ -765,7 +765,7 @@ const LIMITS = [
   [/\.fields\.\d+\.label$/, 120], [/\.fields\.\d+\.subtitle$/, 200], [/\.fields\.\d+\.placeholder$/, 160], [/\.fields\.\d+\.hint$/, 200],
   [/^styles\..+\.label$/, 40], [/^styles\..+\.shape$/, 300],
   [/^products\.\d+\.name$/, 80], [/^products\.\d+\.price$/, 30], [/^products\.\d+\.description$/, 300], [/^products\.\d+\.url$/, 500],
-  [/^contact\.title$/, 120], [/^contact\.subtitle$/, 240], [/^contact\.consent$/, 400], [/^contact\.button$/, 40],
+  [/^contact\.title$/, 120], [/^contact\.subtitle$/, 240], [/^contact\.consent$/, 400], [/^contact\.sms(Consent|Marketing)$/, 500], [/^contact\.(privacy|terms)Url$/, 300], [/^contact\.button$/, 40],
   [/^result\.done$/, 200], [/^result\.disclaimer$/, 240], [/^result\.productsTitle$/, 80],
 ];
 const limitOf = (path) => LIMITS.find(([re]) => re.test(path))?.[1];
@@ -1259,7 +1259,11 @@ function textsView() {
     <h3>Contact step ${help(H.contact)}</h3>
     ${inp('contact.title', 'Title')}
     ${inp('contact.subtitle', 'Subtitle')}
-    ${area('contact.consent', 'Consent text', { hint: 'Shown next to the required checkbox. Name the jeweler and the ways they may contact the customer.' })}
+    ${area('contact.consent', 'Consent text', { hint: 'Shown next to the required checkbox: contact by email and phone, plus the Privacy Policy and Terms. Do not ask for text messages here (A2P 10DLC needs a separate, optional box).' })}
+    ${area('contact.smsConsent', 'Text message consent (optional box)', { hint: 'Messages about the request, quote and appointments. Empty = the standard A2P wording with your store name. Must keep: message frequency, data rates, HELP and STOP.' })}
+    ${area('contact.smsMarketing', 'Marketing text consent (optional box)', { hint: 'Offers and new pieces, a separate optional box. Empty = the standard A2P wording.' })}
+    ${inp('contact.privacyUrl', 'Privacy Policy link', { ph: 'https://yourstore.com/privacy', hint: 'Empty = a Privacy Policy page JewelryLead makes for this form, with the text message rules A2P registration checks.' })}
+    ${inp('contact.termsUrl', 'Terms link', { ph: 'https://yourstore.com/terms', hint: 'Empty = a Terms page with the text message program terms.' })}
     ${inp('contact.button', 'Button')}
     <h3>Preview ${help(H.preview)}</h3>
     ${area('result.loading', 'Messages while rendering (one per line)', { kind: 'lines' })}

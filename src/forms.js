@@ -121,11 +121,32 @@ const visionStep = ({ inscriptionLabel = 'Name or text on the piece (optional)',
     { id: 'reference', type: 'upload', label: 'Inspiration photo (optional)', hint: 'A screenshot or photo of something close to what you want.', ...B },
   ],
 });
+// A2P 10DLC (25.11.2026): obavezan je samo pristanak na kontakt mejlom i telefonom; SMS su dva ODVOJENA,
+// neobavezna, neoznačena checkboxa (poruke o upitu / marketing), sa učestalošću, cijenom, HELP i STOP.
+// Privacy Policy i Terms: link radnje, inače stranice /legal/<forma>/privacy|terms koje pravi JewelryLead.
+export const consentTexts = (brand) => ({
+  consent: `I agree to be contacted about my design by ${brand} by email and phone, and I accept the Privacy Policy and Terms.`,
+  smsConsent: `I consent to receive non-marketing text messages from ${brand} about my design request, quote and appointments. Message frequency varies. Message and data rates may apply. Reply HELP for help or STOP to opt out.`,
+  smsMarketing: `I consent to receive marketing text messages from ${brand}, such as offers and new pieces, at the phone number provided. Message frequency varies. Message and data rates may apply. Reply HELP for help or STOP to opt out.`,
+});
+// Stari podrazumijevani tekst je jednim obaveznim checkboxom tražio i SMS, što A2P ne dozvoljava; takve forme dobijaju nove tekstove.
+const OLD_CONSENT = /by email, phone or text/i;
+export function contactTexts(form) {
+  const brand = form.brand?.name || 'the jeweler';
+  const d = consentTexts(brand);
+  const c = { ...(form.contact || {}) };
+  if (!c.consent || OLD_CONSENT.test(c.consent)) c.consent = d.consent;
+  if (!c.smsConsent) c.smsConsent = d.smsConsent;
+  if (!c.smsMarketing) c.smsMarketing = d.smsMarketing;
+  c.privacyUrl = c.privacyUrl || `/legal/${form.id}/privacy`;
+  c.termsUrl = c.termsUrl || `/legal/${form.id}/terms`;
+  return c;
+}
 const texts = (brand) => ({
   contact: {
     title: 'Your design is ready to render',
     subtitle: 'Where should we send your preview and follow up with a quote?',
-    consent: `I agree to be contacted about my design by ${brand} by email, phone or text. Message and data rates may apply.`,
+    ...consentTexts(brand),
     button: 'Reveal my design',
   },
   result: {
@@ -280,7 +301,7 @@ export const FORMS = { demo: { ...fromTemplate('custom-enquiry', { id: 'demo', b
 
 export function publicForm(form) {
   // Sve što ide u browser. Opis oblika (shape) i napomene za AI (note) nisu za kupca.
-  const { id, brand, theme, maxRenders, contact, result, tryOn, products, imageStyle } = form;
+  const { id, brand, theme, maxRenders, result, tryOn, products, imageStyle } = form;
   const steps = (form.steps || []).map((s) => ({
     ...s,
     fields: s.fields.map(({ ai, builtin, ...f }) => (f.options ? { ...f, options: f.options.map(({ note, subject, ...o }) => withArt(f, o)) } : f)), // izbor bez svoje slike dobija sliku iz biblioteke, i u već postojećim formama
@@ -290,7 +311,7 @@ export function publicForm(form) {
     const teeth = t === 'grillz' ? styleOf(form, { type: t, style: value })?.teeth : null;
     return { value, label, image: styleImage(t, s), ...(teeth ? { teeth } : {}) };
   })]));
-  return { id, brand, theme, maxRenders, steps, styles, contact, result, tryOn, ...(products?.length ? { products } : {}), ...(imageStyle === 'light' ? { imageStyle } : {}) };
+  return { id, brand, theme, maxRenders, steps, styles, contact: contactTexts(form), result, tryOn, ...(products?.length ? { products } : {}), ...(imageStyle === 'light' ? { imageStyle } : {}) };
 }
 
 // ---------- Provjera definicije forme (builder čuva samo ono što prođe ovo) ----------
@@ -439,6 +460,12 @@ export function validateFormDef(f, id) {
   str(f.contact?.title, 120, 'Contact title', true);
   str(f.contact?.subtitle, 240, 'Contact subtitle');
   str(f.contact?.consent, 400, 'Consent text', true);
+  str(f.contact?.smsConsent, 500, 'Text message consent');
+  str(f.contact?.smsMarketing, 500, 'Marketing text consent');
+  for (const [k, label] of [['privacyUrl', 'Privacy Policy link'], ['termsUrl', 'Terms link']]) {
+    const v = f.contact?.[k];
+    if (v != null && v !== '' && !(typeof v === 'string' && v.length <= 300 && /^https:\/\/[^\s"'<>]+$/.test(v))) err(`${label}: must start with https://`);
+  }
   str(f.contact?.button, 40, 'Contact button', true);
   if (!Array.isArray(f.result?.loading) || !f.result.loading.length || f.result.loading.length > 10) err('Rendering messages: 1 to 10');
   f.result.loading.forEach((m) => str(m, 60, 'Rendering message', true));
