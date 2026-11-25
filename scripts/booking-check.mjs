@@ -180,5 +180,41 @@ const pb2 = (await fetch(`${BASE}/api/portal/bookings`, { headers: C }).then(j))
 const d3 = pb2.deposits.find((x) => x.leadId === c.leadId);
 ok(d3?.paidAt && d3.amount === 500 && d3.smsAt && /mold kit/.test(d3.fulfillment?.text || ''), 'portal: depozit plaćen, SMS poslat, odgovor upisan');
 
+// ---------- Upis u GHL kalendar padne: razlog u portalu, bilješka ipak stigne, ponovni pokušaj (26.11.2026) ----------
+const book = async (key, kind = 'online') => {
+  const t = (await fetch(`${BASE}/api/page/${key}/slots?kind=${kind}`).then(j)).body.days.flatMap((d) => d.slots)[0];
+  return { t, r: await fetch(`${BASE}/api/page/${key}/book`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, start: t }) }).then(j) };
+};
+const keyFor = async (id) => (await fetch(`${BASE}/api/portal/leads`, { headers: C }).then(j)).body.leads.find((l) => l.id === id)?.page?.url.slice(3);
+await fetch(`${GHL}/_fail?appt=scope`);
+const d = await mk('Dana Scope');
+await sleep(1200);
+const kd = await keyFor(d.leadId);
+const bd = await book(kd);
+await sleep(1500);
+let row = (await fetch(`${BASE}/api/portal/bookings`, { headers: C }).then(j)).body.appointments.find((x) => x.id === bd.r.body.appointment?.id);
+ok(row?.ghl === 'error' && /not authorized/.test(row.ghlError) && /Edit Calendar Events/.test(row.ghlError), `odbijen upis: razlog i savjet pored termina (${row?.ghlError?.slice(0, 60)})`);
+st = await fetch(`${GHL}/_state`).then((r) => r.json());
+const cd = Object.values(st.contacts).find((x) => x.email === d.email);
+ok(row?.ghlNoted && cd?.tags?.includes('jewelrylead appointment') && cd.notes.some((n) => /booked for/.test(n)), 'bilješka i tagovi stižu i kad kalendar odbije');
+await fetch(`${GHL}/_fail?appt=`);
+const again2 = await fetch(`${BASE}/api/portal/appointments/${row.id}/ghl`, { method: 'POST', headers: V }).then(j);
+st = await fetch(`${GHL}/_state`).then((r) => r.json());
+const evd = Object.values(st.appointments).find((x) => x.contactId === cd.id);
+ok(again2.body.ok && again2.body.inCalendar && evd && /T\d\d:\d\d:\d\d[-+]\d\d:\d\d$/.test(evd.startTime) && cd.notes.filter((n) => /booked for/.test(n)).length === 1, `Try again upiše termin, bez duple bilješke (${evd?.startTime})`);
+await fetch(`${GHL}/_fail?appt=host`);
+const e = await mk('Eli Host');
+await sleep(1200);
+const be = await book(await keyFor(e.leadId));
+await sleep(1500);
+st = await fetch(`${GHL}/_state`).then((r) => r.json());
+const ce = Object.values(st.contacts).find((x) => x.email === e.email);
+ok(Object.values(st.appointments).some((x) => x.contactId === ce?.id && x.assignedUserId === 'userOwner001'), 'kalendar traži domaćina: drugi pokušaj sa članom tima prolazi');
+await fetch(`${GHL}/_fail?appt=`);
+const dayOff = (await fetch(`${BASE}/api/page/${kd}/slots?kind=online`).then(j)).body.days.find((x) => x.slots.length).date;
+await fetch(`${BASE}/api/portal/booking`, { method: 'PUT', headers: C, body: JSON.stringify({ settings: { closed: [dayOff] } }) });
+const offDay = (await fetch(`${BASE}/api/page/${kd}/slots?kind=online`).then(j)).body;
+ok(offDay.source === 'ghl' && offDay.days.find((x) => x.date === dayOff).slots.length === 0, 'neradni dan iz portala važi i uz GHL kalendar');
+
 console.log(fails ? `\n${fails} FAIL` : '\nSve prošlo.');
 process.exit(fails ? 1 : 0);

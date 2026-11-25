@@ -655,7 +655,8 @@ function apptRow(a) {
     <div class="bk-img">${a.img ? `<img src="${esc(a.img)}" alt="" width="72" height="72" loading="lazy" data-zoom tabindex="0" />` : '<span>No picture</span>'}</div>
     <div class="ap-main">
       <div class="bk-top"><h3>${esc(a.name)}</h3>${a.ref ? `<span class="lead-ref">${esc(a.ref)}</span>` : ''}<span class="pill">${esc(a.label)}</span>${a.status !== 'booked' ? `<span class="pill ap-st">${esc(APPT_ST[a.status] || a.status)}</span>` : ''}${a.isNew ? '<span class="pill ap-new">New</span>' : ''}</div>
-      <p class="ap-how">${esc(how)}${a.piece ? ` · ${esc(a.piece[0].toUpperCase() + a.piece.slice(1))}` : ''}${a.option === 'fit' ? ' · Option 2' : a.option === 'picked' ? ' · Option 1' : ''}${a.ghl === 'calendar' ? ' · in your GoHighLevel calendar' : a.ghl === 'error' ? ' · <span class="ghl-bad">not in GoHighLevel yet</span>' : ''}</p>
+      <p class="ap-how">${esc(how)}${a.piece ? ` · ${esc(a.piece[0].toUpperCase() + a.piece.slice(1))}` : ''}${a.option === 'fit' ? ' · Option 2' : a.option === 'picked' ? ' · Option 1' : ''}${a.ghl === 'calendar' ? ' · in your GoHighLevel calendar' : a.ghl === 'note' ? ' · note and tags in GoHighLevel' : ''}</p>
+      ${a.ghl === 'error' ? `<p class="ap-ghlerr" role="alert"><b>Not in your GoHighLevel calendar yet${a.ghlNoted ? ' (the note and tags are on the contact)' : ''}.</b> GoHighLevel answered: ${esc(a.ghlError || 'no details')} <button type="button" class="btn small" data-ap-ghl="${esc(a.id)}">Try again</button></p>` : ''}
       ${a.note ? `<p class="ap-note">"${esc(a.note)}"</p>` : ''}
       <div class="contact"><span class="cpair"><a href="tel:${esc(String(a.phone).replace(/[^\d+]/g, ''))}">${esc(a.phone)}</a>${copyBtn(a.phone, 'phone number')}</span><span class="cpair"><a href="mailto:${esc(a.email)}">${esc(a.email)}</a>${copyBtn(a.email, 'email')}</span></div>
       <div class="bk-links">${a.status === 'booked' && !ro ? `<button type="button" class="btn small" data-ap-set="done" data-ap-id="${esc(a.id)}">Done</button><button type="button" class="btn small ghost" data-ap-set="noshow" data-ap-id="${esc(a.id)}">No-show</button><button type="button" class="btn small ghost" data-ap-set="cancelled" data-ap-id="${esc(a.id)}">Cancel</button>` : ''}<button type="button" class="btn small ghost" data-see-lead="${esc(a.email)}">See lead</button>${a.page ? `<a class="btn small ghost" href="${esc(a.page)}?preview=1" target="_blank" rel="noopener">Their page ↗</a>` : ''}</div>
@@ -1648,6 +1649,11 @@ app.addEventListener('click', async (e) => {
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
   if (t.dataset.act === 'bk-save') { saveBooking(); return; }
   if (t.dataset.apSet) { setApptStatus(t.dataset.apId, t.dataset.apSet); return; }
+  if (t.dataset.apGhl) {
+    t.disabled = true; t.textContent = 'Sending…';
+    api(`/api/portal/appointments/${encodeURIComponent(t.dataset.apGhl)}/ghl`, { method: 'POST' }).catch(() => null).then(async () => { await loadBookings(); render(); });
+    return;
+  }
   if (t.dataset.seeLead) { P.archivedView = false; P.tab = 'leads'; P.q = t.dataset.seeLead; P.status = ''; P.piece = ''; P.video = ''; P.day = ''; P.tag = ''; P.budget = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
   if (t.dataset.piece !== undefined) { P.piece = t.dataset.piece; if (await loadLeads()) render(); }

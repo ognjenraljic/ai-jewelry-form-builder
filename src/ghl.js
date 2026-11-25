@@ -279,12 +279,40 @@ export async function ghlFreeSlots(token, calendarId, from, to, tz, fetchFn = fe
   const q = new URLSearchParams({ startDate: String(from), endDate: String(to), timezone: tz });
   return ghlCall(token, 'GET', `/calendars/${encodeURIComponent(calendarId)}/free-slots?${q}`, null, fetchFn, GHL_CAL_VERSION);
 }
+// Vrijeme sa pomakom zone radnje ("2026-11-26T12:30:00-07:00"), isti oblik koji GHL sam vraća u free-slots.
+export function isoInZone(ms, tz) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(new Date(ms)).filter((x) => x.type !== 'literal').map((x) => [x.type, x.value]));
+  const local = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
+  const off = Math.round((local - Math.floor(ms / 1000) * 1000) / 60000);
+  const sign = off < 0 ? '-' : '+';
+  const two = (n) => String(Math.abs(n)).padStart(2, '0');
+  return `${p.year}-${p.month}-${p.day}T${two(+p.hour % 24)}:${p.minute}:${p.second}${sign}${two(Math.trunc(Math.abs(off) / 60))}:${two(Math.abs(off) % 60)}`;
+}
+// Prvi član tima kalendara (domaćin termina), kad GHL traži da termin ima dodijeljenog korisnika.
+export async function ghlCalendarHost(token, calendarId, fetchFn = fetch) {
+  const d = await ghlCall(token, 'GET', `/calendars/${encodeURIComponent(calendarId)}`, null, fetchFn, GHL_CAL_VERSION);
+  const c = d.calendar || d;
+  return (c.teamMembers || []).map((m) => m.userId).find(Boolean) || '';
+}
 export async function ghlBookAppointment(token, cfg, a, fetchFn = fetch) {
-  const d = await ghlCall(token, 'POST', '/calendars/events/appointments', {
-    calendarId: a.calendarId, locationId: cfg.locationId, contactId: a.contactId, startTime: new Date(a.start).toISOString(), endTime: new Date(a.end).toISOString(),
+  const tz = a.tz || 'UTC';
+  const body = {
+    calendarId: a.calendarId, locationId: cfg.locationId, contactId: a.contactId, startTime: isoInZone(a.start, tz), endTime: isoInZone(a.end, tz),
     title: a.title.slice(0, 120), appointmentStatus: 'confirmed', ignoreFreeSlotValidation: true, toNotify: true,
     ...(a.address ? { address: a.address.slice(0, 300) } : {}),
-  }, fetchFn, GHL_CAL_VERSION);
+  };
+  let d;
+  try {
+    d = await ghlCall(token, 'POST', '/calendars/events/appointments', body, fetchFn, GHL_CAL_VERSION);
+  } catch (e) {
+    // Dozvola ili token: ponavljanje ne pomaže. Sve ostalo (400/422): još jednom sa domaćinom iz tima kalendara.
+    if (e.status === 401 || e.status === 403) throw e;
+    const host = await ghlCalendarHost(token, a.calendarId, fetchFn).catch(() => '');
+    if (!host) throw e;
+    try { d = await ghlCall(token, 'POST', '/calendars/events/appointments', { ...body, assignedUserId: host }, fetchFn, GHL_CAL_VERSION); }
+    catch (e2) { e2.message = `${e.message} | with host: ${e2.message}`.slice(0, 380); throw e2; }
+  }
   return d.id || d.appointment?.id || d.event?.id || null;
 }
 export async function ghlCancelAppointment(token, eventId, fetchFn = fetch) {

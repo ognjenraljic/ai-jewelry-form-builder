@@ -11,6 +11,7 @@ createServer(async (req, res) => {
   const body = raw ? JSON.parse(raw) : null;
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/_state') return send(res, 200, S);
+  if (url.pathname === '/_fail') { S.failAppt = url.searchParams.get('appt') || ''; return send(res, 200, { failAppt: S.failAppt }); }
   S.calls.push({ method: req.method, path: url.pathname, version: req.headers.version });
   if (!/^Bearer pit-/.test(req.headers.authorization || '')) return send(res, 401, { message: 'Invalid token' });
   // Kalendari i poruke (25.11.2026) idu na 2021-04-15, kao pravi GHL.
@@ -28,6 +29,10 @@ createServer(async (req, res) => {
     }
     return send(res, 200, { ...out, traceId: 't' });
   }
+  if (req.method === 'GET' && (m = url.pathname.match(/^\/calendars\/([^/]+)$/))) return send(res, 200, { calendar: { id: m[1], teamMembers: [{ userId: 'userOwner001' }] } });
+  // /_fail?appt=scope → 401 bez dozvole; /_fail?appt=host → 422 dok zahtjev nema assignedUserId (pa prolazi sa domaćinom).
+  if (req.method === 'POST' && url.pathname === '/calendars/events/appointments' && S.failAppt === 'scope') return send(res, 401, { statusCode: 401, message: 'The token is not authorized for this scope.' });
+  if (req.method === 'POST' && url.pathname === '/calendars/events/appointments' && S.failAppt === 'host' && !body.assignedUserId) return send(res, 422, { statusCode: 422, message: ['assignedUserId is required for this calendar'] });
   if (req.method === 'POST' && url.pathname === '/calendars/events/appointments') { const a = { id: `ev${++seq}`, ...body }; S.appointments[a.id] = a; return send(res, 201, { id: a.id, ...a }); }
   if (req.method === 'PUT' && (m = url.pathname.match(/^\/calendars\/events\/appointments\/([^/]+)$/))) { const a = S.appointments[m[1]]; if (!a) return send(res, 404, { message: 'Event not found' }); Object.assign(a, body); return send(res, 200, a); }
   if (req.method === 'POST' && url.pathname === '/conversations/messages') { S.messages.push(body); return send(res, 201, { messageId: `m${++seq}` }); }
