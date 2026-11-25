@@ -695,7 +695,7 @@ function bookingSettingsView() {
   const c = r.settings;
   const opt = (vals, cur, fmt = (v) => `${v} min`) => vals.map((v) => `<option value="${v}" ${Number(cur) === v ? 'selected' : ''}>${fmt(v)}</option>`).join('');
   const g = P.me.ghl?.calendars || {};
-  return `<details class="bk-set form-card" ${P.bkSetOpen ?? !c.enabled ? 'open' : ''} data-bk-set>
+  return `<details class="bk-set form-card" ${P.bkSetOpen ? 'open' : ''} data-bk-set>
     <summary><h2>Calendar on customer pages</h2><span class="pill ${c.enabled ? 'on' : ''}">${c.enabled ? 'On' : 'Off'}</span></summary>
     <p class="faint">"Book an appointment" on the customer's page shows your open times: a short online consultation to go over their design and close the sale, or a visit to the studio. Bookings show below, on the lead and in GoHighLevel.${g.online || g.visit ? ' Open times come from your GoHighLevel calendar where one is picked (Forms → GoHighLevel); your hours below are used for the rest.' : ''}</p>
     <label class="ghl-on"><input type="checkbox" data-bk="enabled" ${c.enabled ? 'checked' : ''} /><span><b>Show the calendar on customer pages</b><em>Off: the button only records the request, as before.</em></span></label>
