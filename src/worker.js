@@ -1615,6 +1615,18 @@ async function portalApi(request, env, p, secure, ctx) {
       if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
       return portalApptStatus(request, env, ctx, client, am[1]);
     }
+    // Ponovni upis termina u GoHighLevel (npr. poslije dodate dozvole na tokenu). Smije i admin u pregledu klijenta.
+    const rm = p.match(/^\/api\/portal\/appointments\/([a-z0-9]{16})\/ghl$/);
+    if (rm && request.method === 'POST') {
+      const a = await env.DB.prepare('SELECT id, ghl FROM appointments WHERE id = ? AND client_id = ?').bind(rm[1], client.id).first();
+      if (!a) return json({ error: 'Not found' }, 404);
+      const g = parseJson(a.ghl);
+      delete g.error; g.tries = 0;
+      await env.DB.prepare('UPDATE appointments SET ghl = ? WHERE id = ?').bind(JSON.stringify(g), a.id).run();
+      await ghlSyncAppointment(env, a.id, { origin: new URL(request.url).origin });
+      const after = parseJson((await env.DB.prepare('SELECT ghl FROM appointments WHERE id = ?').bind(a.id).first())?.ghl);
+      return json({ ok: !after.error, inCalendar: !!after.eventId, noted: !!after.noted, error: after.error || null });
+    }
   }
   // Upiti po stranicama (50), bez dugih IN lista (D1 prima najviše 100 parametara po upitu).
   if (p === '/api/portal/leads' && request.method === 'GET') {
@@ -3125,7 +3137,7 @@ async function portalBookings(env, client) {
   const appointments = apptRows.results.map((a) => ({
     ...apptView(a, '', cfg), leadId: a.lead_id, ref: leadRef(a.lead_no), name: a.name, email: a.email, phone: a.phone, piece: a.piece || '', leadStatus: a.lead_status,
     img: a.img ? `/media/${a.img}` : '', page: a.page_key ? `/p/${a.page_key}` : '', note: a.note || '', option: a.option || '', createdAt: a.created_at,
-    isNew: a.status === 'booked' && a.created_at > seenAt, ghl: (() => { const g = parseJson(a.ghl); return g.eventId ? 'calendar' : g.noted ? 'note' : g.error ? 'error' : ''; })(),
+    isNew: a.status === 'booked' && a.created_at > seenAt, ...(() => { const g = parseJson(a.ghl); return { ghl: g.eventId ? 'calendar' : g.error ? 'error' : g.noted ? 'note' : '', ghlError: g.eventId ? '' : g.error || '', ghlNoted: !!g.noted }; })(),
   }));
   const deposits = depRows.results.map((l) => {
     const dep = parseJson(l.deposit);
@@ -3182,7 +3194,8 @@ async function slotsFor(env, row, cfg, kind, exclude = []) {
         const today = zonedYmd(now, cfg.tz);
         const data = await ghlFreeSlots(conf.token, calId, zonedToUtc(today, '00:00', cfg.tz), zonedToUtc(addDays(today, cfg.days), '00:00', cfg.tz), cfg.tz, ghlFetch(env));
         const dur = cfg.kinds[kind].minutes * 60_000;
-        const days = ghlSlotsToDays(data, cfg, now).map((d) => ({ ...d, slots: d.slots.filter((t) => !busy.some((b) => t < b.end && t + dur > b.start)) }));
+        // Neradni dani iz portala važe i kad vremena daje GHL kalendar (praznik upisan samo kod nas).
+        const days = ghlSlotsToDays(data, cfg, now).map((d) => ({ ...d, slots: cfg.closed.includes(d.date) ? [] : d.slots.filter((t) => !busy.some((b) => t < b.end && t + dur > b.start)) }));
         return { source: 'ghl', days };
       } catch (e) {
         console.error('ghl slots', row.client_id, e.message);
@@ -3379,11 +3392,7 @@ async function ghlSyncAppointment(env, apptId, { cancel = [], origin = ORIGIN_BA
       if (sync.eventId && !sync.cancelled) { await ghlCancelAppointment(conf.token, sync.eventId, f); sync.cancelled = 1; }
       if (sync.noted && !sync.cancelNoted) { await ghlAddNote(conf.token, sync.contactId, `JewelryLead${ref ? ` ${ref}` : ''}: ${what} on ${whenText(a.start_at, cfg.tz)} was cancelled.`, f); sync.cancelNoted = 1; }
     } else {
-      const calId = conf.cfg.calendars?.[a.kind];
-      if (calId && !sync.eventId) {
-        sync.eventId = await ghlBookAppointment(conf.token, conf.cfg, { calendarId: calId, contactId: sync.contactId, start: a.start_at, end: a.end_at,
-          title: `${ref ? `${ref} · ` : ''}${KIND_LABEL[a.kind]} · ${a.name}`, address: a.kind === 'visit' ? '' : a.via === 'video' ? cfg.kinds.online.video : '' }, f);
-      }
+      // Bilješka i tagovi prvo (26.11.2026): CRM zna za termin i kad upis u GHL kalendar padne.
       if (!sync.noted) {
         await ghlAddNote(conf.token, sync.contactId, `JewelryLead${ref ? ` ${ref}` : ''}: ${what} booked for ${whenText(a.start_at, cfg.tz)}, from their design page.${a.note ? `\nCustomer note: "${a.note}"` : ''}\nDesign and quote: ${origin}/p/${a.page_key}?preview=1`, f);
         sync.noted = 1;
@@ -3392,12 +3401,18 @@ async function ghlSyncAppointment(env, apptId, { cancel = [], origin = ORIGIN_BA
         await ghlPushTags(conf.token, { contactId: sync.contactId }, ['jewelrylead appointment', a.kind === 'online' ? 'jewelrylead online consultation' : 'jewelrylead studio visit'], f);
         sync.tagged = 1;
       }
+      const calId = conf.cfg.calendars?.[a.kind];
+      if (calId && !sync.eventId) {
+        sync.eventId = await ghlBookAppointment(conf.token, conf.cfg, { calendarId: calId, contactId: sync.contactId, start: a.start_at, end: a.end_at, tz: cfg.tz,
+          title: `${ref ? `${ref} · ` : ''}${KIND_LABEL[a.kind]} · ${a.name}`, address: a.kind === 'visit' ? '' : a.via === 'video' ? cfg.kinds.online.video : '' }, f);
+      }
     }
     delete sync.error;
     sync.at = Date.now();
     await env.DB.prepare('UPDATE appointments SET ghl = ? WHERE id = ?').bind(JSON.stringify(sync), apptId).run();
   } catch (e) {
-    const next = { ...sync, error: String(e.message).slice(0, 200), tries: (sync.tries || 0) + 1, at: Date.now() };
+    const hint = e.status === 401 || e.status === 403 ? ' Add the "Edit Calendar Events" scope to the Private Integration token.' : '';
+    const next = { ...sync, error: `${String(e.message).slice(0, 380)}${hint}`, tries: (sync.tries || 0) + 1, at: Date.now() };
     await env.DB.prepare('UPDATE appointments SET ghl = ? WHERE id = ?').bind(JSON.stringify(next), apptId).run();
     await ghlNote(env, a.cid, false, `Appointment: ${e.message}`);
   }

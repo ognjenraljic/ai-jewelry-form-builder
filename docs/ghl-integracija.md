@@ -62,3 +62,7 @@ District: "Book an appointment = online konsultacija od 5-10 min da prođemo sve
 Portal: tab Bookings = podešavanje kalendara, Appointments po danima (Done / No-show / Cancel), Deposits and next steps (link za kupca kad odgovor fali), stari Button presses. Kartica leada pokazuje termin, depozit i odgovor. Provjera: `node scripts/mock-ghl.mjs 8899` + `wrangler dev --port 8812 --test-scheduled --var GHL_BASE:http://127.0.0.1:8899` + `BASE=http://127.0.0.1:8812 GHL=http://127.0.0.1:8899 node scripts/booking-check.mjs` (55 provjera).
 
 Nije probano sa pravim GHL-om: free-slots oblik odgovora, upis termina, SMS, tačan sadržaj webhooka za Payment Received (iznos se čita iz više mogućih polja; ako ne stigne, u workflowu dodati Custom Data `amount`).
+
+### Kad upis termina u GHL kalendar padne (26.11.2026)
+
+Prvi pravi termin kod Districta ostao je "not in GoHighLevel yet", a razlog se vidio samo u "Last error" na GHL kartici. Od sada: bilješka i tagovi idu na kontakt PRIJE upisa u kalendar (CRM zna za termin i kad kalendar odbije), razlog od GHL-a piše pored termina u Bookings sa dugmetom **Try again** (`POST /api/portal/appointments/<id>/ghl`, vraća brojač pokušaja na 0), 401/403 dobija savjet o dozvoli Edit Calendar Events, vrijeme se šalje sa pomakom zone radnje (`2026-11-26T12:30:00-07:00`, kao u GHL primjerima), a na 400/422 se pokuša još jednom sa `assignedUserId` = prvi član tima kalendara (`GET /calendars/{id}`). Neradni dani iz portala (`closed`) važe i kad vremena daje GHL kalendar. Lažni GHL: `/_fail?appt=scope|host` za probu.
