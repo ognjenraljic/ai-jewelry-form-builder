@@ -943,3 +943,7 @@ button.dbar.future { opacity: .35; cursor: default; }
 .ghl-prod { margin: 18px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); }
 .ghl-prod h3 { margin: 0 0 6px; font-size: 15px; }
 .ghl-prod .ghl-how { font-size: 12px; }
+.ghl-failbtn { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.ghl-failed { margin: 8px 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); max-height: 360px; overflow: auto; }
+.ghl-failed ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; font-size: 13px; }
+.ghl-failed li { padding-bottom: 8px; border-bottom: 1px solid var(--line); }

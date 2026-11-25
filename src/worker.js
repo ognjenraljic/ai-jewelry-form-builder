@@ -1808,7 +1808,7 @@ async function portalApi(request, env, p, secure, ctx) {
   // jedan red po upitu (bez slika), portal sam računa periode, pipeline i zbirove.
   if (p === '/api/portal/stats' && request.method === 'GET') return json(await portalStats(env, client));
   // GoHighLevel podešavanje (24.11.2026). Kao cijene, smije ga mijenjati i admin u pregledu klijenta (Ognjen ga postavlja).
-  if (p.startsWith('/api/portal/ghl')) return portalGhl(request, env, p, client);
+  if (p.startsWith('/api/portal/ghl')) return portalGhl(request, env, p, client, ctx);
   // Obavještenja (24.11.2026): novi upiti, kupac otvorio stranicu, Deposit/Appointment, automatske poruke, greške slanja.
   if (p === '/api/portal/notifications' && request.method === 'GET') return json(await portalNotifications(env, client));
   if (p === '/api/portal/notifications/seen' && request.method === 'POST') {
@@ -1898,13 +1898,14 @@ async function ghlNote(env, clientId, ok, error) {
   const patch = ok ? `'$.ghl.lastOk', ?` : `'$.ghl.lastError', json(?)`;
   await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), ${patch}) WHERE id = ?`).bind(ok ? Date.now() : JSON.stringify({ at: Date.now(), msg: String(error).slice(0, 200) }), clientId).run().catch(() => {});
 }
-async function ghlSyncLead(env, leadId, origin = ORIGIN_BASE) {
+async function ghlSyncLead(env, leadId, origin = ORIGIN_BASE, { retry = false } = {}) {
   const row = await notifyRow(env, leadId);
   if (!row || row.archived_at) return null;
   const conf = await ghlConfig(env, { id: row.client_id, data: row.client_data });
   if (!conf) return null;
   // Lead od prije uključenja ide samo uz "Also send the leads you already have" (i kad njegova pozadinska obrada još traje).
-  if (!conf.cfg.backfill && row.created_at < (Number(conf.cfg.enabledAt) || 0)) return null;
+  // Ponovni pokušaj (Retry failed) i lead koji je već jednom pokušan idu bez obzira na tu opciju.
+  if (!retry && !row.ghl && !conf.cfg.backfill && row.created_at < (Number(conf.cfg.enabledAt) || 0)) return null;
   let prev = {};
   try { prev = JSON.parse(row.ghl || '{}') || {}; } catch {}
   if (prev.oppId || (prev.contactId && prev.noted && !conf.cfg.pipelineId)) return prev;
@@ -1924,7 +1925,7 @@ async function ghlSyncLead(env, leadId, origin = ORIGIN_BASE) {
     const done = await ghlPushLead(conf.token, conf.cfg, lead, prev, ghlFetch(env));
     delete done.error;
     // ID leada je u imenu opportunity-ja od prvog slanja; stari se preimenuju u ghlSweep (done.ref = ime je usklađeno).
-    if (done.oppId && !prev.oppId) done.ref = lead.ref || null;
+    if (done.oppId && !prev.oppId) done.ref = done.shared ? 'shared' : lead.ref || null;
     await env.DB.prepare('UPDATE leads SET ghl = ? WHERE id = ?').bind(JSON.stringify(done), leadId).run();
     await logEvent(env, leadId, 'ghl_sent', { contact: done.contactId || null, opp: done.oppId || null });
     await ghlNote(env, row.client_id, true);
@@ -2042,7 +2043,7 @@ async function ghlSweep(env) {
   // Slanje unazad (Ognjen 24.11.2026: "da u CRM uvezemo sve"): kad radnja uključi "existing leads", svi aktivni leadovi
   // koji još nisu u GHL-u idu redom od najstarijeg, 12 po krugu (arhivirani nikad).
   const old = (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
-      WHERE json_extract(c.data, '$.ghl.enabled') = 1 AND json_extract(c.data, '$.ghl.backfill') = 1 AND l.archived_at IS NULL AND l.created_at < ?
+      WHERE json_extract(c.data, '$.ghl.enabled') = 1 AND (json_extract(c.data, '$.ghl.backfill') = 1 OR json_extract(l.ghl, '$.error') IS NOT NULL) AND l.archived_at IS NULL AND l.created_at < ?
         AND (l.ghl IS NULL OR (json_extract(l.ghl, '$.error') IS NOT NULL AND COALESCE(json_extract(l.ghl, '$.tries'), 0) < ${GHL_RETRY}))
       ORDER BY l.created_at LIMIT 12`).bind(Date.now() - 2 * 60_000).all()).results;
   for (const r of old) await ghlSyncLead(env, r.id).catch(() => null);
@@ -2063,7 +2064,7 @@ async function ghlSweep(env) {
       ORDER BY COALESCE(json_extract(l.ghl_order, '$.polledAt'), 0) LIMIT 25`).bind(Date.now() - 3 * 864e5).all()).results;
   for (const r of poll) await ghlOrderPoll(env, r).catch(() => null);
 }
-async function portalGhl(request, env, p, client) {
+async function portalGhl(request, env, p, client, ctx) {
   let d = {};
   try { d = JSON.parse(client.data || '{}') || {}; } catch {}
   const cur = d.ghl || {};
@@ -2091,6 +2092,22 @@ async function portalGhl(request, env, p, client) {
       const pipelines = await ghlPipelines(token, loc, ghlFetch(env));
       return json({ pipelines: pipelines.map((pl) => ({ ...pl, guess: guessStages(pl), guessOrder: guessOrderStages(pl) })) });
     } catch (e) { return json({ error: e.status === 401 || e.status === 403 ? 'GoHighLevel refused the token. Check that it belongs to this sub-account and has the contacts and opportunities scopes.' : e.message }, 400); }
+  }
+  // Leadovi koji nisu prošli u GHL (25.11.2026): razlog po leadu i ponovni pokušaj jednim klikom.
+  if (p === '/api/portal/ghl/failed' && request.method === 'GET') {
+    const rows = (await env.DB.prepare(`SELECT l.id, l.name, l.lead_no, l.created_at, json_extract(l.ghl, '$.error') AS error, COALESCE(json_extract(l.ghl, '$.tries'), 0) AS tries
+        FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL AND json_extract(l.ghl, '$.error') IS NOT NULL ORDER BY l.created_at DESC LIMIT 200`).bind(client.id).all()).results;
+    return json({ failed: rows.map((r) => ({ id: r.id, ref: leadRef(r.lead_no), name: r.name, at: r.created_at, error: r.error, tries: r.tries })) });
+  }
+  if (p === '/api/portal/ghl/retry' && request.method === 'POST') {
+    if (!cur.enabled) return json({ error: 'Turn on "Send new leads to GoHighLevel" first.' }, 400);
+    const r = await env.DB.prepare(`UPDATE leads SET ghl = json_set(ghl, '$.tries', 0) WHERE json_extract(ghl, '$.error') IS NOT NULL AND archived_at IS NULL
+        AND form_id IN (SELECT id FROM forms WHERE client_id = ?)`).bind(client.id).run();
+    // Prvih 12 odmah, ostali u sljedećim krugovima crona (i stari leadovi, bez obzira na "existing leads").
+    const ids = (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL AND json_extract(l.ghl, '$.error') IS NOT NULL ORDER BY l.created_at LIMIT 12`).bind(client.id).all()).results;
+    const run = (async () => { for (const x of ids) await ghlSyncLead(env, x.id, new URL(request.url).origin, { retry: true }).catch(() => null); })();
+    ctx?.waitUntil?.(run);
+    return json({ ok: true, queued: r.meta.changes || 0 });
   }
   // Korisnici sub-accounta za "Assign production cards to" (traži dozvolu View Users na tokenu).
   if (p === '/api/portal/ghl/users' && request.method === 'POST') {

@@ -1237,9 +1237,16 @@ function ghlCard() {
     <label class="ghl-on"><input type="checkbox" data-ghl-f="enabled" ${g.enabled ? 'checked' : ''} ${g.connected || P.ghlTokenTyped ? '' : 'disabled'} /><span><b>Send new leads to GoHighLevel</b><em>Every lead that arrives from now on. Your tags and status changes follow.</em></span></label>
     <label class="ghl-on"><input type="checkbox" data-ghl-f="backfill" ${g.backfill ? 'checked' : ''} ${g.connected || P.ghlTokenTyped ? '' : 'disabled'} /><span><b>Also send the leads you already have</b><em>${g.counts ? `${g.counts.waiting} not in GoHighLevel yet. ` : ''}They go in oldest first, about 12 every 5 minutes, each into the stage of its status here. Archived leads are never sent. If your GoHighLevel has automations on new contacts, they will run for these too.</em></span></label>
     ${ghlProdView(g, pipes, pipe)}
-    ${g.counts && (g.counts.sent || g.counts.failed) ? `<p class="ghl-count">In GoHighLevel: <b>${g.counts.sent}</b> sent${g.counts.waiting ? ` · ${g.counts.waiting} waiting` : ''}${g.counts.failed ? ` · <span class="ghl-bad">${g.counts.failed} failed</span>` : ''}${g.counts.renaming ? ` · lead ID being added to ${g.counts.renaming}` : ''}</p>` : ''}
+    ${g.counts && (g.counts.sent || g.counts.failed) ? `<p class="ghl-count">In GoHighLevel: <b>${g.counts.sent}</b> sent${g.counts.waiting ? ` · ${g.counts.waiting} waiting` : ''}${g.counts.failed ? ` · <button type="button" class="ghl-bad ghl-failbtn" data-act="ghl-failed">${g.counts.failed} failed</button>` : ''}${g.counts.renaming ? ` · lead ID being added to ${g.counts.renaming}` : ''}</p>` : ''}
+    ${P.ghlFailed ? ghlFailedView(P.ghlFailed) : ''}
     <div class="ghl-acts"><button type="button" class="btn primary small" data-act="ghl-save">Save</button>${g.connected ? '<button type="button" class="btn small warn" data-act="ghl-disconnect">Disconnect</button>' : ''}</div>
   </section>`;
+}
+// Leadovi koji nisu prošli u GHL (25.11.2026): razlog po leadu + Retry failed.
+function ghlFailedView(list) {
+  if (!list.length) return '<p class="faint">No failed leads.</p>';
+  return `<div class="ghl-failed"><div class="ghl-acts"><button type="button" class="btn small primary" data-act="ghl-retry">Retry failed (${list.length})</button><span class="faint">Leads tried 5 times stop on their own; Retry sends them again.</span></div>
+    <ul>${list.map((f) => `<li><b>${esc(f.ref || '')}</b> ${esc(f.name)} <span class="faint">${esc(new Date(f.at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))} · ${f.tries} tries</span><br /><span class="ghl-bad">${esc(f.error || '')}</span></li>`).join('')}</ul></div>`;
 }
 // Proizvodna tabla za radnike (25.11.2026): poseban pipeline, kartice samo sa brojem narudžbe i specifikacijama.
 const GHL_ORDER_LABELS = [['placed', 'Order placed'], ['cad', 'CAD approved'], ['cast', 'Wax & cast'], ['setting', 'Stone setting'], ['polish', 'Polish'], ['ready', 'Ready for pick up']];
@@ -1455,6 +1462,12 @@ app.addEventListener('click', async (e) => {
   if (t.dataset.act === 'stats-retry') { P.statsError = ''; render(); loadStats(); return; }
   if (t.dataset.sstatus != null) { P.tab = 'leads'; P.status = t.dataset.sstatus; P.q = ''; P.day = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.ftagGo) { P.tab = 'leads'; P.tag = t.dataset.ftagGo; P.q = ''; P.day = ''; if (await loadLeads()) render(); return; }
+  if (t.dataset.act === 'ghl-failed') { if (P.ghlFailed) { P.ghlFailed = null; render(); return; } api('/api/portal/ghl/failed').then((r) => { P.ghlFailed = r.failed; render(); }).catch((err) => { P.ghlMsg = err.message; render(); }); return; }
+  if (t.dataset.act === 'ghl-retry') {
+    t.disabled = true;
+    api('/api/portal/ghl/retry', { method: 'POST', body: '{}', json: true }).then(async (r) => { P.ghlFailed = null; P.ghlMsg = `${r.queued} lead${r.queued === 1 ? '' : 's'} sent again: the first 12 now, the rest about 12 every 5 minutes.`; P.me.ghl = await api('/api/portal/ghl'); render(); }).catch((err) => { P.ghlMsg = err.message; render(); });
+    return;
+  }
   if (['ghl-load', 'ghl-save', 'ghl-disconnect', 'ghl-users'].includes(t.dataset.act)) { ghlAction(t.dataset.act.slice(4)); return; }
   if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); }

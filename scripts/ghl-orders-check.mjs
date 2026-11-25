@@ -70,6 +70,23 @@ await cron(); await sleep(4000);
 st = await ghl();
 ok(st.opportunities[oa.id].name === 'L-0001 · Anna First · custom grillz', `stari opportunity preimenovan (${st.opportunities[oa.id].name})`);
 
+// 3b) Isti kupac drugi put (isti mejl = isti kontakt): veže se za postojeću karticu umjesto greške (District: 51 pao).
+const dupLead = await lead('Cara Third');
+ok(!!dupLead?.leadId, 'drugi upis istog kupca primljen');
+for (let i = 0; i < 30; i++) { await sleep(1500); st = await ghl(); if ((Object.values(st.contacts).find((x) => x.email === `cara-${tag}@example.com`)?.notes || []).length >= 2) break; }
+let failedNow = (await fetch(`${BASE}/api/portal/ghl/failed`, { headers: C }).then(j)).body.failed || [];
+ok(!failedNow.some((f) => f.id === dupLead.leadId), 'ponovljeni kupac nije u neuspjelima');
+st = await ghl();
+ok(myOpps(st).filter((o) => /Cara Third/.test(o.name)).length === 1 && (Object.values(st.contacts).find((x) => x.email === `cara-${tag}@example.com`)?.notes || []).length === 2, 'jedna kartica za kupca, druga bilješka sa novim upitom');
+// Retry failed: lead sa greškom se šalje ponovo.
+sql(`UPDATE leads SET ghl = json_object('error', 'GHL 500: test', 'tries', 5) WHERE id = '${b.leadId}'`);
+failedNow = (await fetch(`${BASE}/api/portal/ghl/failed`, { headers: C }).then(j)).body.failed || [];
+ok(failedNow.some((f) => f.id === b.leadId && f.ref === 'L-0002' && /GHL 500/.test(f.error)), 'lista neuspjelih sa ID-jem i razlogom');
+const rr = (await fetch(`${BASE}/api/portal/ghl/retry`, { method: 'POST', headers: C, body: '{}' }).then(j)).body;
+await sleep(5000);
+failedNow = (await fetch(`${BASE}/api/portal/ghl/failed`, { headers: C }).then(j)).body.failed || [];
+ok(rr.queued >= 1 && !failedNow.some((f) => f.id === b.leadId), `Retry failed poslao ponovo (${rr.queued})`);
+
 // 4) Proizvodna tabla: isti pipeline kao prodaja odbijen, pa poseban.
 ok((await put({ prod: { enabled: true, pipelineId: 'pipe1', stages: prod.guessOrder } })).status === 400, 'proizvodnja u prodajnom pipeline-u odbijena');
 const users = (await fetch(`${BASE}/api/portal/ghl/users`, { method: 'POST', headers: C, body: '{}' }).then(j)).body.users || [];

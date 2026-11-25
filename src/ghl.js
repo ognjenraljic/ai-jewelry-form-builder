@@ -73,6 +73,9 @@ export async function ghlCall(token, method, path, body, fetchFn = fetch) {
     const msg = Array.isArray(data.message) ? data.message.join('; ') : data.message || data.error || `HTTP ${res.status}`;
     const e = new Error(`GHL ${res.status}: ${String(msg).slice(0, 200)}`);
     e.status = res.status;
+    // Kod i meta (npr. OPPORTUNITY_NO_DUPLICATE + meta.existingId) da pozivalac može nastaviti umjesto da padne.
+    e.code = data.code || null;
+    e.meta = data.meta && typeof data.meta === 'object' ? data.meta : null;
     throw e;
   }
   return data;
@@ -226,11 +229,21 @@ export async function ghlPushLead(token, cfg, lead, prev = {}, fetchFn = fetch) 
   if (!done.oppId && cfg.pipelineId && cfg.stages?.new) {
     // Postojeći lead (slanje unazad) ulazi u fazu svog statusa iz portala; Won i Lost su odmah zatvoreni.
     const st = GHL_STATUSES.includes(lead.status) ? lead.status : 'new';
-    const o = await ghlCall(token, 'POST', '/opportunities/', {
-      locationId: cfg.locationId, pipelineId: cfg.pipelineId, pipelineStageId: cfg.stages[st] || cfg.stages.new, contactId: done.contactId, status: st === 'won' ? 'won' : st === 'lost' ? 'lost' : 'open',
-      name: oppName(lead), ...(lead.price ? { monetaryValue: Math.round(lead.price) } : {}), source: 'JewelryLead',
-    }, fetchFn);
-    done.oppId = o.opportunity?.id || o.id;
+    try {
+      const o = await ghlCall(token, 'POST', '/opportunities/', {
+        locationId: cfg.locationId, pipelineId: cfg.pipelineId, pipelineStageId: cfg.stages[st] || cfg.stages.new, contactId: done.contactId, status: st === 'won' ? 'won' : st === 'lost' ? 'lost' : 'open',
+        name: oppName(lead), ...(lead.price ? { monetaryValue: Math.round(lead.price) } : {}), source: 'JewelryLead',
+      }, fetchFn);
+      done.oppId = o.opportunity?.id || o.id;
+    } catch (e) {
+      // Isti kupac je poslao više upita (isti mejl = isti kontakt), a GHL dozvoljava jednu opportunity po kontaktu u
+      // pipeline-u (District 25.11.2026: 51 lead pao sa 400). Novi upit se veže za postojeću karticu; bilješka sa
+      // njegovim izborima i ID-jem je već na kontaktu. Kartica se ne pomjera unazad i ne preimenuje.
+      const existing = e.code === 'OPPORTUNITY_NO_DUPLICATE' || /duplicate opportunity/i.test(e.message) ? e.meta?.existingId : null;
+      if (!existing) throw e;
+      done.oppId = existing;
+      done.shared = true;
+    }
   }
   done.at = Date.now();
   return done;

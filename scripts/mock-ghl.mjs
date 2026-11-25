@@ -30,6 +30,8 @@ createServer(async (req, res) => {
   }
   if (req.method === 'POST' && (m = url.pathname.match(/^\/contacts\/([^/]+)\/tags$/))) { const c = S.contacts[m[1]]; if (!c) return send(res, 404, { message: 'Contact not found' }); c.tags = [...new Set([...c.tags, ...body.tags])]; return send(res, 200, { tags: c.tags }); }
   if (req.method === 'POST' && (m = url.pathname.match(/^\/contacts\/([^/]+)\/notes$/))) { const c = S.contacts[m[1]]; if (!c) return send(res, 404, { message: 'Contact not found' }); c.notes.push(body.body); return send(res, 200, { note: { id: `n${++seq}` } }); }
+  // Kao pravi GHL: jedna opportunity po kontaktu u pipeline-u (OPPORTUNITY_NO_DUPLICATE + meta.existingId).
+  if (req.method === 'POST' && url.pathname === '/opportunities/' && body.contactId) { const dup = Object.values(S.opportunities).find((o) => o.contactId === body.contactId && o.pipelineId === body.pipelineId); if (dup) return send(res, 400, { statusCode: 400, message: 'Can not create duplicate opportunity for the contact.', code: 'OPPORTUNITY_NO_DUPLICATE', meta: { existingId: dup.id } }); }
   if (req.method === 'POST' && url.pathname === '/opportunities/') { const o = { id: `o${++seq}`, ...body }; S.opportunities[o.id] = o; return send(res, 201, { opportunity: { id: o.id } }); }
   if (req.method === 'PUT' && (m = url.pathname.match(/^\/opportunities\/([^/]+)$/))) { const o = S.opportunities[m[1]]; if (!o) return send(res, 404, { message: 'Opportunity not found' }); Object.assign(o, body); return send(res, 200, { opportunity: { id: o.id } }); }
   send(res, 404, { message: `No route ${req.method} ${url.pathname}` });
