@@ -597,10 +597,10 @@ async function pollBookings() {
   const html = bookingAlert();
   if (al) al.outerHTML = html || '<span hidden></span>';
   else if (html) app.querySelector('nav.tabs')?.insertAdjacentHTML('afterend', html);
-  if (P.tab === 'bookings' && !app.querySelector('.bk-list textarea:focus')) render();
+  if (P.tab === 'bookings' && !P.bkDirty && !app.querySelector('.bk-list textarea:focus')) render();
 }
 async function openBookings() {
-  await loadBookings();
+  await Promise.all([loadBookings(), api('/api/portal/booking').then((r) => { P.bookingCfg = r; }).catch(() => {})]);
   render();
   if (!P.bookings?.unseen || readOnly()) return;
   try { await api('/api/portal/bookings/seen', { method: 'POST' }); } catch {}
@@ -610,15 +610,18 @@ const OPTION_LABEL = { picked: 'Option 1 · Their design', fit: 'Option 2 · Fit
 function bookingAlert() {
   const n = P.bookings?.unseen || 0;
   if (!n || P.tab === 'bookings') return '';
-  const first = P.bookings.items.find((x) => x.isNew);
-  const what = first?.actions[0]?.action === 'appointment' ? 'wants to book an appointment' : 'wants to reserve with a deposit';
-  return `<div class="bk-alert" role="status"><span class="bk-dot" aria-hidden="true"></span><p><b>${n === 1 ? `${esc(first.name)} ${what}` : `${n} new booking requests`}</b><span>${n === 1 ? 'They pressed the button on their page. Contact them with the next steps.' : `Latest: ${esc(first.name)} ${what}.`}</span></p><button type="button" class="btn small" data-act="see-bookings">View bookings</button></div>`;
+  const ap = (P.bookings.appointments || []).find((x) => x.isNew);
+  const dp = (P.bookings.deposits || []).find((x) => x.isNew);
+  const it = P.bookings.items.find((x) => x.isNew);
+  const first = ap || dp || it;
+  const what = ap ? `booked ${ap.kind === 'online' ? 'an online consultation' : 'a studio visit'} for ${apptWhen(ap.start)}` : dp ? (dp.paidAt ? 'paid the deposit' : dp.fulfillment ? 'answered the next-step questions' : 'came back from the deposit page')
+    : it?.actions[0]?.action === 'appointment' ? 'wants to book an appointment' : 'wants to reserve with a deposit';
+  return `<div class="bk-alert" role="status"><span class="bk-dot" aria-hidden="true"></span><p><b>${n === 1 ? `${esc(first.name)} ${what}` : `${n} new booking requests`}</b><span>${n === 1 ? (ap ? 'It is on the Bookings tab and in GoHighLevel.' : 'Open Bookings for the details and the next step.') : `Latest: ${esc(first.name)} ${what}.`}</span></p><button type="button" class="btn small" data-act="see-bookings">View bookings</button></div>`;
 }
-function bookingsView() {
+function bookingClicksView() {
   const b = P.bookings;
-  if (!b) return '<p class="empty" role="status">Loading bookings…</p>';
-  const intro = '<p class="note bk-intro">Customers who pressed <b>Reserve with a deposit</b> or <b>Book an appointment</b> on their page. They were told you will contact them with further details.</p>';
-  if (!b.items.length) return `${intro}<p class="empty">No requests yet. They show up here as soon as a customer presses one of the buttons on their page.</p>`;
+  const intro = '<h2 class="bk-h">Button presses</h2><p class="note bk-intro">Customers who pressed <b>Reserve with a deposit</b> or <b>Book an appointment</b> on their page.</p>';
+  if (!b.items.length) return `${intro}<p class="empty">None yet.</p>`;
   const rows = b.items.map((x) => {
     const acts = x.actions.slice(0, 6).map((a) => `<li class="${a.at > b.seenAt ? 'is-new' : ''}"><b>${esc(BK_LABEL[a.action] || a.action)}</b>${a.option ? `<span>${esc(OPTION_LABEL[a.option] || a.option)}${a.total ? ` · ${money(a.total)}` : ''}</span>` : ''}<time>${esc(when(a.at))}</time>${a.at > b.seenAt ? '<em>New</em>' : ''}</li>`).join('');
     return `<article class="bk${x.isNew ? ' is-new' : ''}">
@@ -632,6 +635,135 @@ function bookingsView() {
     </article>`;
   }).join('');
   return `${intro}<div class="bk-list">${rows}</div>`;
+}
+
+// Termini, depoziti i podešavanje kalendara (25.11.2026).
+const apptWhen = (t, o = {}) => { const tz = P.bookings?.booking?.tz; try { return new Date(t).toLocaleString('en-US', { timeZone: tz || undefined, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...o }); } catch { return when(t); } };
+const apptDay = (t) => apptWhen(t, { hour: undefined, minute: undefined, weekday: 'long', month: 'long' });
+const APPT_ST = { booked: 'Booked', done: 'Done', noshow: 'No-show', cancelled: 'Cancelled' };
+function bookingsView() {
+  const b = P.bookings;
+  if (!b) return '<p class="empty" role="status">Loading bookings…</p>';
+  return `${bookingSettingsView()}${appointmentsView(b)}${depositsView(b)}${bookingClicksView()}`;
+}
+function apptRow(a) {
+  const ro = readOnly();
+  const how = a.kind === 'online' ? (a.via === 'video' ? 'Video call' : 'Phone call · you call them') : a.purpose === 'mold' ? 'At the studio · mold' : a.purpose === 'pickup' ? 'At the studio · pick up' : 'At the studio';
+  const time = apptWhen(a.start, { weekday: undefined, month: undefined, day: undefined });
+  return `<article class="ap ap-${esc(a.status)}${a.isNew ? ' is-new' : ''}" data-ap="${esc(a.id)}">
+    <div class="ap-time"><b>${esc(time)}</b><span>${a.kind === 'online' ? 'Online' : 'Visit'}</span></div>
+    <div class="bk-img">${a.img ? `<img src="${esc(a.img)}" alt="" width="72" height="72" loading="lazy" data-zoom tabindex="0" />` : '<span>No picture</span>'}</div>
+    <div class="ap-main">
+      <div class="bk-top"><h3>${esc(a.name)}</h3>${a.ref ? `<span class="lead-ref">${esc(a.ref)}</span>` : ''}<span class="pill">${esc(a.label)}</span>${a.status !== 'booked' ? `<span class="pill ap-st">${esc(APPT_ST[a.status] || a.status)}</span>` : ''}${a.isNew ? '<span class="pill ap-new">New</span>' : ''}</div>
+      <p class="ap-how">${esc(how)}${a.piece ? ` · ${esc(a.piece[0].toUpperCase() + a.piece.slice(1))}` : ''}${a.option === 'fit' ? ' · Option 2' : a.option === 'picked' ? ' · Option 1' : ''}${a.ghl === 'calendar' ? ' · in your GoHighLevel calendar' : a.ghl === 'error' ? ' · <span class="ghl-bad">not in GoHighLevel yet</span>' : ''}</p>
+      ${a.note ? `<p class="ap-note">"${esc(a.note)}"</p>` : ''}
+      <div class="contact"><span class="cpair"><a href="tel:${esc(String(a.phone).replace(/[^\d+]/g, ''))}">${esc(a.phone)}</a>${copyBtn(a.phone, 'phone number')}</span><span class="cpair"><a href="mailto:${esc(a.email)}">${esc(a.email)}</a>${copyBtn(a.email, 'email')}</span></div>
+      <div class="bk-links">${a.status === 'booked' && !ro ? `<button type="button" class="btn small" data-ap-set="done" data-ap-id="${esc(a.id)}">Done</button><button type="button" class="btn small ghost" data-ap-set="noshow" data-ap-id="${esc(a.id)}">No-show</button><button type="button" class="btn small ghost" data-ap-set="cancelled" data-ap-id="${esc(a.id)}">Cancel</button>` : ''}<button type="button" class="btn small ghost" data-see-lead="${esc(a.email)}">See lead</button>${a.page ? `<a class="btn small ghost" href="${esc(a.page)}?preview=1" target="_blank" rel="noopener">Their page ↗</a>` : ''}</div>
+    </div></article>`;
+}
+function appointmentsView(b) {
+  const list = b.appointments || [];
+  const now = Date.now();
+  const up = list.filter((a) => a.end > now && a.status !== 'cancelled');
+  const past = list.filter((a) => !(a.end > now && a.status !== 'cancelled')).reverse();
+  let last = '';
+  const rows = up.map((a) => { const d = apptDay(a.start); const h = d !== last ? `<h3 class="day-head"><span>${esc(d)}</span></h3>` : ''; last = d; return h + apptRow(a); }).join('');
+  const tz = b.booking?.tzLabel ? ` Times in ${esc(b.booking.tzLabel)}.` : '';
+  return `<section class="bk-sec"><h2 class="bk-h">Appointments</h2>
+    ${b.booking?.enabled ? `<p class="note bk-intro">Booked by customers on their design page.${tz}</p>` : '<p class="note bk-intro">The calendar is off. Turn it on above and customers book an online consultation or a studio visit on their design page.</p>'}
+    ${up.length ? `<div class="ap-list">${rows}</div>` : '<p class="empty">No upcoming appointments.</p>'}
+    ${past.length ? `<details class="ap-past"><summary>Past and cancelled (${past.length})</summary><div class="ap-list">${past.map(apptRow).join('')}</div></details>` : ''}
+  </section>`;
+}
+function depositsView(b) {
+  const list = b.deposits || [];
+  if (!list.length) return '';
+  const rows = list.map((x) => `<article class="bk dp${x.isNew ? ' is-new' : ''}">
+    <div class="bk-img">${x.img ? `<img src="${esc(x.img)}" alt="" width="96" height="96" loading="lazy" data-zoom tabindex="0" />` : '<span>No picture</span>'}</div>
+    <div class="bk-main">
+      <div class="bk-top"><h3>${esc(x.name)}</h3>${x.ref ? `<span class="lead-ref">${esc(x.ref)}</span>` : ''}<span class="pill ${x.paidAt ? 'on' : ''}">${x.paidAt ? `Deposit paid${x.amount ? ` · ${money(x.amount)}` : ''}` : x.returnedAt ? 'Came back from the payment page' : 'No deposit recorded'}</span></div>
+      <p class="ap-how">${x.paidAt ? `Paid ${esc(when(x.paidAt))}` : x.returnedAt ? `Returned ${esc(when(x.returnedAt))}, payment not confirmed by GoHighLevel yet` : ''}${x.smsAt ? ' · next-step text sent' : x.smsError ? ` · <span class="ghl-bad">text not sent: ${esc(x.smsError)}</span>` : ''}</p>
+      ${x.fulfillment ? `<p class="dp-ff"><b>Next step:</b> ${esc(x.fulfillment.text)}</p>` : `<p class="dp-ff dp-wait">Waiting for their answer: in the area or not, studio visit or shipping.${x.nextUrl ? ` <span class="cpair">Link for them${copyBtn(location.origin + x.nextUrl, 'next-step link')}</span>` : ''}</p>`}
+      <div class="bk-links"><button type="button" class="btn small ghost" data-see-lead="${esc(x.email)}">See lead</button>${x.page ? `<a class="btn small ghost" href="${esc(x.page)}?preview=1" target="_blank" rel="noopener">Their page ↗</a>` : ''}</div>
+    </div></article>`).join('');
+  return `<section class="bk-sec"><h2 class="bk-h">Deposits and next steps</h2><div class="bk-list">${rows}</div></section>`;
+}
+const BK_DAYS = [['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'], ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday']];
+function bookingSettingsView() {
+  const r = P.bookingCfg;
+  if (!r) return '';
+  const c = r.settings;
+  const opt = (vals, cur, fmt = (v) => `${v} min`) => vals.map((v) => `<option value="${v}" ${Number(cur) === v ? 'selected' : ''}>${fmt(v)}</option>`).join('');
+  const g = P.me.ghl?.calendars || {};
+  return `<details class="bk-set form-card" ${P.bkSetOpen ?? !c.enabled ? 'open' : ''} data-bk-set>
+    <summary><h2>Calendar on customer pages</h2><span class="pill ${c.enabled ? 'on' : ''}">${c.enabled ? 'On' : 'Off'}</span></summary>
+    <p class="faint">"Book an appointment" on the customer's page shows your open times: a short online consultation to go over their design and close the sale, or a visit to the studio. Bookings show below, on the lead and in GoHighLevel.${g.online || g.visit ? ' Open times come from your GoHighLevel calendar where one is picked (Forms → GoHighLevel); your hours below are used for the rest.' : ''}</p>
+    <label class="ghl-on"><input type="checkbox" data-bk="enabled" ${c.enabled ? 'checked' : ''} /><span><b>Show the calendar on customer pages</b><em>Off: the button only records the request, as before.</em></span></label>
+    <div class="bks-grid">
+      <div class="bks-kind"><label class="pcheck"><input type="checkbox" data-bk="online.on" ${c.kinds.online.on ? 'checked' : ''} /><span><b>Online consultation</b></span></label>
+        <label><span>Length</span><select class="in" data-bk="online.minutes">${opt([5, 10, 15, 20, 30], c.kinds.online.minutes)}</select></label>
+        <label><span>Video call link (optional)</span><input class="in" type="url" data-bk="online.video" value="${esc(c.kinds.online.video || '')}" placeholder="https://meet.google.com/… or Zoom" /></label>
+        <p class="hint">Without a link it is a phone call: you call the customer at the time they picked. With a link they can choose phone or video.</p></div>
+      <div class="bks-kind"><label class="pcheck"><input type="checkbox" data-bk="visit.on" ${c.kinds.visit.on ? 'checked' : ''} /><span><b>Studio visit</b></span></label>
+        <label><span>Length</span><select class="in" data-bk="visit.minutes">${opt([15, 20, 30, 45, 60, 90], c.kinds.visit.minutes)}</select></label>
+        <p class="hint">Also used for the mold or pick up visit after a deposit.</p></div>
+    </div>
+    <h3 class="bks-h">Opening hours</h3>
+    <div class="bks-hours">${BK_DAYS.map(([k, label]) => { const h = c.hours[k]; return `<div class="bks-day"><label class="pcheck"><input type="checkbox" data-bk-open="${k}" ${h ? 'checked' : ''} /><span>${label}</span></label><input class="in" type="time" step="900" data-bk-from="${k}" value="${esc(h?.[0] || '10:00')}" ${h ? '' : 'disabled'} /><span class="faint">to</span><input class="in" type="time" step="900" data-bk-to="${k}" value="${esc(h?.[1] || '18:00')}" ${h ? '' : 'disabled'} /></div>`; }).join('')}</div>
+    <div class="bks-grid bks-more">
+      <label><span>Time zone</span><select class="in" data-bk="tz">${r.timezones.map(([v, t]) => `<option value="${esc(v)}" ${c.tz === v ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></label>
+      <label><span>Start times every</span><select class="in" data-bk="step">${opt([10, 15, 20, 30, 60], c.step)}</select></label>
+      <label><span>Break between appointments</span><select class="in" data-bk="buffer">${opt([0, 5, 10, 15, 30], c.buffer)}</select></label>
+      <label><span>Earliest booking</span><select class="in" data-bk="notice">${opt([0, 1, 2, 4, 12, 24, 48], c.notice, (v) => (v ? `${v} hour${v === 1 ? '' : 's'} ahead` : 'Right away'))}</select></label>
+      <label><span>Bookable days ahead</span><select class="in" data-bk="days">${opt([7, 14, 21, 30, 60], c.days, (v) => `${v} days`)}</select></label>
+      <label><span>Closed on (dates)</span><input class="in" type="text" data-bk="closed" value="${esc((c.closed || []).join(', '))}" placeholder="2026-12-25, 2027-01-01" /></label>
+    </div>
+    <h3 class="bks-h">After the deposit</h3>
+    <div class="bks-grid">
+      <label><span>Your state, for "Are you in …?"</span><input class="in" type="text" data-bk="region" maxlength="30" value="${esc(c.region || '')}" placeholder="Colorado" /></label>
+      <label class="pcheck bks-kit"><input type="checkbox" data-bk="moldKit" ${c.moldKit ? 'checked' : ''} /><span>Grillz customers out of state get a mold kit by mail</span></label>
+    </div>
+    <div class="pfoot"><button type="button" class="btn gold" data-act="bk-save">Save calendar</button><span class="psaved" data-bk-msg role="status"></span></div>
+  </details>`;
+}
+function readBooking() {
+  const box = app.querySelector('[data-bk-set]');
+  const v = (k) => box.querySelector(`[data-bk="${k}"]`);
+  const hours = Object.fromEntries(BK_DAYS.map(([k]) => [k, box.querySelector(`[data-bk-open="${k}"]`).checked ? [box.querySelector(`[data-bk-from="${k}"]`).value, box.querySelector(`[data-bk-to="${k}"]`).value] : null]));
+  return {
+    enabled: v('enabled').checked, tz: v('tz').value, step: Number(v('step').value), buffer: Number(v('buffer').value), notice: Number(v('notice').value), days: Number(v('days').value),
+    closed: v('closed').value.split(/[\s,]+/).filter(Boolean), region: v('region').value, moldKit: v('moldKit').checked, hours,
+    kinds: { online: { on: v('online.on').checked, minutes: Number(v('online.minutes').value), video: v('online.video').value.trim() }, visit: { on: v('visit.on').checked, minutes: Number(v('visit.minutes').value) } },
+  };
+}
+async function saveBooking() {
+  const msg = app.querySelector('[data-bk-msg]');
+  const body = readBooking();
+  const bad = Object.entries(body.hours).find(([, h]) => h && !(h[0] < h[1]));
+  if (bad) { if (msg) msg.textContent = `${BK_DAYS.find(([k]) => k === bad[0])[1]}: the closing time must be after the opening time.`; return; }
+  if (msg) msg.textContent = 'Saving…';
+  try {
+    P.bookingCfg = await api('/api/portal/booking', { method: 'PUT', body: JSON.stringify({ settings: body }), json: true });
+    P.bkSetOpen = true;
+    P.bkDirty = false;
+    await loadBookings();
+    render();
+    const m2 = app.querySelector('[data-bk-msg]');
+    if (m2) m2.textContent = P.bookingCfg.settings.enabled ? 'Saved. Customers can book on their pages now.' : 'Saved.';
+  } catch (err) { if (msg) msg.textContent = err.message || 'Could not save.'; }
+}
+// Podešavanje kalendara: dan bez radnog vremena gasi polja; dok zlatar mijenja, osvježavanje taba ne briše upisano.
+app.addEventListener('change', (e) => {
+  const d = e.target.dataset?.bkOpen;
+  if (d) app.querySelectorAll(`[data-bk-from="${d}"], [data-bk-to="${d}"]`).forEach((el) => { el.disabled = !e.target.checked; });
+  if (e.target.closest?.('[data-bk-set]')) P.bkDirty = true;
+});
+app.addEventListener('input', (e) => { if (e.target.closest?.('[data-bk-set]')) P.bkDirty = true; });
+app.addEventListener('toggle', (e) => { if (e.target.matches?.('[data-bk-set]')) P.bkSetOpen = e.target.open; }, true);
+async function setApptStatus(id, status) {
+  if (status === 'cancelled' && !(await JLUI.confirm('Cancel this appointment? It is cancelled in GoHighLevel too. Let the customer know.'))) return;
+  try { await api(`/api/portal/appointments/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }), json: true }); await loadBookings(); render(); }
+  catch (err) { JLUI.alert(err.message || 'Could not change the appointment.'); }
 }
 
 // ---------- Tab Pricing: tabela cijena zlatara ----------
@@ -1099,6 +1231,7 @@ function leadsView(resultsOnly = false) {
           <div class="lead-top"><h2>${esc(l.name)}</h2>${l.ref ? `<span class="lead-ref" title="Lead ID: search it here or in GoHighLevel">${esc(l.ref)}${copyBtn(l.ref, 'lead ID')}</span>` : ''}<span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
           <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span>${areaHint(l.phone)}</div>
           ${replyLine(l)}
+          ${bookingLine(l)}
           ${orderBox(l)}
           ${specSheet(l.details)}
           ${l.vision ? `<p class="vision">"${esc(l.vision)}"</p>` : ''}
@@ -1126,6 +1259,15 @@ const when = (t) => new Date(t).toLocaleString('en-US', { month: 'short', day: '
 // Praćenje narudžbe (23.11.2026): Won lead ima broj narudžbe i fazu izrade; kupac je vidi na sajtu radnje
 // (broj + svoj mejl). Klik na fazu je pomjera, poruka kupcu se čuva kad se polje napusti.
 const ORDER_LABELS = ['Order placed', 'CAD approved', 'Wax & cast', 'Stone setting', 'Polish', 'Ready for pick up'];
+// Termin, depozit i odgovor poslije depozita na kartici leada (25.11.2026).
+function bookingLine(l) {
+  const bits = [];
+  if (l.appt) bits.push(`<span class="bl-i bl-appt"><b>${esc(l.appt.label)}</b> ${esc(l.appt.when)}${l.appt.kind === 'online' ? ` · ${l.appt.via === 'video' ? 'video' : 'you call them'}` : ''}</span>`);
+  if (l.deposit) bits.push(`<span class="bl-i bl-dep"><b>${l.deposit.paidAt ? `Deposit paid${l.deposit.amount ? ` ${money(l.deposit.amount)}` : ''}` : 'Back from the deposit page'}</b></span>`);
+  if (l.fulfillment) bits.push(`<span class="bl-i"><b>Next step:</b> ${esc(l.fulfillment.text)}</span>`);
+  else if (l.deposit && l.nextUrl) bits.push(`<span class="bl-i bl-wait">Next-step answer not in yet <span class="cpair">${copyBtn(location.origin + l.nextUrl, 'next-step link')}</span></span>`);
+  return bits.length ? `<div class="bline">${bits.join('')}</div>` : '';
+}
 function orderBox(l) {
   const o = l.order;
   if (!o || l.status !== 'won') return '';
@@ -1237,6 +1379,7 @@ function ghlCard() {
     <label class="ghl-on"><input type="checkbox" data-ghl-f="enabled" ${g.enabled ? 'checked' : ''} ${g.connected || P.ghlTokenTyped ? '' : 'disabled'} /><span><b>Send new leads to GoHighLevel</b><em>Every lead that arrives from now on. Your tags and status changes follow.</em></span></label>
     <label class="ghl-on"><input type="checkbox" data-ghl-f="backfill" ${g.backfill ? 'checked' : ''} ${g.connected || P.ghlTokenTyped ? '' : 'disabled'} /><span><b>Also send the leads you already have</b><em>${g.counts ? `${g.counts.waiting} not in GoHighLevel yet. ` : ''}They go in oldest first, about 12 every 5 minutes, each into the stage of its status here. Archived leads are never sent. If your GoHighLevel has automations on new contacts, they will run for these too.</em></span></label>
     ${ghlProdView(g, pipes, pipe)}
+    ${ghlBookingView(g)}
     ${g.counts && (g.counts.sent || g.counts.failed) ? `<p class="ghl-count">In GoHighLevel: <b>${g.counts.sent}</b> sent${g.counts.waiting ? ` · ${g.counts.waiting} waiting` : ''}${g.counts.failed ? ` · <button type="button" class="ghl-bad ghl-failbtn" data-act="ghl-failed">${g.counts.failed} failed</button>` : ''}${g.counts.renaming ? ` · lead ID being added to ${g.counts.renaming}` : ''}</p>` : ''}
     ${P.ghlFailed ? ghlFailedView(P.ghlFailed) : ''}
     <div class="ghl-acts"><button type="button" class="btn primary small" data-act="ghl-save">Save</button>${g.connected ? '<button type="button" class="btn small warn" data-act="ghl-disconnect">Disconnect</button>' : ''}</div>
@@ -1273,12 +1416,36 @@ function ghlProdView(g, pipes, salesPipe) {
     <label class="ghl-on"><input type="checkbox" data-ghl-p="enabled" ${pr.enabled ? 'checked' : ''} ${g.connected ? '' : 'disabled'} /><span><b>Send Won orders to the production board</b><em>${c.orders ? `${c.onBoard || 0} of ${c.orders} orders on the board. ` : ''}New Won leads go right away; orders you already have go about 10 every 5 minutes. Stages from the board come back here within 5 minutes.</em></span></label>
   </div>`;
 }
+// Kalendar i depozit (25.11.2026): GHL kalendar po vrsti termina, webhook za uplatu depozita, SMS sa sljedećim korakom.
+function ghlBookingView(g) {
+  const cals = P.ghlCals || null;
+  const cur = g.calendars || {};
+  const sel = (k) => cals ? `<select class="in" data-ghl-cal="${k}"><option value="">My hours from the Bookings tab</option>${cals.map((c) => `<option value="${esc(c.id)}" ${cur[k] === c.id ? 'selected' : ''}>${esc(c.name)}${c.minutes ? ` · ${c.minutes} min` : ''}</option>`).join('')}</select>`
+    : `<input class="in" type="text" disabled value="${cur[k] ? 'GoHighLevel calendar saved' : 'My hours from the Bookings tab'}" />`;
+  const lh = g.lastHook;
+  return `<div class="ghl-prod ghl-book" data-ghl-book>
+    <h3>Appointments and deposits</h3>
+    <p class="faint">Customers book an online consultation or a studio visit on their design page (turn it on in the Bookings tab). Every booking adds a note and tags to the contact. Pick a GoHighLevel calendar to take the open times from it and put the booking on it too; without one, your hours from the Bookings tab are used.</p>
+    <div class="ghl-grid"><label><span>Online consultation calendar</span>${sel('online')}</label><label><span>Studio visit calendar</span>${sel('visit')}</label></div>
+    <div class="ghl-acts"><button type="button" class="btn small" data-act="ghl-calendars">${cals ? 'Reload calendars' : 'Load calendars'}</button><span class="faint">Needs the "View Calendars" and "Edit Calendar Events" scopes on the token.</span></div>
+    <h3 class="ghl-sub">Deposit paid → next step</h3>
+    <p class="faint">"Reserve with a deposit" opens your deposit link (Pricing tab) with the customer's name, email and phone filled in. When the payment goes through, a GoHighLevel workflow tells JewelryLead, and the customer is asked whether they are in your area, if they come to the studio (and when) or if you ship the mold kit or the piece. Their answers go to the lead and to the contact (note, tags, shipping address).</p>
+    ${g.hookUrl ? `<div class="ghl-hook"><code>${esc(g.hookUrl)}</code>${copyBtn(g.hookUrl, 'webhook address')}</div>
+      <ol class="ghl-steps"><li>In GoHighLevel: Automation → Workflows → Create workflow.</li><li>Trigger: <b>Payment Received</b> (or <b>Order Submitted</b> for your deposit order form).</li><li>Action: <b>Webhook</b>, method POST, URL above. Save and publish.</li><li>On the payment link: redirect after payment to <code>https://jewelrylead.com/deposit/done</code>, so the customer lands back on their page with the questions.</li></ol>
+      <p class="faint">${lh ? `Last call ${esc(when(lh.at))}: ${lh.matched ? `matched lead ${esc(lh.ref || '')}` : lh.ignored ? `ignored (${esc(lh.ignored)})` : 'no lead with that email or phone'}.` : 'No deposit received through the webhook yet.'}</p>`
+      : `<div class="ghl-acts"><button type="button" class="btn small" data-act="ghl-hook">Create the webhook address</button></div>`}
+    <div class="ghl-checks"><label><input type="checkbox" data-ghl-f="smsNext" ${g.smsNext ? 'checked' : ''} /> Text the customer the link to the next-step questions right after the deposit, from your GoHighLevel number (needs the "Edit Conversation Messages" scope)</label></div>
+  </div>`;
+}
 function ghlRead() {
   const box = app.querySelector('[data-ghl]');
   const v = (f) => box?.querySelector(`[data-ghl-f="${f}"]`);
   const body = { locationId: v('locationId')?.value.trim() || '', tags: (v('tags')?.value || '').split(',').map((x) => x.trim()).filter(Boolean), pieceTag: !!v('pieceTag')?.checked, note: !!v('note')?.checked, enabled: !!v('enabled')?.checked, backfill: !!v('backfill')?.checked };
   const tok = v('token')?.value.trim();
   if (tok) body.token = tok;
+  if (v('smsNext')) body.smsNext = !!v('smsNext').checked;
+  const cals = box?.querySelectorAll('select[data-ghl-cal]');
+  if (cals?.length) body.calendars = Object.fromEntries([...cals].map((el) => [el.dataset.ghlCal, el.value]));
   const pipe = box?.querySelector('[data-ghl-pipe]');
   if (pipe) { body.pipelineId = pipe.value; body.stages = Object.fromEntries([...box.querySelectorAll('[data-ghl-stage]')].map((el) => [el.dataset.ghlStage, el.value])); }
   const pv = (f) => box?.querySelector(`[data-ghl-p="${f}"]`);
@@ -1296,7 +1463,14 @@ async function ghlAction(act) {
   const body = ghlRead();
   P.ghlDraft = body;
   try {
-    if (act === 'users') {
+    if (act === 'calendars') {
+      P.ghlMsg = 'Loading calendars…'; render();
+      const r = await api('/api/portal/ghl/calendars', { method: 'POST', body: JSON.stringify({ token: body.token, locationId: body.locationId }), json: true });
+      P.ghlCals = r.calendars; P.ghlMsg = r.calendars.length ? `${r.calendars.length} calendar${r.calendars.length === 1 ? '' : 's'} found. Pick them, then Save.` : 'No calendars in this sub-account yet.';
+    } else if (act === 'hook') {
+      P.me.ghl = await api('/api/portal/ghl', { method: 'PUT', body: JSON.stringify({ hook: 'create' }), json: true });
+      P.ghlMsg = 'Webhook address created. Paste it into your GoHighLevel workflow.';
+    } else if (act === 'users') {
       P.ghlMsg = 'Loading users…'; render();
       const r = await api('/api/portal/ghl/users', { method: 'POST', body: JSON.stringify({ token: body.token, locationId: body.locationId }), json: true });
       P.ghlUsers = r.users; P.ghlMsg = `${r.users.length} user${r.users.length === 1 ? '' : 's'} found. Pick the worker, then Save.`;
@@ -1468,10 +1642,12 @@ app.addEventListener('click', async (e) => {
     api('/api/portal/ghl/retry', { method: 'POST', body: '{}', json: true }).then(async (r) => { P.ghlFailed = null; P.ghlMsg = `${r.queued} lead${r.queued === 1 ? '' : 's'} sent again: the first 12 now, the rest about 12 every 5 minutes.`; P.me.ghl = await api('/api/portal/ghl'); render(); }).catch((err) => { P.ghlMsg = err.message; render(); });
     return;
   }
-  if (['ghl-load', 'ghl-save', 'ghl-disconnect', 'ghl-users'].includes(t.dataset.act)) { ghlAction(t.dataset.act.slice(4)); return; }
+  if (['ghl-load', 'ghl-save', 'ghl-disconnect', 'ghl-users', 'ghl-calendars', 'ghl-hook'].includes(t.dataset.act)) { ghlAction(t.dataset.act.slice(4)); return; }
   if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
+  if (t.dataset.act === 'bk-save') { saveBooking(); return; }
+  if (t.dataset.apSet) { setApptStatus(t.dataset.apId, t.dataset.apSet); return; }
   if (t.dataset.seeLead) { P.archivedView = false; P.tab = 'leads'; P.q = t.dataset.seeLead; P.status = ''; P.piece = ''; P.video = ''; P.day = ''; P.tag = ''; P.budget = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.form !== undefined) { P.form = t.dataset.form; render(); }
   if (t.dataset.piece !== undefined) { P.piece = t.dataset.piece; if (await loadLeads()) render(); }
@@ -1740,6 +1916,11 @@ const NT = {
   page_view: ['view', (x) => `<b>${esc(x.name)}</b> opened their page`],
   page_action: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.action === 'appointment' ? 'asked for an appointment' : 'wants to reserve with a deposit'}${x.meta.option === 'fit' ? ' · Option 2' : x.meta.option === 'picked' ? ' · Option 1' : ''}`],
   auto_sent: ['mail', (x) => `First message emailed to <b>${esc(x.name)}</b> automatically`],
+  appointment_booked: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.moved ? 'moved their' : 'booked an'} ${x.meta.kind === 'online' ? 'online consultation' : 'studio visit'}${x.meta.start ? ` for ${esc(apptWhen(x.meta.start))}` : ''}`],
+  appointment_cancelled: ['warn', (x) => `${x.meta.by === 'store' ? 'You cancelled the appointment with' : 'Appointment cancelled by'} <b>${esc(x.name)}</b>`],
+  deposit_paid: ['order', (x) => `<b>${esc(x.name)}</b> paid the deposit${x.meta.amount ? ` · ${money(x.meta.amount)}` : ''}`],
+  deposit_returned: ['hot', (x) => `<b>${esc(x.name)}</b> came back from the deposit payment page`],
+  fulfillment: ['hot', (x) => `<b>${esc(x.name)}</b> answered the next step: ${x.meta.method === 'visit' ? 'comes to the studio' : x.meta.kit ? 'mail a mold kit' : 'ship it'}`],
   order_created: ['order', (x) => `<b>${esc(x.name)}</b> is now an order`],
   auto_send_failed: ['warn', (x) => `Could not email <b>${esc(x.name)}</b> automatically. Reply to them yourself.`],
   alert_failed: ['warn', (x) => `The new lead email for <b>${esc(x.name)}</b> did not go out`],

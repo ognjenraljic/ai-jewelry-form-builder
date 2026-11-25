@@ -15,7 +15,9 @@ import { mailOn, sendMail, validEmail, emailList } from './mail.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import { areaOf } from '../public/area-codes.js';
-import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE, oppName, ghlRenameOpp, guessOrderStages, ghlUsers, ghlPushOrder, ghlPushOrderStage, ghlReadOrderStage, prodReady, ORDER_KEYS } from './ghl.js';
+import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE, oppName, ghlRenameOpp, guessOrderStages, ghlUsers, ghlPushOrder, ghlPushOrderStage, ghlReadOrderStage, prodReady, ORDER_KEYS,
+  ghlCalendars, ghlFreeSlots, ghlBookAppointment, ghlCancelAppointment, ghlAddNote, ghlEnsureContact, ghlSetAddress, ghlSendSms, hookPayload } from './ghl.js';
+import { KINDS, KIND_LABEL, TIMEZONES, bookingSettings, cleanBooking, kindsOn, nativeSlots, ghlSlotsToDays, zonedToUtc, zonedYmd, addDays, whenText, icsFor, cleanFulfillment, fulfillmentText, depositLink } from './booking.js';
 import { ORDER_STAGES, LAST_STAGE, orderPrefix, newOrderNo, normalizeOrderNo, orderView, nextOrder, parseOrder, leadRef, parseLeadRef } from './orders.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
@@ -143,7 +145,15 @@ async function route(request, env, ctx, url) {
   if (p === '/api/orders/track') return orderTrack(request, env);
   // Stranica kupca (19.11.2026): njegov dizajn, ponude i dugmad Deposit / Book appointment.
   if ((m = p.match(/^\/p\/([a-z0-9]{16,32})$/)) && read) return leadPage(request, env, ctx, m[1], url);
-  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/action$/)) && request.method === 'POST') return pageAction(request, env, m[1]);
+  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/action$/)) && request.method === 'POST') return pageAction(request, env, m[1], secure);
+  // Kalendar, depozit i sljedeći korak (25.11.2026).
+  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/slots$/)) && read) return pageSlots(request, env, m[1], url);
+  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/book$/)) && request.method === 'POST') return pageBook(request, env, ctx, m[1]);
+  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/appointments\/([a-z0-9]{16})\/cancel$/)) && request.method === 'POST') return pageCancel(request, env, ctx, m[1], m[2]);
+  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/appointments\/([a-z0-9]{16})\.ics$/)) && read) return pageIcs(request, env, m[1], m[2]);
+  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/next$/)) && request.method === 'POST') return pageNext(request, env, ctx, m[1]);
+  if (p === '/deposit/done' && read) return depositDone(request, env, url);
+  if ((m = p.match(/^\/api\/hooks\/ghl\/([a-z0-9]{32})$/)) && request.method === 'POST') return ghlHook(request, env, ctx, m[1]);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/renders$/)) && request.method === 'POST') return createRender(request, env, m[1], ctx);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/check$/)) && request.method === 'POST') return teethCheckRoute(request, env, m[1], ctx);
   if (p === '/api/demo-requests' && request.method === 'POST') return createDemoRequest(request, env);
@@ -311,6 +321,7 @@ async function catchUp(env) {
   // Obavještenja radnji koja nisu stigla odmah i automatska prva poruka kupcu (21.11.2026).
   await notifySweep(env).catch((e) => console.error('notify sweep', e.message));
   await ghlSweep(env).catch((e) => console.error('ghl sweep', e.message));
+  await ghlApptSweep(env).catch((e) => console.error('ghl appt sweep', e.message));
   if (pikaOn(env)) {
     const need = (await env.DB.prepare(`SELECT l.* FROM leads l JOIN renders r ON r.lead_id = l.id AND r.n = 1 AND r.kind IS NULL AND r.status = 'ok' AND (r.checking IS NULL)
         WHERE l.created_at > ? AND r.created_at < ? AND NOT EXISTS (SELECT 1 FROM films f WHERE f.lead_id = l.id) ORDER BY l.created_at LIMIT ${CATCHUP_FILMS}`).bind(now - 864e5, now - 60_000).all()).results;
@@ -1576,6 +1587,15 @@ async function portalApi(request, env, p, secure, ctx) {
     await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.bookingsSeenAt', ?) WHERE id = ?`).bind(at, client.id).run();
     return json({ ok: true, seenAt: at });
   }
+  // Kalendar na stranicama kupaca (25.11.2026): radno vrijeme, vrste termina; status termina iz taba Bookings.
+  if (p === '/api/portal/booking' && (request.method === 'GET' || request.method === 'PUT')) return portalBooking(request, env, client);
+  {
+    const am = p.match(/^\/api\/portal\/appointments\/([a-z0-9]{16})$/);
+    if (am && request.method === 'PATCH') {
+      if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
+      return portalApptStatus(request, env, ctx, client, am[1]);
+    }
+  }
   // Upiti po stranicama (50), bez dugih IN lista (D1 prima najviše 100 parametara po upitu).
   if (p === '/api/portal/leads' && request.method === 'GET') {
     const u = new URL(request.url);
@@ -1619,7 +1639,8 @@ async function portalApi(request, env, p, secure, ctx) {
     // Brzina (22.11.2026): sve što ne zavisi od stranice ide u isto vrijeme kad i lista (ranije 7 upita zaredom).
     const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
     const [leadRes, countRows, pieceRows, dayRes, vrowsRes, tagRows, budgetRows, archRow] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page, l.tags, l.archived_at,
-        l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data, l.lead_no, l.ghl_order
+        l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data, l.lead_no, l.ghl_order, l.deposit, l.fulfillment,
+        (SELECT json_object('kind', a.kind, 'start', a.start_at, 'via', a.via, 'purpose', a.purpose) FROM appointments a WHERE a.lead_id = l.id AND a.status = 'booked' AND a.end_at > CAST(strftime('%s', 'now') AS INTEGER) * 1000 ORDER BY a.start_at LIMIT 1) AS appt
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
     // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
     env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
@@ -1636,6 +1657,7 @@ async function portalApi(request, env, p, secure, ctx) {
     env.DB.prepare('SELECT COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NOT NULL').bind(client.id).first(),
     ]);
     const leads = leadRes.results;
+    const bcfg = bookingSettings(parseJson(client.data).booking);
     // Won lead bez broja narudžbe (npr. Won prije praćenja narudžbi) dobija broj sada.
     for (const l of leads.slice(0, PAGE_SIZE).filter((x) => x.status === 'won' && !x.order_no)) {
       const o = await assignOrder(env, l.id, client).catch((e) => { console.error('order', l.id, e.message); return null; });
@@ -1681,6 +1703,7 @@ async function portalApi(request, env, p, secure, ctx) {
           status: l.status || 'new', note: l.note || '', archivedAt: l.archived_at || null, tags: parseTags(l.tags), quotes: leadQuotes(l.quotes), page: pageInfo(l),
           alertedAt: l.alerted_at || null, autoSentAt: l.auto_sent_at || null, firstReplyAt: l.first_reply_at || null,
           order: orderView(l.order_no, l.order_data), prodBoard: ghlOrderInfo(l.ghl_order),
+          ...leadBookingInfo(l, bcfg),
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a), answers: pricingAnswers(a),
           photos: [
             ...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []),
@@ -1863,7 +1886,7 @@ async function portalStats(env, client) {
   };
 }
 // Automatske quote poruke nisu ovdje: stižu uz svaki lead (dvije po leadu) i samo bi zatrpale listu.
-const NOTIFY_TYPES = ['created', 'page_view', 'page_action', 'auto_sent', 'auto_send_failed', 'alert_failed', 'order_created'];
+const NOTIFY_TYPES = ['created', 'page_view', 'page_action', 'auto_sent', 'auto_send_failed', 'alert_failed', 'order_created', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment'];
 async function portalNotifications(env, client) {
   const since = Date.now() - 30 * 864e5;
   const rows = (await env.DB.prepare(`SELECT e.id, e.lead_id, e.type, e.at, e.meta, l.name, l.email, json_extract(l.answers, '$.type') AS piece
@@ -1876,7 +1899,7 @@ async function portalNotifications(env, client) {
   for (const r of rows) {
     let meta = {};
     try { meta = JSON.parse(r.meta || '{}') || {}; } catch {}
-    items.push({ id: r.id, lead: r.lead_id, type: r.type, at: r.at, name: r.name, email: r.email, piece: r.piece || '', meta: { action: meta.action || null, option: meta.option || null } });
+    items.push({ id: r.id, lead: r.lead_id, type: r.type, at: r.at, name: r.name, email: r.email, piece: r.piece || '', meta: { action: meta.action || null, option: meta.option || null, kind: meta.kind || null, start: meta.start || null, amount: meta.amount ?? null, method: meta.method || null, kit: meta.kit || null, by: meta.by || null, moved: meta.moved || null } });
     if (items.length >= 150) break;
   }
   return { seenAt, unseen: items.filter((x) => x.at > seenAt).length, items };
@@ -1958,7 +1981,7 @@ function ghlOrderInfo(raw) {
   if (!o) return null;
   return { on: !!o.oppId, error: o.oppId ? null : o.error || null };
 }
-const parseJson = (raw) => { try { return JSON.parse(raw || '{}') || {}; } catch { return {}; } };
+const parseJson = (raw, dflt = {}) => { try { const v = JSON.parse(raw || 'null'); return v && typeof v === 'object' ? v : dflt; } catch { return dflt; } };
 async function ghlSyncOrder(env, leadId, origin = ORIGIN_BASE) {
   const row = await notifyRow(env, leadId);
   if (!row || row.archived_at || !row.order_no) return null;
@@ -2081,9 +2104,19 @@ async function portalGhl(request, env, p, client, ctx) {
     const ordersAll = await env.DB.prepare('SELECT COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL AND l.order_no IS NOT NULL').bind(client.id).first();
     return { sent: r?.sent || 0, failed: r?.failed || 0, waiting: r?.waiting || 0, orders: ordersAll?.n || 0, onBoard: o?.onBoard || 0, renaming: o?.renaming || 0 };
   };
-  if (p === '/api/portal/ghl' && request.method === 'GET') return json({ ...ghlPublic(cur), counts: await counts() });
+  // Adresa za webhook depozita (25.11.2026): zlatar je lijepi u GHL workflow (Payment Received → Webhook).
+  const origin = new URL(request.url).origin;
+  const hookUrl = (g) => (g.hookKey ? `${origin}/api/hooks/ghl/${g.hookKey}` : '');
+  if (p === '/api/portal/ghl' && request.method === 'GET') return json({ ...ghlPublic(cur), hookUrl: hookUrl(cur), counts: await counts() });
   // Token iz polja (ako je upisan) ili sačuvani.
   const tokenFrom = async () => (b.token ? String(b.token).trim() : await openGhlToken(env, client.id, cur.token).catch(() => ''));
+  if (p === '/api/portal/ghl/calendars' && request.method === 'POST') {
+    const loc = String(b.locationId || cur.locationId || '').trim();
+    const token = await tokenFrom();
+    if (!token || !validLocationId(loc)) return json({ error: 'Paste the Private Integration token and the Location ID first.' }, 400);
+    try { return json({ calendars: await ghlCalendars(token, loc, ghlFetch(env)) }); }
+    catch (e) { return json({ error: e.status === 401 || e.status === 403 ? 'The token cannot read calendars. Add the "View Calendars" and "Edit Calendar Events" scopes to the Private Integration.' : e.message }, 400); }
+  }
   if (p === '/api/portal/ghl/pipelines' && request.method === 'POST') {
     const loc = String(b.locationId || cur.locationId || '').trim();
     const token = await tokenFrom();
@@ -2147,11 +2180,16 @@ async function portalGhl(request, env, p, client, ctx) {
     // Prodajni i proizvodni pipeline nikad isti, ni u jednom smjeru (Ognjen 25.11.2026 izabrao Production kao prodajni):
     // inače bi leadovi sa imenom, mejlom i telefonom išli na tablu radnika.
     if (next.pipelineId && next.prod?.pipelineId && next.pipelineId === next.prod.pipelineId) return json({ error: 'The sales pipeline and the production pipeline must be different, so workers never see customer details.' }, 400);
+    // Kalendar i depozit (25.11.2026).
+    if (b.calendars && typeof b.calendars === 'object') next.calendars = Object.fromEntries(['online', 'visit'].map((k) => [k, /^[A-Za-z0-9]{0,40}$/.test(String(b.calendars[k] || '')) ? String(b.calendars[k] || '') : '']));
+    if ('smsNext' in b) next.smsNext = b.smsNext === true;
+    if (b.hook === 'create' && !next.hookKey) next.hookKey = rid(32);
+    if (b.hook === 'rotate') next.hookKey = rid(32);
     if (!next.enabled) next.backfill = false;
     // Uključenje važi samo za nove leadove (stari se ne šalju naknadno, cron gleda zadnja 24 h).
     if (next.enabled && !cur.enabled) next.enabledAt = Date.now();
     await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.ghl', json(?)) WHERE id = ?`).bind(JSON.stringify(next), client.id).run();
-    return json({ ...ghlPublic(next), counts: await counts() });
+    return json({ ...ghlPublic(next), hookUrl: hookUrl(next), counts: await counts() });
   }
   return json({ error: 'Not found' }, 404);
 }
@@ -2955,7 +2993,7 @@ function pageInfo(l) {
   return l.page_key ? { url: `/p/${l.page_key}`, views: pg.views || 0, lastView: pg.lastView || null, actions: Array.isArray(pg.actions) ? pg.actions.slice(-10) : [] } : null;
 }
 async function leadPage(request, env, ctx, key, url) {
-  const row = await env.DB.prepare(`SELECT l.*, f.data AS form_data, c.name AS client_name, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id
+  const row = await env.DB.prepare(`SELECT l.*, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id
       LEFT JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?`).bind(key).first();
   if (!row) return notFoundPage();
   const form = JSON.parse(row.form_data || '{}');
@@ -2972,7 +3010,22 @@ async function leadPage(request, env, ctx, key, url) {
   const newest = okFilms.find((f) => f.model === salesApi || customerFilm(env, f));
   const film = newest && (okFilms.find((f) => f.model === salesApi && f.rat === newest.rat) || newest);
   const ls = leadSpecFrom(pricingSpec(form), pricingAnswers(answers));
+  // Kalendar i depozit (25.11.2026): vrste termina, kupčev zakazani termin, depozit i pitanja poslije depozita.
+  const bcfg = bookingSettings(client.booking);
+  const dep = parseJson(row.deposit);
+  const ff = parseJson(row.fulfillment, null);
+  const upcoming = row.client_id ? await upcomingFor(env, row.id) : [];
+  const depositOn = !!httpsUrl(pricing?.depositUrl);
+  const booking = {
+    kinds: row.client_id ? kindsOn(bcfg).map((k) => ({ kind: k, label: KIND_LABEL[k], minutes: bcfg.kinds[k].minutes })) : [],
+    video: !!bcfg.kinds.online.video, tzLabel: tzLabel(bcfg.tz), region: bcfg.region, moldKit: bcfg.moldKit, visitOn: bcfg.enabled && bcfg.kinds.visit.on,
+    upcoming: upcoming.map((a) => apptView(a, key, bcfg)),
+    deposit: { on: depositOn, paid: !!dep.paidAt, returned: !!dep.returnedAt, amount: dep.amount ?? null },
+    fulfillment: ff ? { ...ff, text: fulfillmentText(ff, { grillz: answers.type === 'grillz', region: bcfg.region }) } : null,
+    showNext: !!(dep.paidAt || dep.returnedAt || ff || url.searchParams.get('next') === '1' || url.searchParams.get('deposit') === '1'),
+  };
   const html = leadPageHtml({
+    booking,
     key, origin: url.origin, form, answers, details: leadDetails(form, answers), ls, pricing, quotes,
     lead: { name: row.name, createdAt: row.created_at },
     store: { name: form.brand?.name || row.client_name || 'Our studio', logo: form.brand?.logo || '', info: quoteInfoText(pricing?.quoteInfo) || '' },
@@ -2991,12 +3044,12 @@ async function leadPage(request, env, ctx, key, url) {
   return withSecurity(res, { page: true, ancestors: "'none'" });
 }
 // Deposit / Book appointment: zabilježi klik uz lead (zlatar ga vidi u portalu) i vrati link radnje ako ga je upisala.
-async function pageAction(request, env, key) {
+async function pageAction(request, env, key, secure = true) {
   const b = await request.json().catch(() => ({}));
   const action = PAGE_ACTIONS.includes(b.action) ? b.action : null;
   const option = ['picked', 'fit'].includes(b.option) ? b.option : '';
   if (!action) return json({ error: 'Unknown action.' }, 400);
-  const row = await env.DB.prepare('SELECT l.id, l.page, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?').bind(key).first();
+  const row = await env.DB.prepare('SELECT l.id, l.page, l.name, l.email, l.phone, l.lead_no, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?').bind(key).first();
   if (!row) return json({ error: 'Not found' }, 404);
   let pg = {};
   try { pg = JSON.parse(row.page || '{}') || {}; } catch {}
@@ -3005,7 +3058,15 @@ async function pageAction(request, env, key) {
   await logEvent(env, row.id, 'page_action', { action, option });
   let pricing = {};
   try { pricing = JSON.parse(row.client_data || '{}').pricing || {}; } catch {}
-  return json({ ok: true, redirect: httpsUrl(action === 'deposit' ? pricing.depositUrl : pricing.bookingUrl) || null });
+  const link = httpsUrl(action === 'deposit' ? pricing.depositUrl : pricing.bookingUrl) || null;
+  // Depozit (25.11.2026): ime, mejl i telefon kupca unaprijed upisani na stranici za plaćanje, a kolačić vraća kupca
+  // na njegovu stranicu kad se vrati sa plaćanja (/deposit/done).
+  if (action === 'deposit' && link) {
+    const res = json({ ok: true, redirect: depositLink(link, { name: row.name, email: row.email, phone: row.phone, ref: leadRef(row.lead_no) }) });
+    res.headers.append('set-cookie', depCookie(key, secure));
+    return res;
+  }
+  return json({ ok: true, redirect: link });
 }
 
 // Bookings za portal: svaki lead sa bar jednim klikom na stranici kupca, najnoviji klik prvi; "new" = poslije zadnjeg
@@ -3029,7 +3090,352 @@ async function portalBookings(env, client) {
       img: l.img ? `/media/${l.img}` : '', page: l.page_key ? `/p/${l.page_key}` : '', views: pg.views || 0, lastAt: actions[0]?.at || 0,
       isNew: actions.some((a) => a.at > seenAt), actions };
   }).filter((x) => x.actions.length).sort((a, b) => b.lastAt - a.lastAt);
-  return { seenAt, unseen: items.filter((x) => x.isNew).length, items };
+  // Termini (25.11.2026): zakazani sa stranica kupaca, od prije 30 dana; depoziti i odgovori poslije depozita.
+  const cfg = bookingSettings(parseJson(client.data).booking);
+  const IMG = `(SELECT r.image_key FROM renders r WHERE r.lead_id = l.id AND r.status = 'ok' AND r.kind IS NULL AND r.image_key IS NOT NULL ORDER BY r.created_at DESC LIMIT 1) AS img`;
+  const [apptRows, depRows] = await Promise.all([
+    env.DB.prepare(`SELECT a.*, l.name, l.email, l.phone, l.page_key, l.lead_no, COALESCE(l.status, 'new') AS lead_status, json_extract(l.answers, '$.type') AS piece, ${IMG}
+        FROM appointments a JOIN leads l ON l.id = a.lead_id WHERE a.client_id = ? AND a.start_at > ? ORDER BY a.start_at LIMIT 300`).bind(client.id, Date.now() - 30 * 864e5).all(),
+    env.DB.prepare(`SELECT l.id, l.name, l.email, l.phone, l.page_key, l.lead_no, l.deposit, l.fulfillment, COALESCE(l.status, 'new') AS lead_status, json_extract(l.answers, '$.type') AS piece, ${IMG}
+        FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL AND (l.deposit IS NOT NULL OR l.fulfillment IS NOT NULL)
+        ORDER BY COALESCE(json_extract(l.deposit, '$.paidAt'), json_extract(l.deposit, '$.returnedAt'), json_extract(l.fulfillment, '$.at')) DESC LIMIT 200`).bind(client.id).all(),
+  ]);
+  const appointments = apptRows.results.map((a) => ({
+    ...apptView(a, '', cfg), leadId: a.lead_id, ref: leadRef(a.lead_no), name: a.name, email: a.email, phone: a.phone, piece: a.piece || '', leadStatus: a.lead_status,
+    img: a.img ? `/media/${a.img}` : '', page: a.page_key ? `/p/${a.page_key}` : '', note: a.note || '', option: a.option || '', createdAt: a.created_at,
+    isNew: a.status === 'booked' && a.created_at > seenAt, ghl: (() => { const g = parseJson(a.ghl); return g.eventId ? 'calendar' : g.noted ? 'note' : g.error ? 'error' : ''; })(),
+  }));
+  const deposits = depRows.results.map((l) => {
+    const dep = parseJson(l.deposit);
+    const ff = parseJson(l.fulfillment, null);
+    const at = dep.paidAt || dep.returnedAt || ff?.at || 0;
+    return { leadId: l.id, ref: leadRef(l.lead_no), name: l.name, email: l.email, phone: l.phone, piece: l.piece || '', leadStatus: l.lead_status, img: l.img ? `/media/${l.img}` : '',
+      page: l.page_key ? `/p/${l.page_key}` : '', nextUrl: l.page_key ? `/p/${l.page_key}?next=1` : '',
+      paidAt: dep.paidAt || null, amount: dep.amount ?? null, returnedAt: dep.returnedAt || null, smsAt: dep.smsAt || null, smsError: dep.smsError || null,
+      fulfillment: ff ? { ...ff, text: fulfillmentText(ff, { grillz: l.piece === 'grillz', region: cfg.region }) } : null, at, isNew: at > seenAt };
+  });
+  return {
+    seenAt, unseen: items.filter((x) => x.isNew).length + appointments.filter((x) => x.isNew).length + deposits.filter((x) => x.isNew).length, items, appointments, deposits,
+    booking: { enabled: cfg.enabled, tz: cfg.tz, tzLabel: tzLabel(cfg.tz), region: cfg.region },
+  };
+}
+
+// ---------- Kalendar na stranici kupca, depozit i sljedeći korak (25.11.2026) ----------
+// District: "Book an appointment = online consultation, 5-10 min call to evaluate everything and close the sale" i
+// "deposits through GHL, then ask: are you in Colorado, store visit, or do we ship the mold / the product".
+// Termini: radno vrijeme iz portala (Bookings → Calendar) ili GHL kalendar izabran za tu vrstu. Depozit: GHL payment link
+// sa upisanim podacima kupca; uplata stiže webhookom iz GHL workflowa, a kupac se sa plaćanja vraća na svoju stranicu.
+const BOOKINGS_PER_LEAD_DAY = 8;
+function pageRow(env, key) {
+  return env.DB.prepare(`SELECT l.*, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data
+      FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?`).bind(key).first();
+}
+const bookingOf = (row) => bookingSettings(parseJson(row.client_data).booking);
+const tzLabel = (tz) => (TIMEZONES.find(([k]) => k === tz) || [, tz])[1];
+function storeOf(row) {
+  const form = parseJson(row.form_data);
+  const pricing = parseJson(row.client_data).pricing || {};
+  const info = quoteInfoText(pricing.quoteInfo) || '';
+  return { name: form.brand?.name || row.client_name || 'Our studio', info, address: info.split('\n').slice(0, 3).join(', ') };
+}
+function apptView(a, key, cfg) {
+  const video = a.kind === 'online' && a.via === 'video' ? cfg.kinds.online.video : '';
+  return { id: a.id, kind: a.kind, label: KIND_LABEL[a.kind], start: a.start_at, end: a.end_at, when: whenText(a.start_at, cfg.tz), via: a.via || '', video, purpose: a.purpose || '', status: a.status,
+    ics: key ? `/api/page/${key}/appointments/${a.id}.ics` : '' };
+}
+async function upcomingFor(env, leadId) {
+  return (await env.DB.prepare(`SELECT * FROM appointments WHERE lead_id = ? AND status = 'booked' AND end_at > ? ORDER BY start_at`).bind(leadId, Date.now()).all()).results;
+}
+// Slobodna mjesta za vrstu termina: GHL kalendar kad je izabran i radi, inače radno vrijeme radnje. Termini zakazani
+// kod nas se uvijek oduzimaju (i od GHL mjesta, ako upis u GHL nije prošao).
+async function slotsFor(env, row, cfg, kind, exclude = []) {
+  const now = Date.now();
+  const busy = (await env.DB.prepare(`SELECT id, start_at, end_at FROM appointments WHERE client_id = ? AND status = 'booked' AND end_at > ? AND start_at < ?`)
+    .bind(row.client_id, now, now + (cfg.days + 2) * 864e5).all()).results.filter((b) => !exclude.includes(b.id)).map((b) => ({ start: b.start_at, end: b.end_at }));
+  const calId = parseJson(row.client_data).ghl?.calendars?.[kind];
+  if (calId) {
+    const conf = await ghlConfig(env, { id: row.client_id, data: row.client_data });
+    if (conf) {
+      try {
+        const today = zonedYmd(now, cfg.tz);
+        const data = await ghlFreeSlots(conf.token, calId, zonedToUtc(today, '00:00', cfg.tz), zonedToUtc(addDays(today, cfg.days), '00:00', cfg.tz), cfg.tz, ghlFetch(env));
+        const dur = cfg.kinds[kind].minutes * 60_000;
+        const days = ghlSlotsToDays(data, cfg, now).map((d) => ({ ...d, slots: d.slots.filter((t) => !busy.some((b) => t < b.end && t + dur > b.start)) }));
+        return { source: 'ghl', days };
+      } catch (e) {
+        console.error('ghl slots', row.client_id, e.message);
+        await ghlNote(env, row.client_id, false, `Calendar: ${e.message}`);
+      }
+    }
+  }
+  return { source: 'store', days: nativeSlots(cfg, kind, busy, now) };
+}
+async function pageSlots(request, env, key, url) {
+  const row = await pageRow(env, key);
+  if (!row) return json({ error: 'Not found' }, 404);
+  const cfg = bookingOf(row);
+  const kind = url.searchParams.get('kind');
+  const forNext = url.searchParams.get('for') === 'next';
+  if (!KINDS.includes(kind) || !(forNext ? cfg.kinds[kind]?.on : kindsOn(cfg).includes(kind))) return json({ error: 'Booking is not available.' }, 400);
+  const mine = await upcomingFor(env, row.id);
+  const s = await slotsFor(env, row, cfg, kind, mine.filter((a) => a.kind === kind).map((a) => a.id));
+  return json({ tz: cfg.tz, tzLabel: tzLabel(cfg.tz), kind, label: KIND_LABEL[kind], minutes: cfg.kinds[kind].minutes, video: kind === 'online' && !!cfg.kinds.online.video, ...s, current: mine.map((a) => apptView(a, key, cfg)) });
+}
+// Zakazivanje (stranica kupca i korak poslije depozita). Isti kupac ima najviše jedan termin po vrsti: novi zamjenjuje stari.
+async function bookAppointment(env, ctx, row, b, { source = 'page', origin = ORIGIN_BASE } = {}) {
+  const cfg = bookingOf(row);
+  const kind = b.kind;
+  const allowed = source === 'next-step' ? cfg.enabled && cfg.kinds.visit.on && kind === 'visit' : kindsOn(cfg).includes(kind);
+  if (!KINDS.includes(kind) || !allowed) return { error: 'Booking is not available.', status: 400 };
+  const start = Math.round(Number(b.start));
+  if (!Number.isFinite(start)) return { error: 'Pick a time.', status: 400 };
+  const recent = await env.DB.prepare('SELECT COUNT(*) AS n FROM appointments WHERE lead_id = ? AND created_at > ?').bind(row.id, Date.now() - 864e5).first();
+  if ((recent?.n || 0) >= BOOKINGS_PER_LEAD_DAY) return { error: `Too many changes today. Please call ${storeOf(row).name}.`, status: 429 };
+  const old = (await upcomingFor(env, row.id)).filter((a) => a.kind === kind);
+  const s = await slotsFor(env, row, cfg, kind, old.map((a) => a.id));
+  if (!s.days.some((d) => d.slots.includes(start))) return { error: 'That time is no longer available. Pick another one.', status: 409 };
+  const end = start + cfg.kinds[kind].minutes * 60_000;
+  const via = kind === 'online' ? (b.via === 'video' && cfg.kinds.online.video ? 'video' : 'phone') : null;
+  const grillz = parseJson(row.answers).type === 'grillz';
+  const purpose = kind === 'online' ? 'consult' : source === 'next-step' ? (grillz ? 'mold' : 'pickup') : 'consult';
+  const id = rid(16);
+  const now = Date.now();
+  const skip = old.map((a) => a.id);
+  // Jedan upis: prolazi samo ako se u međuvremenu niko nije zakazao u isto vrijeme (dva kupca na isti klik).
+  const ins = await env.DB.prepare(`INSERT INTO appointments (id, client_id, lead_id, kind, start_at, end_at, status, via, purpose, option, note, source, created_at)
+      SELECT ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM appointments WHERE client_id = ? AND status = 'booked' AND start_at < ? AND end_at > ?
+        AND id NOT IN (${skip.map(() => '?').join(',') || "''"}))`)
+    .bind(id, row.client_id, row.id, kind, start, end, via, purpose, ['picked', 'fit'].includes(b.option) ? b.option : null, String(b.note ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 300) || null, source, now,
+      row.client_id, end, start, ...skip).run();
+  if (!ins.meta.changes) return { error: 'Someone just took that time. Pick another one.', status: 409 };
+  if (skip.length) await env.DB.prepare(`UPDATE appointments SET status = 'cancelled', updated_at = ? WHERE id IN (${skip.map(() => '?').join(',')})`).bind(now, ...skip).run();
+  await logEvent(env, row.id, 'appointment_booked', { kind, start, via, purpose, moved: skip.length > 0 });
+  ctx?.waitUntil?.(ghlSyncAppointment(env, id, { cancel: skip, origin }).catch((e) => console.error('ghl appt', id, e.message)));
+  const a = await env.DB.prepare('SELECT * FROM appointments WHERE id = ?').bind(id).first();
+  return { appointment: apptView(a, row.page_key, cfg) };
+}
+async function pageBook(request, env, ctx, key) {
+  const row = await pageRow(env, key);
+  if (!row) return json({ error: 'Not found' }, 404);
+  const b = await request.json().catch(() => ({}));
+  const r = await bookAppointment(env, ctx, row, b, { origin: new URL(request.url).origin });
+  return r.error ? json({ error: r.error }, r.status) : json({ ok: true, ...r });
+}
+async function pageCancel(request, env, ctx, key, id) {
+  const row = await pageRow(env, key);
+  if (!row) return json({ error: 'Not found' }, 404);
+  const r = await env.DB.prepare(`UPDATE appointments SET status = 'cancelled', updated_at = ? WHERE id = ? AND lead_id = ? AND status = 'booked'`).bind(Date.now(), id, row.id).run();
+  if (!r.meta.changes) return json({ error: 'Appointment not found.' }, 404);
+  await logEvent(env, row.id, 'appointment_cancelled', { by: 'customer' });
+  ctx?.waitUntil?.(ghlSyncAppointment(env, id).catch((e) => console.error('ghl appt cancel', id, e.message)));
+  return json({ ok: true });
+}
+async function pageIcs(request, env, key, id) {
+  const row = await pageRow(env, key);
+  const a = row && await env.DB.prepare('SELECT * FROM appointments WHERE id = ? AND lead_id = ?').bind(id, row.id).first();
+  if (!a) return json({ error: 'Not found' }, 404);
+  const cfg = bookingOf(row);
+  const body = icsFor({ id: a.id, kind: a.kind, via: a.via, video: cfg.kinds.online.video, start: a.start_at, end: a.end_at }, storeOf(row));
+  return new Response(request.method === 'HEAD' ? null : body, { headers: { 'content-type': 'text/calendar; charset=utf-8', 'content-disposition': `attachment; filename="appointment-${a.kind}.ics"`, 'cache-control': 'no-store' } });
+}
+// Poslije depozita: u regiji ili ne, dolazi u radnju (sa terminom) ili šaljemo (kit za otisak kod grillza, pa komad).
+async function pageNext(request, env, ctx, key) {
+  const row = await pageRow(env, key);
+  if (!row) return json({ error: 'Not found' }, 404);
+  const cfg = bookingOf(row);
+  const grillz = parseJson(row.answers).type === 'grillz';
+  const b = await request.json().catch(() => ({}));
+  const f = cleanFulfillment(b, { grillz, moldKit: cfg.moldKit });
+  if (f.error) return json({ error: f.error }, 400);
+  let appointment = null;
+  if (f.method === 'visit' && b.start) {
+    const r = await bookAppointment(env, ctx, row, { kind: 'visit', start: b.start }, { source: 'next-step', origin: new URL(request.url).origin });
+    if (r.error) return json({ error: r.error }, r.status);
+    appointment = r.appointment;
+    f.apptId = appointment.id;
+  }
+  await env.DB.prepare('UPDATE leads SET fulfillment = ? WHERE id = ?').bind(JSON.stringify(f), row.id).run();
+  await logEvent(env, row.id, 'fulfillment', { method: f.method, local: f.local, kit: f.kit });
+  ctx?.waitUntil?.(ghlSyncFulfillment(env, row.id).catch((e) => console.error('ghl fulfillment', row.id, e.message)));
+  return json({ ok: true, fulfillment: f, text: fulfillmentText(f, { grillz, region: cfg.region }), appointment });
+}
+// Povratak sa stranice za plaćanje: GHL payment link ima jedan "redirect after payment" za sve kupce
+// (https://jewelrylead.com/deposit/done), pa kolačić sa klika na Deposit kaže čija je stranica.
+const DEP_COOKIE = 'jl_dep';
+const depCookie = (key, secure, maxAge = 7200) => `${DEP_COOKIE}=${key}; Path=/; HttpOnly; SameSite=Lax${secure ? '; Secure' : ''}; Max-Age=${maxAge}`;
+async function depositDone(request, env, url) {
+  const key = cookies(request)[DEP_COOKIE] || '';
+  const row = /^[a-z0-9]{16,32}$/.test(key) ? await pageRow(env, key) : null;
+  if (row) {
+    const dep = parseJson(row.deposit);
+    if (!dep.returnedAt) {
+      await env.DB.prepare('UPDATE leads SET deposit = ? WHERE id = ?').bind(JSON.stringify({ ...dep, returnedAt: Date.now() }), row.id).run();
+      if (!dep.paidAt) await logEvent(env, row.id, 'deposit_returned', null);
+    }
+    return new Response(null, { status: 302, headers: { location: `/p/${key}?deposit=1#next`, 'set-cookie': depCookie('', url.protocol === 'https:', 0), 'cache-control': 'no-store' } });
+  }
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>Thank you</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0c0d;color:#f2efe8;font:16px/1.6 system-ui,sans-serif;text-align:center;padding:24px}h1{font:500 38px Georgia,serif;margin:0 0 10px}p{color:#b9b3a7;max-width:440px;margin:0 auto}</style></head><body><main><h1>Thank you</h1><p>Your deposit went through. Open the design link you received in your messages to tell us how you want to receive your piece.</p></main></body></html>`;
+  return withSecurity(new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } }), { page: true, ancestors: "'none'" });
+}
+// Webhook iz GHL workflowa (okidač Payment Received / Order Submitted → akcija Webhook na adresu iz portala).
+const digits10 = (v) => String(v || '').replace(/\D/g, '').slice(-10);
+async function ghlHook(request, env, ctx, hookKey) {
+  const client = await env.DB.prepare(`SELECT id, name, data FROM clients WHERE json_extract(data, '$.ghl.hookKey') = ?`).bind(hookKey).first();
+  if (!client) return json({ error: 'Not found' }, 404);
+  const raw = await request.text();
+  if (raw.length > 200_000) return json({ error: 'Too large' }, 413);
+  const pl = hookPayload(parseJson(raw));
+  const note = (patch) => env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.ghl.lastHook', json(?)) WHERE id = ?`).bind(JSON.stringify({ at: Date.now(), ...patch }), client.id).run().catch(() => {});
+  if (!/deposit|payment|paid|order|invoice/.test(pl.event)) { await note({ matched: false, ignored: pl.event }); return json({ ok: true, ignored: true }); }
+  const base = `SELECT l.id, l.name, l.email, l.phone, l.page_key, l.deposit, l.lead_no, l.ghl, l.answers FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL`;
+  let lead = null;
+  if (pl.contactId) lead = await env.DB.prepare(`${base} AND json_extract(l.ghl, '$.contactId') = ? ORDER BY l.created_at DESC LIMIT 1`).bind(client.id, pl.contactId).first();
+  if (!lead && pl.email) lead = await env.DB.prepare(`${base} AND lower(l.email) = ? ORDER BY l.created_at DESC LIMIT 1`).bind(client.id, pl.email).first();
+  if (!lead && digits10(pl.phone).length === 10) {
+    const cands = (await env.DB.prepare(`${base} AND l.phone IS NOT NULL ORDER BY l.created_at DESC LIMIT 1000`).bind(client.id).all()).results;
+    lead = cands.find((c) => digits10(c.phone) === digits10(pl.phone)) || null;
+  }
+  if (!lead) { await note({ matched: false, email: pl.email ? pl.email.replace(/^(.).*(@.*)$/, '$1…$2') : '' }); return json({ ok: true, matched: false }); }
+  const prev = parseJson(lead.deposit);
+  const now = Date.now();
+  const first = !prev.paidAt;
+  const next = { ...prev, paidAt: prev.paidAt || now, lastAt: now, amount: pl.amount ?? prev.amount ?? null, count: (prev.count || 0) + 1, via: 'ghl', ...(pl.ref ? { ref: pl.ref } : {}) };
+  await env.DB.prepare('UPDATE leads SET deposit = ? WHERE id = ?').bind(JSON.stringify(next), lead.id).run();
+  await logEvent(env, lead.id, 'deposit_paid', { amount: next.amount });
+  await note({ matched: true, ref: leadRef(lead.lead_no) || lead.name.split(' ')[0] });
+  if (first) ctx?.waitUntil?.(ghlAfterDeposit(env, client, lead, new URL(request.url).origin, pl.contactId).catch((e) => console.error('ghl after deposit', lead.id, e.message)));
+  return json({ ok: true, matched: true, lead: leadRef(lead.lead_no) || null });
+}
+// Bilješka u GHL-u i (ako je uključeno) SMS kupcu sa linkom na pitanja poslije depozita.
+async function ghlAfterDeposit(env, client, lead, origin, contactFromHook) {
+  const conf = await ghlConfig(env, client);
+  if (!conf) return;
+  const contactId = contactFromHook || parseJson(lead.ghl).contactId || await ghlEnsureContact(conf.token, conf.cfg, lead, ghlFetch(env));
+  const link = `${origin}/p/${lead.page_key}?next=1`;
+  await ghlAddNote(conf.token, contactId, `JewelryLead${leadRef(lead.lead_no) ? ` ${leadRef(lead.lead_no)}` : ''}: deposit received. The customer's next-step questions (in the area or not, studio visit or shipping): ${link}`, ghlFetch(env));
+  if (!conf.cfg.smsNext) return;
+  const d = parseJson(client.data);
+  const first = String(lead.name || '').trim().split(/\s+/)[0] || 'there';
+  const piece = pieceName(parseJson(lead.answers));
+  const store = d.ghl?.storeName || client.name;
+  try {
+    await ghlSendSms(conf.token, contactId, `Hi ${first}, thank you for your deposit with ${store}! One quick step so we know how to get your ${piece} to you: ${link}`, ghlFetch(env));
+    await env.DB.prepare(`UPDATE leads SET deposit = json_set(deposit, '$.smsAt', ?) WHERE id = ?`).bind(Date.now(), lead.id).run();
+  } catch (e) {
+    await env.DB.prepare(`UPDATE leads SET deposit = json_set(deposit, '$.smsError', ?) WHERE id = ?`).bind(String(e.message).slice(0, 200), lead.id).run();
+    await ghlNote(env, client.id, false, `Text after deposit: ${e.message}`);
+  }
+}
+// Termin -> GHL: kontakt, termin u izabranom GHL kalendaru, bilješka i tagovi; otkazan termin se otkazuje i tamo.
+async function ghlSyncAppointment(env, apptId, { cancel = [], origin = ORIGIN_BASE } = {}) {
+  const a = await env.DB.prepare(`SELECT a.*, l.name, l.email, l.phone, l.page_key, l.lead_no, l.ghl AS lead_ghl, c.id AS cid, c.data AS client_data
+      FROM appointments a JOIN leads l ON l.id = a.lead_id JOIN clients c ON c.id = a.client_id WHERE a.id = ?`).bind(apptId).first();
+  if (!a) return;
+  const conf = await ghlConfig(env, { id: a.cid, data: a.client_data });
+  if (!conf) return;
+  const f = ghlFetch(env);
+  const cfg = bookingSettings(parseJson(a.client_data).booking);
+  const sync = parseJson(a.ghl);
+  try {
+    for (const oid of cancel) {
+      const o = await env.DB.prepare('SELECT ghl FROM appointments WHERE id = ?').bind(oid).first();
+      const os = parseJson(o?.ghl);
+      if (os.eventId && !os.cancelled) {
+        await ghlCancelAppointment(conf.token, os.eventId, f).catch((e) => console.error('ghl cancel old', oid, e.message));
+        await env.DB.prepare(`UPDATE appointments SET ghl = json_set(ghl, '$.cancelled', 1) WHERE id = ?`).bind(oid).run();
+      }
+    }
+    sync.contactId ||= parseJson(a.lead_ghl).contactId || await ghlEnsureContact(conf.token, conf.cfg, a, f);
+    const ref = leadRef(a.lead_no);
+    const what = `${KIND_LABEL[a.kind]}${a.kind === 'online' ? ` (${a.via === 'video' ? 'video call' : 'phone call'})` : a.purpose === 'mold' ? ' for the mold' : a.purpose === 'pickup' ? ' to pick up' : ''}`;
+    if (a.status === 'cancelled') {
+      if (sync.eventId && !sync.cancelled) { await ghlCancelAppointment(conf.token, sync.eventId, f); sync.cancelled = 1; }
+      if (sync.noted && !sync.cancelNoted) { await ghlAddNote(conf.token, sync.contactId, `JewelryLead${ref ? ` ${ref}` : ''}: ${what} on ${whenText(a.start_at, cfg.tz)} was cancelled.`, f); sync.cancelNoted = 1; }
+    } else {
+      const calId = conf.cfg.calendars?.[a.kind];
+      if (calId && !sync.eventId) {
+        sync.eventId = await ghlBookAppointment(conf.token, conf.cfg, { calendarId: calId, contactId: sync.contactId, start: a.start_at, end: a.end_at,
+          title: `${ref ? `${ref} · ` : ''}${KIND_LABEL[a.kind]} · ${a.name}`, address: a.kind === 'visit' ? '' : a.via === 'video' ? cfg.kinds.online.video : '' }, f);
+      }
+      if (!sync.noted) {
+        await ghlAddNote(conf.token, sync.contactId, `JewelryLead${ref ? ` ${ref}` : ''}: ${what} booked for ${whenText(a.start_at, cfg.tz)}, from their design page.${a.note ? `\nCustomer note: "${a.note}"` : ''}\nDesign and quote: ${origin}/p/${a.page_key}?preview=1`, f);
+        sync.noted = 1;
+      }
+      if (!sync.tagged) {
+        await ghlPushTags(conf.token, { contactId: sync.contactId }, ['jewelrylead appointment', a.kind === 'online' ? 'jewelrylead online consultation' : 'jewelrylead studio visit'], f);
+        sync.tagged = 1;
+      }
+    }
+    delete sync.error;
+    sync.at = Date.now();
+    await env.DB.prepare('UPDATE appointments SET ghl = ? WHERE id = ?').bind(JSON.stringify(sync), apptId).run();
+  } catch (e) {
+    const next = { ...sync, error: String(e.message).slice(0, 200), tries: (sync.tries || 0) + 1, at: Date.now() };
+    await env.DB.prepare('UPDATE appointments SET ghl = ? WHERE id = ?').bind(JSON.stringify(next), apptId).run();
+    await ghlNote(env, a.cid, false, `Appointment: ${e.message}`);
+  }
+}
+// Odgovori poslije depozita -> GHL: bilješka, tagovi (za grananje njihovih workflowa) i adresa za slanje na kontaktu.
+async function ghlSyncFulfillment(env, leadId) {
+  const row = await notifyRow(env, leadId);
+  if (!row) return;
+  const conf = await ghlConfig(env, { id: row.client_id, data: row.client_data });
+  if (!conf) return;
+  const f = ghlFetch(env);
+  const ff = parseJson(row.fulfillment, null);
+  if (!ff) return;
+  const cfg = bookingSettings(parseJson(row.client_data).booking);
+  const grillz = parseJson(row.answers).type === 'grillz';
+  const contactId = parseJson(row.ghl).contactId || await ghlEnsureContact(conf.token, conf.cfg, row, f);
+  const ref = leadRef(row.lead_no);
+  await ghlAddNote(conf.token, contactId, `JewelryLead${ref ? ` ${ref}` : ''}: after the deposit the customer answered: ${fulfillmentText(ff, { grillz, region: cfg.region })}`, f);
+  const area = cfg.region ? cfg.region.toLowerCase() : 'area';
+  const tags = [ff.local ? `jewelrylead in ${area}` : `jewelrylead out of ${cfg.region ? 'state' : 'area'}`, ff.method === 'visit' ? 'jewelrylead studio visit' : ff.kit ? 'jewelrylead ship mold kit' : 'jewelrylead ship piece'];
+  await ghlPushTags(conf.token, { contactId }, tags, f);
+  if (ff.address) await ghlSetAddress(conf.token, contactId, ff.address, f).catch((e) => console.error('ghl address', leadId, e.message));
+}
+// Cron: termini čiji upis u GHL nije prošao (do GHL_RETRY puta, samo budući).
+async function ghlApptSweep(env) {
+  const rows = (await env.DB.prepare(`SELECT id FROM appointments WHERE json_extract(ghl, '$.error') IS NOT NULL AND COALESCE(json_extract(ghl, '$.tries'), 0) < ${GHL_RETRY} AND start_at > ? ORDER BY start_at LIMIT 10`).bind(Date.now()).all()).results;
+  for (const r of rows) await ghlSyncAppointment(env, r.id).catch(() => null);
+}
+// Portal: podešavanje kalendara (smije i admin u pregledu klijenta, kao cijene).
+async function portalBooking(request, env, client) {
+  const d = parseJson(client.data);
+  if (request.method === 'PUT') {
+    const b = await request.json().catch(() => ({}));
+    const next = cleanBooking(b.settings, d.booking);
+    if (next.enabled && !kindsOn(next).length) return json({ error: 'Turn on at least one kind of appointment.' }, 400);
+    if (next.enabled && !Object.values(next.hours).some(Boolean)) return json({ error: 'Add your opening hours for at least one day.' }, 400);
+    await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.booking', json(?)) WHERE id = ?`).bind(JSON.stringify(next), client.id).run();
+    return json({ settings: next, timezones: TIMEZONES });
+  }
+  return json({ settings: bookingSettings(d.booking), timezones: TIMEZONES });
+}
+// Termin, depozit i odgovor poslije depozita na kartici leada u portalu.
+function leadBookingInfo(l, cfg) {
+  const ap = parseJson(l.appt, null);
+  const dep = parseJson(l.deposit, null);
+  const ff = parseJson(l.fulfillment, null);
+  let type = '';
+  try { type = JSON.parse(l.answers || '{}').type || ''; } catch {}
+  return {
+    appt: ap ? { kind: ap.kind, label: KIND_LABEL[ap.kind], start: ap.start, when: whenText(ap.start, cfg.tz), via: ap.via || '', purpose: ap.purpose || '' } : null,
+    deposit: dep && (dep.paidAt || dep.returnedAt) ? { paidAt: dep.paidAt || null, amount: dep.amount ?? null, returnedAt: dep.returnedAt || null } : null,
+    fulfillment: ff ? { text: fulfillmentText(ff, { grillz: type === 'grillz', region: cfg.region }), method: ff.method, kit: !!ff.kit } : null,
+    nextUrl: l.page_key ? `/p/${l.page_key}?next=1` : '',
+  };
+}
+async function portalApptStatus(request, env, ctx, client, id) {
+  const b = await request.json().catch(() => ({}));
+  if (!['booked', 'done', 'noshow', 'cancelled'].includes(b.status)) return json({ error: 'Unknown status.' }, 400);
+  const a = await env.DB.prepare('SELECT * FROM appointments WHERE id = ? AND client_id = ?').bind(id, client.id).first();
+  if (!a) return json({ error: 'Not found' }, 404);
+  if (a.status === 'cancelled' && b.status !== 'cancelled') return json({ error: 'A cancelled appointment cannot be reopened. Ask the customer to book again.' }, 409);
+  await env.DB.prepare('UPDATE appointments SET status = ?, updated_at = ? WHERE id = ?').bind(b.status, Date.now(), id).run();
+  if (b.status !== a.status) await logEvent(env, a.lead_id, b.status === 'cancelled' ? 'appointment_cancelled' : 'appointment_status', { status: b.status, by: 'store' });
+  if (b.status === 'cancelled') ctx?.waitUntil?.(ghlSyncAppointment(env, id).catch((e) => console.error('ghl appt cancel', id, e.message)));
+  return json({ ok: true });
 }
 
 // ---------- Praćenje narudžbe (23.11.2026) ----------

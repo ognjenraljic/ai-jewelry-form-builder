@@ -72,7 +72,7 @@ ok((await fetch(`${BASE}/api/page/nemaga1234567890ab/action`, { method: 'POST', 
 await fetch(`${BASE}/api/portal/pricing`, { method: 'PUT', headers: A.P, body: JSON.stringify({ pricing: { ...SUGGESTED_PRICING, depositUrl: 'https://pay.example.com/deposit', bookingUrl: 'http://insecure.example.com/book' } }) });
 const d2 = await act({ action: 'deposit', option: 'picked' });
 const d3 = await act({ action: 'appointment', option: '' });
-ok(d2.body.redirect === 'https://pay.example.com/deposit', 'Deposit sa linkom radnje vodi na njega');
+ok(d2.body.redirect?.startsWith('https://pay.example.com/deposit?') && /email=page%40example.com/.test(d2.body.redirect), 'Deposit sa linkom radnje vodi na njega, sa podacima kupca (25.11.2026)');
 ok(d3.body.redirect === null, 'http link za booking se ne prihvata (samo https)');
 row = (await A.list()).find((x) => x.id === l1.leadId);
 ok(row.page.actions.length === 3 && row.page.actions[0].action === 'deposit' && row.page.actions[0].option === 'fit', 'portal vidi sva tri klika sa opcijom');

@@ -94,11 +94,61 @@ function showcase(form, answers) {
   return { styles, finishes: finishes.slice(0, 15) };
 }
 
-const CTA = (slot, compact = false, short = false) => `<div class="cta-row${compact ? ' compact' : ''}">
-  <button type="button" class="btn primary" data-action="deposit" data-option="${slot}">${short ? 'Place a deposit' : 'Reserve with a deposit'}</button>
-  <button type="button" class="btn ghost" data-action="appointment" data-option="${slot}">${short ? 'Book a visit' : 'Book an appointment'}</button></div>`;
+// Dugmad: depozit (ili "Deposit received" kad je uplata stigla) i zakazivanje. Sa uključenim kalendarom (25.11.2026)
+// "Book" otvara izbor termina na samoj stranici; bez njega klik se bilježi ili vodi na link radnje kao ranije.
+function bookLabel(bk, short) {
+  const k = bk?.kinds || [];
+  if (short) return k.length === 1 && k[0].kind === 'online' ? 'Book a call' : k.length ? 'Book a time' : 'Book a visit';
+  return k.length === 1 && k[0].kind === 'online' ? 'Book a consultation' : 'Book an appointment';
+}
+const CTA = (slot, compact = false, short = false, bk = null) => `<div class="cta-row${compact ? ' compact' : ''}">
+  ${bk?.deposit?.paid ? '<span class="btn done" role="status">Deposit received</span>' : `<button type="button" class="btn primary" data-action="deposit" data-option="${slot}">${short ? 'Place a deposit' : 'Reserve with a deposit'}</button>`}
+  <button type="button" class="btn ghost" data-action="${bk?.kinds?.length ? 'book' : 'appointment'}" data-option="${slot}">${bookLabel(bk, short)}</button></div>`;
 
-function offerCard(o, single) {
+// Kupčev zakazani termin (i poslije promjene, /lead-page.js ga crta isto).
+export function apptCards(list, bk) {
+  if (!list?.length) return '';
+  return list.map((a) => `<div class="appt" data-appt="${esc(a.id)}">
+    <div class="appt-main"><p class="mini">Your appointment</p><h3>${esc(a.label)}${a.purpose === 'mold' ? ' · mold' : a.purpose === 'pickup' ? ' · pick up' : ''}</h3>
+      <p class="appt-when">${esc(a.when)}</p>
+      <p class="appt-how">${a.kind === 'online' ? (a.via === 'video' && a.video ? `Video call: <a href="${esc(a.video)}" target="_blank" rel="noopener">join link</a>` : 'We will call you at this time.') : 'At the studio. Times are in ' + esc(bk?.tzLabel || 'local time') + '.'}</p></div>
+    <div class="appt-acts"><a class="btn ghost small" href="${esc(a.ics)}" download>Add to calendar</a>${a.purpose === 'consult' && bk?.kinds?.some((k) => k.kind === a.kind) ? `<button type="button" class="btn ghost small" data-action="book" data-kind="${esc(a.kind)}">Change time</button>` : ''}<button type="button" class="btn ghost small" data-cancel="${esc(a.id)}">Cancel</button></div>
+  </div>`).join('');
+}
+
+// Poslije depozita (25.11.2026): u regiji ili ne, dolazi u radnju (sa terminom) ili šaljemo kit za otisak / komad.
+function nextSection(bk, { grillz, store, first }) {
+  if (!bk?.showNext) return '';
+  const f = bk.fulfillment;
+  const reg = bk.region;
+  const status = bk.deposit.paid ? `Deposit received${bk.deposit.amount ? ` · ${money(bk.deposit.amount)}` : ''}` : bk.deposit.returned ? 'Thank you for your deposit' : 'Next step';
+  const shipText = grillz ? (bk.moldKit ? 'We mail you a mold kit with simple instructions. You send it back, we make your grillz and ship them to you.' : 'We will text you about the mold, then ship your grillz to you.') : 'We ship your finished piece to you, insured.';
+  const chip = (name, value, label) => `<label class="choice"><input type="radio" name="${name}" value="${value}" /><span>${esc(label)}</span></label>`;
+  return `<section class="next" id="next" aria-labelledby="nx-h"><div class="next-card">
+    <p class="eyebrow">${esc(status)}</p>
+    <h2 id="nx-h">${first ? `${esc(first)}, how should we` : 'How should we'} get your piece to you?</h2>
+    ${bk.deposit.returned && !bk.deposit.paid ? `<p class="next-sub">${esc(store)} is confirming your payment. Meanwhile, answer two quick questions.</p>` : `<p class="next-sub">Two quick questions, so ${esc(store)} knows what comes next.</p>`}
+    <div class="next-done"${f ? '' : ' hidden'}><p class="mini">Your answers</p><p class="next-text">${esc(f?.text || '')}</p><button type="button" class="btn ghost small" data-next-edit>Change my answers</button></div>
+    <form class="next-form" id="next-form" novalidate${f ? ' hidden' : ''}>
+      <fieldset><legend>${reg ? `Are you in ${esc(reg)}?` : 'Are you near our studio?'}</legend><div class="choices">
+        ${chip('local', 'yes', reg ? `Yes, I am in ${reg}` : 'Yes, I am nearby')}${chip('local', 'no', reg ? 'No, I am out of state' : 'No, I am farther away')}</div></fieldset>
+      <fieldset data-when="local-yes" hidden><legend>${grillz ? 'How do you want to do your mold?' : 'How do you want to get your piece?'}</legend><div class="choices">
+        ${chip('method', 'visit', grillz ? 'Come to the studio for the mold' : 'Pick it up at the studio')}${chip('method', 'ship', grillz ? (bk.moldKit ? 'Mail me a mold kit' : 'Ship it to me') : 'Ship it to me')}</div></fieldset>
+      <div data-when="visit" hidden>${bk.visitOn ? `<p class="mini">Pick a time for your visit</p><div class="picker" data-picker="next"></div><p class="hint">Or skip it and we will text you to set a time.</p>` : `<p class="hint">${esc(store)} will text you to set a time.</p>`}</div>
+      <div data-when="ship" hidden><p class="hint ship-text">${esc(shipText)}</p>
+        <div class="addr"><label class="full"><span>Street address</span><input name="line1" autocomplete="address-line1" maxlength="120" /></label>
+        <label class="full"><span>Apt, suite (optional)</span><input name="line2" autocomplete="address-line2" maxlength="80" /></label>
+        <label><span>City</span><input name="city" autocomplete="address-level2" maxlength="60" /></label>
+        <label><span>State</span><input name="state" autocomplete="address-level1" maxlength="30" /></label>
+        <label><span>ZIP code</span><input name="zip" autocomplete="postal-code" inputmode="numeric" maxlength="12" /></label></div></div>
+      <label class="full note-l"><span>Anything we should know? (optional)</span><textarea name="note" rows="2" maxlength="500"></textarea></label>
+      <p class="form-err" role="alert" hidden></p>
+      <button type="submit" class="btn primary">Send my answers</button>
+    </form>
+  </div></section>`;
+}
+
+function offerCard(o, single, bk) {
   const changes = o.changes?.length
     ? `<div class="changes"><p class="mini">What changes</p><ul>${o.changes.map((c) => `<li><span class="was">${esc(c.from === 'none' ? (c.what === 'Ice' ? 'Not iced' : 'None') : c.from)}</span><i aria-hidden="true">→</i><b>${esc(c.to === 'none' ? (c.what === 'Stones' ? 'No stones' : 'None') : c.to)}</b></li>`).join('')}</ul></div>`
     : '';
@@ -109,7 +159,7 @@ function offerCard(o, single) {
     <p class="price-note">Estimated total${o.molding ? ', molding included' : ''}${o.save ? ` · <b>You save ${money(o.save)}</b>` : ''}</p>
     <dl class="specs">${o.rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
     ${changes}
-    ${CTA(o.slot)}
+    ${CTA(o.slot, false, false, bk)}
   </article>`;
 }
 
@@ -152,6 +202,7 @@ function validityHtml(deadline, hours) {
 
 export function leadPageHtml(d) {
   const { key, form, answers, lead, store, renders, film } = d;
+  const bk = d.booking || null;
   const theme = Object.fromEntries(THEME_KEYS.map((k) => [k, HEX.test(form.theme?.[k] || '') ? form.theme[k] : '']).filter(([, v]) => v));
   const vars = Object.entries(theme).map(([k, v]) => `--${k}:${v}`).join(';');
   const first = firstName(lead.name);
@@ -178,8 +229,8 @@ export function leadPageHtml(d) {
   const deadline = offers.length && hours > 0 ? from + hours * 3600_000 : 0;
   const validity = deadline ? validityHtml(deadline, hours) : '';
   const offerSection = offers.length
-    ? `<div class="offers${offers.length === 1 ? ' one' : ''}">${offers.map((o) => offerCard(o, offers.length === 1)).join('')}</div>`
-    : `<div class="offers one"><article class="offer single"><header><span class="tag">Your quote</span></header><h3>Your price is being prepared</h3><p class="sub">${esc(store.name)} is finalizing the price for your design and will send it to you shortly.</p>${CTA('picked')}</article></div>`;
+    ? `<div class="offers${offers.length === 1 ? ' one' : ''}">${offers.map((o) => offerCard(o, offers.length === 1, bk)).join('')}</div>`
+    : `<div class="offers one"><article class="offer single"><header><span class="tag">Your quote</span></header><h3>Your price is being prepared</h3><p class="sub">${esc(store.name)} is finalizing the price for your design and will send it to you shortly.</p>${CTA('picked', false, false, bk)}</article></div>`;
 
   const filmSection = film
     ? `<section class="film rv" aria-label="Your piece in motion"><div class="film-media"><video src="${esc(film)}" ${main ? `poster="${esc(main.url)}"` : ''} autoplay muted loop playsinline preload="metadata"></video></div>
@@ -227,6 +278,8 @@ ${main ? `<meta property="og:image" content="${esc((d.origin || '') + main.url)}
     ${deadline ? `<p class="valid-mini" data-deadline="${deadline}" data-mini="1">${esc(remainingText(deadline))}</p>` : ''}
   </div>
 </section>
+${nextSection(bk, { grillz: answers.type === 'grillz', store: store.name, first })}
+<div class="appts wrap" id="appts">${apptCards(bk?.upcoming, bk)}</div>
 ${filmSection}
 <section class="options rv" id="options" aria-labelledby="op-h">
   <div class="sec-head"><p class="eyebrow">${offers.length > 1 ? 'Two ways to make it yours' : 'Your quote'}</p><h2 id="op-h">${offers.length > 1 ? 'Choose your option' : 'Reserve your piece'}</h2>${budget}${validity}</div>
@@ -237,15 +290,17 @@ ${showSection}
 <section class="visit rv" aria-labelledby="vi-h">
   <div class="visit-card">
     <div class="visit-info"><p class="eyebrow">Visit the studio</p><h2 id="vi-h">${esc(store.name)}</h2>${infoLines.length ? `<div class="info">${infoLines.map((l) => (l.trim() ? `<p>${esc(l)}</p>` : '<p class="gap"></p>')).join('')}</div>` : ''}</div>
-    <div class="visit-cta"><h3>Ready when you are</h3><p>Reserve your piece with a deposit, or come in to see metals and stones in person.</p>${CTA(offers.length > 1 ? '' : 'picked', true)}</div>
+    <div class="visit-cta"><h3>Ready when you are</h3><p>${bk?.kinds?.length ? (bk.kinds.length === 2 ? 'Reserve your piece with a deposit, book a short call to go over your design, or come in to see metals and stones in person.' : bk.kinds[0].kind === 'online' ? 'Reserve your piece with a deposit, or book a short call to go over your design and price together.' : 'Reserve your piece with a deposit, or come in to see metals and stones in person.') : 'Reserve your piece with a deposit, or come in to see metals and stones in person.'}</p>${CTA(offers.length > 1 ? '' : 'picked', true, false, bk)}</div>
   </div>
 </section>
 </main>
 <footer class="foot wrap"><p>AI concept preview. Your final piece is handcrafted and may differ in detail.</p><p>© ${year} ${esc(store.name)} · Powered by JewelryLead</p></footer>
-<div class="dock" aria-hidden="true">${CTA(offers.length > 1 ? '' : 'picked', true, true)}</div>
+<div class="dock" aria-hidden="true">${CTA(offers.length > 1 ? '' : 'picked', true, true, bk)}</div>
 <dialog class="sheet" id="sheet" aria-labelledby="sheet-h">
   <form method="dialog"><h2 id="sheet-h">Request received</h2><p id="sheet-p"></p><button class="btn primary" value="close">Done</button></form>
 </dialog>
+<dialog class="sheet sched" id="sched" aria-labelledby="sched-h"><div class="sched-body"></div></dialog>
+${bk ? `<script type="application/json" id="bk-data">${JSON.stringify({ kinds: bk.kinds, video: bk.video, tzLabel: bk.tzLabel, store: store.name, grillz: answers.type === 'grillz', paid: bk.deposit.paid }).replace(/</g, '\\u003c')}</script>` : ''}
 <div class="lightbox" id="lightbox" hidden><img alt="" /></div>
 </body>
 </html>`;

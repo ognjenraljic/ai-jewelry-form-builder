@@ -46,6 +46,9 @@ export function ghlPublic(g) {
     pipelineId: g.pipelineId || '', stages: g.stages && typeof g.stages === 'object' ? g.stages : {}, tags: Array.isArray(g.tags) ? g.tags : ['jewelrylead'],
     pieceTag: g.pieceTag !== false, note: g.note !== false, backfill: g.backfill === true, lastOk: g.lastOk || null, lastError: g.lastError || null,
     prod: prodPublic(g.prod),
+    // Kalendar i depozit (25.11.2026): GHL kalendar po vrsti termina, webhook za uplatu depozita, SMS sa sljedećim korakom.
+    calendars: g.calendars && typeof g.calendars === 'object' ? { online: g.calendars.online || '', visit: g.calendars.visit || '' } : { online: '', visit: '' },
+    hook: !!g.hookKey, smsNext: g.smsNext === true, lastHook: g.lastHook || null,
   };
 }
 // Proizvodna tabla za radnike (25.11.2026): poseban pipeline sa fazama izrade, kartice bez podataka kupca.
@@ -62,10 +65,10 @@ export const validLocationId = (v) => /^[A-Za-z0-9]{10,40}$/.test(String(v || ''
 export const validPit = (v) => /^pit-[A-Za-z0-9-]{20,80}$/.test(String(v || '').trim()) || /^[A-Za-z0-9._-]{30,1200}$/.test(String(v || '').trim());
 
 // Jedan poziv prema GHL-u; fetchFn se mijenja u provjerama (bez mreže).
-export async function ghlCall(token, method, path, body, fetchFn = fetch) {
+export async function ghlCall(token, method, path, body, fetchFn = fetch, version = GHL_VERSION) {
   const res = await fetchFn(GHL_BASE + path, {
     method,
-    headers: { Authorization: `Bearer ${token}`, Version: GHL_VERSION, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    headers: { Authorization: `Bearer ${token}`, Version: version, Accept: 'application/json', ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
@@ -261,4 +264,63 @@ export async function ghlPushTags(token, sync, tags, fetchFn = fetch) {
   if (!sync?.contactId || !tags?.length) return false;
   await ghlCall(token, 'POST', `/contacts/${encodeURIComponent(sync.contactId)}/tags`, { tags: tags.map(tagOf).filter(Boolean) }, fetchFn);
   return true;
+}
+
+// ---------- Kalendar, depozit i sljedeći korak (25.11.2026) ----------
+// Kalendari i poruke idu na verziju API-ja 2021-04-15 (kontakti i opportunity-ji ostaju na 2021-07-28).
+// Dozvole tokena: calendars.readonly, calendars/events.write (termini), conversations/message.write (SMS poslije depozita).
+export const GHL_CAL_VERSION = '2021-04-15';
+export async function ghlCalendars(token, locationId, fetchFn = fetch) {
+  const d = await ghlCall(token, 'GET', `/calendars/?locationId=${encodeURIComponent(locationId)}`, null, fetchFn, GHL_CAL_VERSION);
+  return (d.calendars || []).filter((c) => c.isActive !== false).map((c) => ({ id: c.id, name: c.name || c.id, minutes: Number(c.slotDuration) || null })).slice(0, 100);
+}
+// Slobodna mjesta GHL kalendara (njegovo radno vrijeme, tim, zauzeti termini, Google sync).
+export async function ghlFreeSlots(token, calendarId, from, to, tz, fetchFn = fetch) {
+  const q = new URLSearchParams({ startDate: String(from), endDate: String(to), timezone: tz });
+  return ghlCall(token, 'GET', `/calendars/${encodeURIComponent(calendarId)}/free-slots?${q}`, null, fetchFn, GHL_CAL_VERSION);
+}
+export async function ghlBookAppointment(token, cfg, a, fetchFn = fetch) {
+  const d = await ghlCall(token, 'POST', '/calendars/events/appointments', {
+    calendarId: a.calendarId, locationId: cfg.locationId, contactId: a.contactId, startTime: new Date(a.start).toISOString(), endTime: new Date(a.end).toISOString(),
+    title: a.title.slice(0, 120), appointmentStatus: 'confirmed', ignoreFreeSlotValidation: true, toNotify: true,
+    ...(a.address ? { address: a.address.slice(0, 300) } : {}),
+  }, fetchFn, GHL_CAL_VERSION);
+  return d.id || d.appointment?.id || d.event?.id || null;
+}
+export async function ghlCancelAppointment(token, eventId, fetchFn = fetch) {
+  await ghlCall(token, 'PUT', `/calendars/events/appointments/${encodeURIComponent(eventId)}`, { appointmentStatus: 'cancelled' }, fetchFn, GHL_CAL_VERSION);
+}
+export async function ghlAddNote(token, contactId, body, fetchFn = fetch) {
+  await ghlCall(token, 'POST', `/contacts/${encodeURIComponent(contactId)}/notes`, { body: String(body).slice(0, 9000) }, fetchFn);
+}
+// Kontakt za termin/depozit kad lead još nije poslat u GHL (ili slanje leadova nije uključeno).
+export async function ghlEnsureContact(token, cfg, lead, fetchFn = fetch) {
+  const { firstName, lastName } = splitName(lead.name);
+  const c = await ghlCall(token, 'POST', '/contacts/upsert', {
+    locationId: cfg.locationId, firstName, lastName, name: lead.name, email: lead.email || undefined, phone: lead.phone || undefined, source: 'JewelryLead',
+  }, fetchFn);
+  const id = c.contact?.id || c.id;
+  if (!id) throw new Error('GHL: upsert returned no contact id');
+  return id;
+}
+export async function ghlSetAddress(token, contactId, addr, fetchFn = fetch) {
+  await ghlCall(token, 'PUT', `/contacts/${encodeURIComponent(contactId)}`, { address1: [addr.line1, addr.line2].filter(Boolean).join(', '), city: addr.city, state: addr.state, postalCode: addr.zip }, fetchFn);
+}
+export async function ghlSendSms(token, contactId, message, fetchFn = fetch) {
+  await ghlCall(token, 'POST', '/conversations/messages', { type: 'SMS', contactId, message: String(message).slice(0, 640) }, fetchFn, GHL_CAL_VERSION);
+}
+// Webhook iz GHL workflowa (akcija Webhook / Custom Webhook): kontakt, iznos i vrsta događaja, gdje god da su u tijelu.
+export function hookPayload(b) {
+  b = b && typeof b === 'object' ? b : {};
+  const cd = b.customData && typeof b.customData === 'object' ? b.customData : {};
+  const num = (...vs) => { for (const v of vs) { const n = Number(String(v ?? '').replace(/[^0-9.]/g, '')); if (v != null && v !== '' && Number.isFinite(n) && n > 0) return Math.round(n * 100) / 100; } return null; };
+  const str = (...vs) => { for (const v of vs) if (typeof v === 'string' && v.trim()) return v.trim(); return ''; };
+  return {
+    event: str(cd.event, b.event, b.type).toLowerCase() || 'deposit',
+    contactId: str(b.contact_id, b.contactId, b.contact?.id, cd.contact_id),
+    email: str(b.email, b.contact?.email, cd.email).toLowerCase(),
+    phone: str(b.phone, b.contact?.phone, cd.phone),
+    amount: num(cd.amount, b.amount, b.payment?.total_amount, b.payment?.amount, b.order?.amount, b.invoice?.total, b.transaction?.amount),
+    ref: str(cd.reference, cd.ref, b.payment?.transaction_id, b.transaction?.id, b.order?.id).slice(0, 80),
+  };
 }

@@ -70,6 +70,7 @@ const TEXT = {
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-action]');
   if (!b) return;
+  if (b.dataset.action === 'book') { openScheduler(b.dataset.kind || '', b.dataset.option || ''); return; }
   b.disabled = true;
   let redirect = null;
   try {
@@ -118,3 +119,174 @@ function tickOffers() {
   }
 }
 if (timers.length) { tickOffers(); setInterval(tickOffers, 1000); }
+
+// ---------- Kalendar na stranici (25.11.2026) ----------
+// "Book an appointment": vrsta termina (online konsultacija / posjeta), dan, slobodno vrijeme, potvrda. Vremena su u
+// zoni radnje (server ih računa iz radnog vremena ili GHL kalendara); kupac iz druge zone vidi i svoje vrijeme.
+const BK = (() => { try { return JSON.parse(document.getElementById('bk-data')?.textContent || 'null'); } catch { return null; } })();
+const sched = document.getElementById('sched');
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const KIND_TEXT = {
+  online: (m) => `A ${m}-minute call to go over your design, your options and the price together.`,
+  visit: (m) => `About ${m} minutes at the studio to see metals and stones in person.`,
+};
+const myTz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })();
+const fmt = (ms, tz, o) => new Intl.DateTimeFormat('en-US', { timeZone: tz, ...o }).format(new Date(ms));
+const api = async (path, opts = {}) => {
+  const r = await fetch(`/api/page/${encodeURIComponent(key)}${path}`, { headers: { 'content-type': 'application/json' }, ...opts });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || 'Something went wrong. Please try again.');
+  return data;
+};
+
+// Izbor dana i vremena u kontejneru (prozor za zakazivanje i korak poslije depozita koriste isti).
+async function mountPicker(box, kind, { forNext = false, onPick } = {}) {
+  box.innerHTML = '<p class="pk-load" role="status">Loading available times…</p>';
+  let d;
+  try { d = await api(`/slots?kind=${kind}${forNext ? '&for=next' : ''}`); } catch (err) { box.innerHTML = `<p class="form-err">${esc(err.message)}</p>`; return null; }
+  const days = d.days.filter((x) => x.slots.length);
+  if (!days.length) { box.innerHTML = '<p class="hint">No open times in the next days. Reply to your quote and we will find a time with you.</p>'; return d; }
+  const other = myTz && myTz !== d.tz;
+  let day = days[0].date;
+  let pick = null;
+  const draw = () => {
+    const cur = d.days.find((x) => x.date === day);
+    box.innerHTML = `<div class="pk-days" role="listbox" aria-label="Day">${d.days.map((x) => {
+      const t = Date.parse(`${x.date}T12:00:00Z`);
+      return `<button type="button" class="pk-day${x.date === day ? ' on' : ''}" data-day="${x.date}" ${x.slots.length ? '' : 'disabled'} aria-selected="${x.date === day}"><small>${fmt(t, 'UTC', { weekday: 'short' })}</small><b>${fmt(t, 'UTC', { day: 'numeric' })}</b><small>${fmt(t, 'UTC', { month: 'short' })}</small></button>`;
+    }).join('')}</div>
+      <div class="pk-times" role="listbox" aria-label="Time">${cur.slots.map((t) => `<button type="button" class="pk-time${t === pick ? ' on' : ''}" data-t="${t}" aria-selected="${t === pick}">${fmt(t, d.tz, { hour: 'numeric', minute: '2-digit' })}</button>`).join('')}</div>
+      <p class="pk-tz">Times are in ${esc(d.tzLabel)}${other && pick ? ` · ${esc(fmt(pick, myTz, { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }))} your time` : ''}.</p>`;
+  };
+  draw();
+  box.onclick = (e) => {
+    const dy = e.target.closest('[data-day]');
+    if (dy && !dy.disabled) { day = dy.dataset.day; pick = null; draw(); onPick?.(null, d); return; }
+    const tm = e.target.closest('[data-t]');
+    if (tm) { pick = Number(tm.dataset.t); draw(); onPick?.(pick, d); }
+  };
+  return d;
+}
+
+function openScheduler(kind, option) {
+  if (!BK || !sched) return;
+  const body = sched.querySelector('.sched-body');
+  const kinds = BK.kinds || [];
+  const close = '<button type="button" class="sched-x" aria-label="Close" data-sx>×</button>';
+  const chooseKind = () => {
+    body.innerHTML = `${close}<p class="eyebrow">Book an appointment</p><h2 id="sched-h">How would you like to meet?</h2>
+      <div class="kinds">${kinds.map((k) => `<button type="button" class="kind" data-kind="${k.kind}"><b>${esc(k.label)}</b><span class="kind-min">${k.minutes} min</span><span class="kind-t">${esc(KIND_TEXT[k.kind](k.minutes))}</span></button>`).join('')}</div>`;
+  };
+  const pickTime = async (k) => {
+    const meta = kinds.find((x) => x.kind === k) || kinds[0];
+    let start = null;
+    let via = 'phone';
+    body.innerHTML = `${close}${kinds.length > 1 ? '<button type="button" class="sched-back" data-sb>Back</button>' : ''}<p class="eyebrow">${esc(meta.label)} · ${meta.minutes} min</p><h2 id="sched-h">Pick a time</h2>
+      ${k === 'online' && BK.video ? '<div class="choices via" role="radiogroup" aria-label="Call type"><label class="choice"><input type="radio" name="via" value="phone" checked /><span>Phone call</span></label><label class="choice"><input type="radio" name="via" value="video" /><span>Video call</span></label></div>' : k === 'online' ? `<p class="hint">${esc(BK.store)} calls you at the number you gave us.</p>` : ''}
+      <div class="picker" data-picker="main"></div>
+      <label class="full note-l"><span>Anything we should know? (optional)</span><textarea rows="2" maxlength="300" data-note></textarea></label>
+      <p class="form-err" role="alert" hidden></p>
+      <button type="button" class="btn primary" data-confirm disabled>Choose a time</button>`;
+    const btn = body.querySelector('[data-confirm]');
+    body.querySelectorAll('input[name="via"]').forEach((r) => r.addEventListener('change', () => { via = r.value; }));
+    await mountPicker(body.querySelector('[data-picker]'), k, { onPick: (t, d) => {
+      start = t;
+      btn.disabled = !t;
+      btn.textContent = t ? `Confirm ${fmt(t, d.tz, { weekday: 'short', month: 'short', day: 'numeric' })}, ${fmt(t, d.tz, { hour: 'numeric', minute: '2-digit' })}` : 'Choose a time';
+    } });
+    btn.onclick = async () => {
+      const err = body.querySelector('.form-err');
+      err.hidden = true;
+      btn.disabled = true;
+      btn.textContent = 'Booking…';
+      try {
+        const r = await api('/book', { method: 'POST', body: JSON.stringify({ kind: k, start, via, option, note: body.querySelector('[data-note]').value }) });
+        done(r.appointment);
+      } catch (e2) {
+        err.textContent = e2.message;
+        err.hidden = false;
+        await mountPicker(body.querySelector('[data-picker]'), k, { onPick: (t) => { start = t; btn.disabled = !t; btn.textContent = t ? 'Confirm this time' : 'Choose a time'; } });
+      }
+    };
+  };
+  const done = (a) => {
+    body.innerHTML = `<p class="eyebrow">You are booked</p><h2 id="sched-h">${esc(a.label)}</h2><p class="sched-when">${esc(a.when)}</p>
+      <p>${a.kind === 'online' ? (a.via === 'video' && a.video ? 'Use the video link below at that time.' : `${esc(BK.store)} will call you at this time.`) : `See you at ${esc(BK.store)}.`}</p>
+      <div class="cta-row"><a class="btn ghost" href="${esc(a.ics)}" download>Add to my calendar</a>${a.via === 'video' && a.video ? `<a class="btn ghost" href="${esc(a.video)}" target="_blank" rel="noopener">Video link</a>` : ''}<button type="button" class="btn primary" data-sx>Done</button></div>`;
+    refreshAppts();
+  };
+  body.onclick = (e) => {
+    if (e.target.closest('[data-sx]')) { sched.close(); return; }
+    if (e.target.closest('[data-sb]')) { chooseKind(); return; }
+    const kb = e.target.closest('.kind[data-kind]');
+    if (kb) pickTime(kb.dataset.kind);
+  };
+  if (kind && kinds.some((k) => k.kind === kind)) pickTime(kind);
+  else if (kinds.length === 1) pickTime(kinds[0].kind);
+  else chooseKind();
+  if (sched.showModal) sched.showModal();
+}
+sched?.addEventListener('click', (e) => { if (e.target === sched) sched.close(); });
+
+// Zakazani termini ispod zaglavlja: crtaju se iz /slots (current), otkazivanje uz potvrdu.
+async function refreshAppts() {
+  const box = document.getElementById('appts');
+  if (!box || !BK?.kinds?.length) return;
+  try {
+    const d = await api(`/slots?kind=${BK.kinds[0].kind}`);
+    box.innerHTML = (d.current || []).map((a) => `<div class="appt" data-appt="${esc(a.id)}"><div class="appt-main"><p class="mini">Your appointment</p><h3>${esc(a.label)}${a.purpose === 'mold' ? ' · mold' : a.purpose === 'pickup' ? ' · pick up' : ''}</h3><p class="appt-when">${esc(a.when)}</p>
+      <p class="appt-how">${a.kind === 'online' ? (a.via === 'video' && a.video ? `Video call: <a href="${esc(a.video)}" target="_blank" rel="noopener">join link</a>` : 'We will call you at this time.') : `At the studio. Times are in ${esc(BK.tzLabel)}.`}</p></div>
+      <div class="appt-acts"><a class="btn ghost small" href="${esc(a.ics)}" download>Add to calendar</a>${a.purpose === 'consult' && BK.kinds.some((k) => k.kind === a.kind) ? `<button type="button" class="btn ghost small" data-action="book" data-kind="${esc(a.kind)}">Change time</button>` : ''}<button type="button" class="btn ghost small" data-cancel="${esc(a.id)}">Cancel</button></div></div>`).join('');
+  } catch {}
+}
+document.addEventListener('click', async (e) => {
+  const c = e.target.closest('[data-cancel]');
+  if (!c) return;
+  if (!confirm('Cancel this appointment?')) return;
+  c.disabled = true;
+  try { await api(`/appointments/${encodeURIComponent(c.dataset.cancel)}/cancel`, { method: 'POST' }); c.closest('.appt')?.remove(); }
+  catch (err) { c.disabled = false; alert(err.message); }
+});
+
+// ---------- Poslije depozita: kako kupac dobija komad ----------
+const nf = document.getElementById('next-form');
+if (nf) {
+  let visitStart = null;
+  let pickerOn = false;
+  const show = (sel, on) => nf.querySelectorAll(`[data-when="${sel}"]`).forEach((el) => { el.hidden = !on; });
+  const sync = () => {
+    const local = nf.querySelector('input[name="local"]:checked')?.value;
+    const method = local === 'no' ? 'ship' : nf.querySelector('input[name="method"]:checked')?.value;
+    show('local-yes', local === 'yes');
+    show('visit', method === 'visit');
+    show('ship', method === 'ship');
+    const pk = nf.querySelector('[data-picker="next"]');
+    if (method === 'visit' && pk && !pickerOn) { pickerOn = true; mountPicker(pk, 'visit', { forNext: true, onPick: (t) => { visitStart = t; } }); }
+  };
+  nf.addEventListener('change', sync);
+  nf.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = nf.querySelector('.form-err');
+    err.hidden = true;
+    const local = nf.querySelector('input[name="local"]:checked')?.value;
+    const method = local === 'no' ? 'ship' : nf.querySelector('input[name="method"]:checked')?.value;
+    const v = (n) => nf.querySelector(`[name="${n}"]`)?.value || '';
+    const body = { local: local === 'yes' ? true : local === 'no' ? false : null, method, note: v('note'),
+      ...(method === 'ship' ? { address: { line1: v('line1'), line2: v('line2'), city: v('city'), state: v('state'), zip: v('zip') } } : {}),
+      ...(method === 'visit' && visitStart ? { start: visitStart } : {}) };
+    const btn = nf.querySelector('button[type="submit"]');
+    btn.disabled = true;
+    try {
+      const r = await api('/next', { method: 'POST', body: JSON.stringify(body) });
+      const done = document.querySelector('.next-done');
+      done.querySelector('.next-text').textContent = r.text;
+      done.hidden = false;
+      nf.hidden = true;
+      if (r.appointment) refreshAppts();
+      done.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (e2) { err.textContent = e2.message; err.hidden = false; }
+    btn.disabled = false;
+  });
+  document.querySelector('[data-next-edit]')?.addEventListener('click', () => { document.querySelector('.next-done').hidden = true; nf.hidden = false; });
+  if (location.hash === '#next') setTimeout(() => document.getElementById('next')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+}

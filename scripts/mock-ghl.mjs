@@ -2,7 +2,7 @@
 // Pamti kontakte, tagove, bilješke i opportunity-je; GET /_state vraća sve što je stiglo. Token mora biti "pit-...".
 import { createServer } from 'node:http';
 const port = Number(process.argv[2]) || 8897;
-const S = { contacts: {}, opportunities: {}, calls: [] };
+const S = { contacts: {}, opportunities: {}, calls: [], appointments: {}, messages: [] };
 let seq = 0;
 const send = (res, status, data) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
 createServer(async (req, res) => {
@@ -13,8 +13,25 @@ createServer(async (req, res) => {
   if (url.pathname === '/_state') return send(res, 200, S);
   S.calls.push({ method: req.method, path: url.pathname, version: req.headers.version });
   if (!/^Bearer pit-/.test(req.headers.authorization || '')) return send(res, 401, { message: 'Invalid token' });
-  if (req.headers.version !== '2021-07-28') return send(res, 400, { message: 'version header was not found' });
+  // Kalendari i poruke (25.11.2026) idu na 2021-04-15, kao pravi GHL.
+  const calPath = /^\/(calendars|conversations)\//.test(url.pathname);
+  if (req.headers.version !== (calPath ? '2021-04-15' : '2021-07-28')) return send(res, 400, { message: 'version header was not found' });
   let m;
+  if (req.method === 'GET' && url.pathname === '/calendars/') return send(res, 200, { calendars: [{ id: 'calOnline01', name: 'Online consultation', slotDuration: 10, isActive: true }, { id: 'calVisit001', name: 'Studio visit', slotDuration: 30, isActive: true }] });
+  if (req.method === 'GET' && (m = url.pathname.match(/^\/calendars\/([^/]+)\/free-slots$/))) {
+    // Svaki dan 11:00 i 11:30 i 15:00 po zoni radnje (UTC-7 za Denver zimi), dva dana unaprijed od startDate.
+    const from = Number(url.searchParams.get('startDate'));
+    const out = {};
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date(from + i * 864e5).toISOString().slice(0, 10);
+      out[d] = { slots: [`${d}T11:00:00-07:00`, `${d}T11:30:00-07:00`, `${d}T15:00:00-07:00`].filter((t) => !Object.values(S.appointments).some((a) => a.appointmentStatus !== 'cancelled' && Date.parse(a.startTime) === Date.parse(t))) };
+    }
+    return send(res, 200, { ...out, traceId: 't' });
+  }
+  if (req.method === 'POST' && url.pathname === '/calendars/events/appointments') { const a = { id: `ev${++seq}`, ...body }; S.appointments[a.id] = a; return send(res, 201, { id: a.id, ...a }); }
+  if (req.method === 'PUT' && (m = url.pathname.match(/^\/calendars\/events\/appointments\/([^/]+)$/))) { const a = S.appointments[m[1]]; if (!a) return send(res, 404, { message: 'Event not found' }); Object.assign(a, body); return send(res, 200, a); }
+  if (req.method === 'POST' && url.pathname === '/conversations/messages') { S.messages.push(body); return send(res, 201, { messageId: `m${++seq}` }); }
+  if (req.method === 'PUT' && (m = url.pathname.match(/^\/contacts\/([^/]+)$/))) { const c = S.contacts[m[1]]; if (!c) return send(res, 404, { message: 'Contact not found' }); Object.assign(c, body); return send(res, 200, { contact: c }); }
   if (req.method === 'GET' && url.pathname === '/opportunities/pipelines') return send(res, 200, { pipelines: [{ id: 'pipe1', name: 'Custom Jewelry', stages: [{ id: 'st-new', name: 'New Lead' }, { id: 'st-con', name: 'Contacted' }, { id: 'st-quo', name: 'Quote Sent' }, { id: 'st-won', name: 'Won' }, { id: 'st-lost', name: 'Lost' }] },
     // Proizvodna tabla (25.11.2026)
     { id: 'prod1', name: 'Production', stages: [{ id: 'pr-placed', name: 'Order placed' }, { id: 'pr-cad', name: 'CAD approved' }, { id: 'pr-cast', name: 'Wax & cast' }, { id: 'pr-set', name: 'Stone setting' }, { id: 'pr-pol', name: 'Polish' }, { id: 'pr-ready', name: 'Ready for pick up' }] }] });
