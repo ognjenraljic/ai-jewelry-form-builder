@@ -32,3 +32,15 @@ Kod: `src/ghl.js`, rute `/api/portal/ghl*` i `ghlSyncLead`/`ghlSweep` u `src/wor
 ## Slanje postojećih leadova (24.11.2026)
 
 Kartica ima i "Also send the leads you already have": cron šalje sve aktivne leadove koji još nisu u GHL-u, od najstarijeg, 12 po krugu (svakih 5 min), svaki u fazu svog statusa iz portala (Won i Lost odmah zatvoreni). Arhivirani se nikad ne šalju. Lead od prije uključenja ne ide bez te opcije. Kartica pokazuje koliko je poslato, koliko čeka i koliko je palo. Lokalna proba cijelog toka: `scripts/mock-ghl.mjs` + `scripts/ghl-flow-check.mjs` (17 provjera), `GHL_BASE` radi samo uz `DEV_MODE`.
+
+## ID leada i proizvodna tabla za radnike (25.11.2026)
+
+District: "unique lead ID for filtering" i "moissanite outsourcing ne smije biti rizik: radnici koji pomjeraju fazu narudžbe ne vide ništa o kupcu".
+
+**ID leada** (`leads.lead_no`, migracija 0036): redni broj po radnji, prikaz `L-0231`. Postojeći leadovi su numerisani po redu stizanja. Stoji na kartici leada (sa Copy), u pretrazi portala (`L-0231`, `#231`, `231`, i broj narudžbe `DJ-7K4Q9`), na početku imena opportunity-ja (`L-0231 · Ime · custom chain`) i u prvom redu bilješke. Već poslati opportunity-ji se preimenuju u cronu, 20 po krugu (`leads.ghl.ref` = urađeno, `'missing'` = opportunity obrisan u GHL-u).
+
+**Proizvodna tabla** (`leads.ghl_order`, `clients.data.ghl.prod`): Won lead sa brojem narudžbe ide u POSEBAN pipeline (isti kao prodajni je odbijen) na POSEBAN kontakt `Order DJ-7K4Q9` bez mejla, telefona, imena, cijene i linka stranice kupca. Bilješka ima samo specifikacije (redovi sa e-mail/phone/address/budget/price/contact u nazivu se izbacuju), sliku rendera (nikad try-on, jer ima kupčevu fotku) i, samo ako je uključeno, opis kupca sa uklonjenim mejlovima i brojevima. Kontakt i kartica su dodijeljeni (`assignedTo`) korisniku radnika.
+- U GHL-u radnik dobija korisnika sa **Only assigned data** za Contacts, Opportunities i Conversations, pa vidi samo kartice dodijeljene njemu. To je jedina zaštita na strani GHL-a: ako radnik ima pristup svim podacima, vidjeće i prodajne kontakte.
+- Faze: portal → kartica odmah (`PUT /opportunities/{id}`); kartica → portal i stranica praćenja kupca preko crona (`GET /opportunities/{id}`, 25 po krugu, gotove narudžbe još 3 dana). Poredi se sa zadnjom usklađenom fazom (`ghl_order.stage`), pa neuspjelo slanje iz portala ne vraća portal unazad.
+- "Load users" traži dozvolu **View Users** na tokenu; bez nje se User ID upiše ručno (Settings > My Staff).
+- Provjera: `node scripts/mock-ghl.mjs 8897` + `wrangler dev --port 8811 --test-scheduled --var GHL_BASE:http://127.0.0.1:8897` + `node scripts/ghl-orders-check.mjs` (26 provjera, uključuje i težine lanaca).

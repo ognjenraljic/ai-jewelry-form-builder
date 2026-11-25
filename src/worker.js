@@ -8,15 +8,15 @@ import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
-import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ, middleGround, specDiff } from '../public/pricing.js';
+import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ, middleGround, specDiff, chainLine } from '../public/pricing.js';
 import { leadPageHtml, PAGE_ACTIONS } from './leadpage.js';
 import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import { areaOf } from '../public/area-codes.js';
-import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE } from './ghl.js';
-import { ORDER_STAGES, orderPrefix, newOrderNo, normalizeOrderNo, orderView, nextOrder, parseOrder } from './orders.js';
+import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE, oppName, ghlRenameOpp, guessOrderStages, ghlUsers, ghlPushOrder, ghlPushOrderStage, ghlReadOrderStage, prodReady, ORDER_KEYS } from './ghl.js';
+import { ORDER_STAGES, LAST_STAGE, orderPrefix, newOrderNo, normalizeOrderNo, orderView, nextOrder, parseOrder, leadRef, parseLeadRef } from './orders.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
   spendBlock, spendToday, filmRoom, budgets, SPEND_MESSAGE, turnstileOn, turnstileOk, flagged, FLAG_MESSAGE, sniffImage, withSecurity,
@@ -254,9 +254,11 @@ async function createLead(request, env, ctx) {
   const id = rid(12);
   const token = rid(24);
   const ins = await env.DB.prepare(
-    `INSERT INTO leads (id, form_id, token, name, email, phone, answers, ip, ip_net, created_at, page_key)
-     SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM leads WHERE ip_net = ? AND created_at > ?) < ?`
-  ).bind(id, form.id, token, name, email, phone, JSON.stringify(answers), ip, net, Date.now(), rid(24), net, Date.now() - 3600_000, limit).run();
+    // lead_no (25.11.2026): sljedeći redni broj radnje u istom upisu (D1 izvršava jedan upis odjednom, pa nema duplikata).
+    `INSERT INTO leads (id, form_id, token, name, email, phone, answers, ip, ip_net, created_at, page_key, lead_no)
+     SELECT ?,?,?,?,?,?,?,?,?,?,?, (SELECT COALESCE(MAX(l2.lead_no), 0) + 1 FROM leads l2 JOIN forms f2 ON f2.id = l2.form_id WHERE f2.client_id = (SELECT client_id FROM forms WHERE id = ?))
+     WHERE (SELECT COUNT(*) FROM leads WHERE ip_net = ? AND created_at > ?) < ?`
+  ).bind(id, form.id, token, name, email, phone, JSON.stringify(answers), ip, net, Date.now(), rid(24), form.id, net, Date.now() - 3600_000, limit).run();
   if (!ins.meta.changes) return json({ error: 'Too many requests. Please try again later.' }, 429);
 
   // Fotografije tek poslije upisa, pa nema fajlova bez upita.
@@ -1586,7 +1588,10 @@ async function portalApi(request, env, p, secure, ctx) {
     const where = ['f.client_id = ?', 'l.created_at < ?', live];
     const args = [client.id, before];
     if (LEAD_STATUSES.includes(status)) { where.push(status === 'new' ? "(l.status IS NULL OR l.status = 'new')" : 'l.status = ?'); if (status !== 'new') args.push(status); }
-    if (q) { where.push('(lower(l.name) LIKE ? OR lower(l.email) LIKE ? OR l.phone LIKE ?)'); args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+    // ID leada (L-0231) i broj narudžbe (DJ-7K4Q9) se traže tačno, uz ime, mejl i telefon.
+    const qNo = parseLeadRef(q);
+    const qOrder = normalizeOrderNo(q);
+    if (q) { where.push(`(lower(l.name) LIKE ? OR lower(l.email) LIKE ? OR l.phone LIKE ?${qNo ? ' OR l.lead_no = ?' : ''}${qOrder ? ' OR l.order_no = ?' : ''})`); args.push(`%${q}%`, `%${q}%`, `%${q}%`, ...(qNo ? [qNo] : []), ...(qOrder ? [qOrder] : [])); }
     // Filter po komadu (District 19.11.2026: "filter po kategoriji proizvoda"): odgovor "type" iz upita.
     const piece = /^[a-z0-9-]{1,40}$/.test(u.searchParams.get('piece') || '') ? u.searchParams.get('piece') : '';
     if (piece) { where.push("json_extract(l.answers, '$.type') = ?"); args.push(piece); }
@@ -1614,7 +1619,7 @@ async function portalApi(request, env, p, secure, ctx) {
     // Brzina (22.11.2026): sve što ne zavisi od stranice ide u isto vrijeme kad i lista (ranije 7 upita zaredom).
     const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
     const [leadRes, countRows, pieceRows, dayRes, vrowsRes, tagRows, budgetRows, archRow] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page, l.tags, l.archived_at,
-        l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data
+        l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data, l.lead_no, l.ghl_order
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
     // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
     env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
@@ -1672,10 +1677,10 @@ async function portalApi(request, env, p, secure, ctx) {
         let files = {};
         try { files = JSON.parse(l.files || '{}'); } catch {}
         return {
-          id: l.id, formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
+          id: l.id, ref: leadRef(l.lead_no), formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
           status: l.status || 'new', note: l.note || '', archivedAt: l.archived_at || null, tags: parseTags(l.tags), quotes: leadQuotes(l.quotes), page: pageInfo(l),
           alertedAt: l.alerted_at || null, autoSentAt: l.auto_sent_at || null, firstReplyAt: l.first_reply_at || null,
-          order: orderView(l.order_no, l.order_data),
+          order: orderView(l.order_no, l.order_data), prodBoard: ghlOrderInfo(l.ghl_order),
           vision: a.vision || '', details: leadDetails(forms[l.form_id], a), answers: pricingAnswers(a),
           photos: [
             ...(l.ref_key ? [{ label: 'Inspiration', key: l.ref_key }] : []),
@@ -1791,6 +1796,8 @@ async function portalApi(request, env, p, secure, ctx) {
     if (st === 'won' && (before.status || 'new') !== 'won') ctx?.waitUntil?.(ghlLeadChange(env, client, lm[1], { status: 'won', tags: tags ? JSON.parse(tags) : null }).catch((e) => console.error('ghl won', lm[1], e.message)));
     if (st === 'won') {
       const o = await assignOrder(env, lm[1], client);
+      // Narudžba ide i na proizvodnu tablu radnika u GHL-u (samo broj i specifikacije).
+      if (o) ctx?.waitUntil?.(ghlSyncOrder(env, lm[1], new URL(request.url).origin).catch((e) => console.error('ghl order', lm[1], e.message)));
       return json({ ok: true, order: o ? orderView(o.no, o.data) : null });
     }
     // GoHighLevel: status pomjera opportunity, novi tagovi idu na kontakt (samo kad je GHL uključen i lead već poslat).
@@ -1821,7 +1828,10 @@ async function portalApi(request, env, p, secure, ctx) {
     if (!next) return json({ error: 'Unknown stage.' }, 400);
     await env.DB.prepare('UPDATE leads SET order_data = ? WHERE id = ?').bind(JSON.stringify(next), row.id).run();
     const prev = parseOrder(row.order_data).stage;
-    if (next.stage !== prev) await logEvent(env, row.id, 'order_stage', { from: ORDER_STAGES[prev].key, to: ORDER_STAGES[next.stage].key });
+    if (next.stage !== prev) {
+      await logEvent(env, row.id, 'order_stage', { from: ORDER_STAGES[prev].key, to: ORDER_STAGES[next.stage].key });
+      ctx?.waitUntil?.(ghlOrderStageChange(env, client, row.id, next.stage).catch((e) => console.error('ghl order stage', row.id, e.message)));
+    }
     return json({ ok: true, order: orderView(row.order_no, JSON.stringify(next)) });
   }
   return json({ error: 'Not found' }, 404);
@@ -1906,13 +1916,15 @@ async function ghlSyncLead(env, leadId, origin = ORIGIN_BASE) {
   let tags = [];
   try { tags = JSON.parse(row.tags || '[]') || []; } catch {}
   const lead = {
-    name: row.name, email: row.email, phone: row.phone, status: row.status || 'new', piece: pieceName(a), form: form.name || storeName(row), vision: a.vision || '',
+    ref: leadRef(row.lead_no), name: row.name, email: row.email, phone: row.phone, status: row.status || 'new', piece: pieceName(a), form: form.name || storeName(row), vision: a.vision || '',
     details: leadDetails(form, a).slice(0, 20), area: areaOf(row.phone)?.label || '', tags,
     pageUrl: row.page_key ? `${origin}/p/${row.page_key}?preview=1` : '', price: Number(quotes.picked?.price) || Number(quotes.picked?.total) || 0, quoteMsg: quotes.picked?.msg || '',
   };
   try {
     const done = await ghlPushLead(conf.token, conf.cfg, lead, prev, ghlFetch(env));
     delete done.error;
+    // ID leada je u imenu opportunity-ja od prvog slanja; stari se preimenuju u ghlSweep (done.ref = ime je usklađeno).
+    if (done.oppId && !prev.oppId) done.ref = lead.ref || null;
     await env.DB.prepare('UPDATE leads SET ghl = ? WHERE id = ?').bind(JSON.stringify(done), leadId).run();
     await logEvent(env, leadId, 'ghl_sent', { contact: done.contactId || null, opp: done.oppId || null });
     await ghlNote(env, row.client_id, true);
@@ -1937,6 +1949,90 @@ async function ghlLeadChange(env, client, leadId, { status, tags }) {
   if (tags?.length) await ghlPushTags(conf.token, sync, tags, ghlFetch(env));
 }
 // Cron: leadovi zadnja 24 h koji još nisu u GHL-u (ili je slanje palo, do GHL_RETRY puta), za radnje sa uključenim GHL-om.
+// ---------- GHL proizvodna tabla (25.11.2026) ----------
+// Portal vidi samo da li je narudžba na tabli (bez id-jeva).
+function ghlOrderInfo(raw) {
+  let o = null;
+  try { o = JSON.parse(raw || 'null'); } catch {}
+  if (!o) return null;
+  return { on: !!o.oppId, error: o.oppId ? null : o.error || null };
+}
+const parseJson = (raw) => { try { return JSON.parse(raw || '{}') || {}; } catch { return {}; } };
+async function ghlSyncOrder(env, leadId, origin = ORIGIN_BASE) {
+  const row = await notifyRow(env, leadId);
+  if (!row || row.archived_at || !row.order_no) return null;
+  const conf = await ghlConfig(env, { id: row.client_id, data: row.client_data });
+  if (!conf || !prodReady(conf.cfg.prod)) return null;
+  const prev = parseJson(row.ghl_order);
+  if (prev.oppId || (prev.tries || 0) >= GHL_RETRY) return prev;
+  const form = JSON.parse(row.form_data || '{}');
+  const a = JSON.parse(row.answers || '{}');
+  // Samo render komada (try-on ima kupčevu fotografiju, ne ide radniku).
+  const r = await env.DB.prepare(`SELECT image_key FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL AND COALESCE(kind, '') != 'tryon' ORDER BY created_at DESC LIMIT 1`).bind(leadId).first();
+  const order = {
+    no: row.order_no, stage: parseOrder(row.order_data).stage, piece: pieceName(a), details: leadDetails(form, a).slice(0, 20),
+    vision: conf.cfg.prod.vision ? a.vision || '' : '', renderUrl: r?.image_key ? `${origin}/media/${r.image_key}` : '',
+  };
+  try {
+    const done = await ghlPushOrder(conf.token, conf.cfg, order, prev, ghlFetch(env));
+    delete done.error;
+    await env.DB.prepare('UPDATE leads SET ghl_order = ? WHERE id = ?').bind(JSON.stringify(done), leadId).run();
+    await logEvent(env, leadId, 'ghl_order_sent', { no: row.order_no });
+    return done;
+  } catch (e) {
+    const next = { ...prev, error: String(e.message).slice(0, 200), tries: (prev.tries || 0) + 1, at: Date.now() };
+    await env.DB.prepare('UPDATE leads SET ghl_order = ? WHERE id = ?').bind(JSON.stringify(next), leadId).run();
+    await ghlNote(env, row.client_id, false, e.message);
+    throw e;
+  }
+}
+// Zlatar pomjerio fazu u portalu: kartica na tabli ide za njom.
+async function ghlOrderStageChange(env, client, leadId, stage) {
+  const conf = await ghlConfig(env, client);
+  if (!conf || !prodReady(conf.cfg.prod)) return;
+  const row = await env.DB.prepare('SELECT ghl_order FROM leads WHERE id = ?').bind(leadId).first();
+  const sync = parseJson(row?.ghl_order);
+  if (!sync.oppId) { await ghlSyncOrder(env, leadId); return; }
+  if (await ghlPushOrderStage(conf.token, conf.cfg, sync, stage, ghlFetch(env))) {
+    await env.DB.prepare(`UPDATE leads SET ghl_order = json_set(ghl_order, '$.stage', ?) WHERE id = ?`).bind(stage, leadId).run();
+  }
+}
+// Radnik pomjerio karticu u GHL-u: faza u portalu (i na stranici praćenja kupca) ide za njom.
+// Poredi se sa zadnjom usklađenom fazom, ne sa portalom: ako slanje iz portala nije uspjelo, portal ostaje noviji.
+async function ghlOrderPoll(env, row) {
+  const conf = await ghlConfig(env, { id: row.client_id, data: row.client_data });
+  if (!conf || !prodReady(conf.cfg.prod)) return;
+  const sync = parseJson(row.ghl_order);
+  const now = Date.now();
+  let idx = null;
+  try { idx = await ghlReadOrderStage(conf.token, conf.cfg, sync, ghlFetch(env)); } catch (e) { console.error('ghl order poll', row.id, e.message); }
+  if (idx != null && idx !== sync.stage) {
+    const before = parseOrder(row.order_data).stage;
+    const next = nextOrder(row.order_data, { stage: idx }, now);
+    await env.DB.prepare(`UPDATE leads SET order_data = ?, ghl_order = json_set(ghl_order, '$.stage', ?, '$.polledAt', ?) WHERE id = ?`).bind(JSON.stringify(next), idx, now, row.id).run();
+    if (next.stage !== before) await logEvent(env, row.id, 'order_stage', { from: ORDER_STAGES[before].key, to: ORDER_STAGES[next.stage].key, by: 'ghl' });
+  } else {
+    await env.DB.prepare(`UPDATE leads SET ghl_order = json_set(ghl_order, '$.polledAt', ?) WHERE id = ?`).bind(now, row.id).run();
+  }
+}
+// Već poslati leadovi dobijaju ID u imenu opportunity-ja (District 25.11.2026: "update the ones we already sent").
+async function ghlRenameSent(env, row) {
+  const conf = await ghlConfig(env, { id: row.client_id, data: row.client_data });
+  if (!conf) return;
+  const sync = parseJson(row.ghl);
+  const ref = leadRef(row.lead_no);
+  if (!sync.oppId || !ref) return;
+  const a = parseJson(row.answers);
+  try {
+    await ghlRenameOpp(conf.token, sync.oppId, oppName({ ref, name: row.name, piece: pieceName(a) }), ghlFetch(env));
+    await env.DB.prepare(`UPDATE leads SET ghl = json_set(ghl, '$.ref', ?) WHERE id = ?`).bind(ref, row.id).run();
+  } catch (e) {
+    // Obrisan opportunity u GHL-u (404) se ne pokušava ponovo; ostalo ide u sljedećem krugu.
+    if (e.status === 404) await env.DB.prepare(`UPDATE leads SET ghl = json_set(ghl, '$.ref', 'missing') WHERE id = ?`).bind(row.id).run();
+    console.error('ghl rename', row.id, e.message);
+  }
+}
+
 async function ghlSweep(env) {
   const rows = (await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
       WHERE json_extract(c.data, '$.ghl.enabled') = 1 AND l.created_at > ? AND l.created_at < ? AND l.created_at >= COALESCE(json_extract(c.data, '$.ghl.enabledAt'), 0)
@@ -1950,6 +2046,22 @@ async function ghlSweep(env) {
         AND (l.ghl IS NULL OR (json_extract(l.ghl, '$.error') IS NOT NULL AND COALESCE(json_extract(l.ghl, '$.tries'), 0) < ${GHL_RETRY}))
       ORDER BY l.created_at LIMIT 12`).bind(Date.now() - 2 * 60_000).all()).results;
   for (const r of old) await ghlSyncLead(env, r.id).catch(() => null);
+  const JOIN = `FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id WHERE json_extract(c.data, '$.ghl.enabled') = 1`;
+  // ID leada u imenu već poslatih opportunity-ja, 20 po krugu.
+  const ren = (await env.DB.prepare(`SELECT l.id, l.name, l.answers, l.lead_no, l.ghl, c.id AS client_id, c.data AS client_data ${JOIN}
+      AND json_extract(l.ghl, '$.oppId') IS NOT NULL AND json_extract(l.ghl, '$.ref') IS NULL AND l.lead_no IS NOT NULL ORDER BY l.created_at LIMIT 20`).all()).results;
+  for (const r of ren) await ghlRenameSent(env, r).catch(() => null);
+  // Narudžbe na proizvodnu tablu (nove i Won od ranije), 10 po krugu.
+  const ord = (await env.DB.prepare(`SELECT l.id ${JOIN} AND json_extract(c.data, '$.ghl.prod.enabled') = 1 AND l.order_no IS NOT NULL AND l.archived_at IS NULL
+      AND (l.ghl_order IS NULL OR (json_extract(l.ghl_order, '$.oppId') IS NULL AND COALESCE(json_extract(l.ghl_order, '$.tries'), 0) < ${GHL_RETRY}))
+      ORDER BY l.created_at LIMIT 10`).all()).results;
+  for (const r of ord) await ghlSyncOrder(env, r.id).catch(() => null);
+  // Faze sa table: narudžbe koje nisu gotove, i gotove još 3 dana (radnik može vratiti karticu), najduže neprovjerene prve.
+  const poll = (await env.DB.prepare(`SELECT l.id, l.order_data, l.ghl_order, c.id AS client_id, c.data AS client_data ${JOIN} AND json_extract(c.data, '$.ghl.prod.enabled') = 1
+      AND json_extract(l.ghl_order, '$.oppId') IS NOT NULL AND l.archived_at IS NULL
+      AND (COALESCE(json_extract(l.order_data, '$.stage'), 0) < ${LAST_STAGE} OR COALESCE(json_extract(l.order_data, '$.updatedAt'), 0) > ?)
+      ORDER BY COALESCE(json_extract(l.ghl_order, '$.polledAt'), 0) LIMIT 25`).bind(Date.now() - 3 * 864e5).all()).results;
+  for (const r of poll) await ghlOrderPoll(env, r).catch(() => null);
 }
 async function portalGhl(request, env, p, client) {
   let d = {};
@@ -1961,7 +2073,12 @@ async function portalGhl(request, env, p, client) {
     const r = await env.DB.prepare(`SELECT SUM(CASE WHEN json_extract(l.ghl, '$.contactId') IS NOT NULL AND json_extract(l.ghl, '$.error') IS NULL THEN 1 ELSE 0 END) AS sent,
         SUM(CASE WHEN json_extract(l.ghl, '$.error') IS NOT NULL THEN 1 ELSE 0 END) AS failed, SUM(CASE WHEN l.ghl IS NULL THEN 1 ELSE 0 END) AS waiting
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL`).bind(client.id).first();
-    return { sent: r?.sent || 0, failed: r?.failed || 0, waiting: r?.waiting || 0 };
+    const o = await env.DB.prepare(`SELECT SUM(CASE WHEN json_extract(l.ghl_order, '$.oppId') IS NOT NULL THEN 1 ELSE 0 END) AS onBoard,
+        SUM(CASE WHEN json_extract(l.ghl_order, '$.oppId') IS NULL THEN 1 ELSE 0 END) AS notYet,
+        SUM(CASE WHEN json_extract(l.ghl, '$.oppId') IS NOT NULL AND json_extract(l.ghl, '$.ref') IS NULL THEN 1 ELSE 0 END) AS renaming
+      FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL AND (l.order_no IS NOT NULL OR l.ghl IS NOT NULL)`).bind(client.id).first();
+    const ordersAll = await env.DB.prepare('SELECT COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL AND l.order_no IS NOT NULL').bind(client.id).first();
+    return { sent: r?.sent || 0, failed: r?.failed || 0, waiting: r?.waiting || 0, orders: ordersAll?.n || 0, onBoard: o?.onBoard || 0, renaming: o?.renaming || 0 };
   };
   if (p === '/api/portal/ghl' && request.method === 'GET') return json({ ...ghlPublic(cur), counts: await counts() });
   // Token iz polja (ako je upisan) ili sačuvani.
@@ -1972,8 +2089,16 @@ async function portalGhl(request, env, p, client) {
     if (!token || !validLocationId(loc)) return json({ error: 'Paste the Private Integration token and the Location ID first.' }, 400);
     try {
       const pipelines = await ghlPipelines(token, loc, ghlFetch(env));
-      return json({ pipelines: pipelines.map((pl) => ({ ...pl, guess: guessStages(pl) })) });
+      return json({ pipelines: pipelines.map((pl) => ({ ...pl, guess: guessStages(pl), guessOrder: guessOrderStages(pl) })) });
     } catch (e) { return json({ error: e.status === 401 || e.status === 403 ? 'GoHighLevel refused the token. Check that it belongs to this sub-account and has the contacts and opportunities scopes.' : e.message }, 400); }
+  }
+  // Korisnici sub-accounta za "Assign production cards to" (traži dozvolu View Users na tokenu).
+  if (p === '/api/portal/ghl/users' && request.method === 'POST') {
+    const loc = String(b.locationId || cur.locationId || '').trim();
+    const token = await tokenFrom();
+    if (!token || !validLocationId(loc)) return json({ error: 'Paste the Private Integration token and the Location ID first.' }, 400);
+    try { return json({ users: await ghlUsers(token, loc, ghlFetch(env)) }); }
+    catch (e) { return json({ error: e.status === 401 || e.status === 403 ? 'The token cannot read users. Add the "View Users" scope to the Private Integration, or paste the worker\'s User ID by hand.' : e.message }, 400); }
   }
   if (p === '/api/portal/ghl' && request.method === 'PUT') {
     const next = { ...cur };
@@ -1991,6 +2116,18 @@ async function portalGhl(request, env, p, client) {
     if ('note' in b) next.note = b.note !== false;
     if ('enabled' in b) next.enabled = b.enabled === true && !!next.token && validLocationId(next.locationId);
     if ('backfill' in b) next.backfill = b.backfill === true;
+    // Proizvodna tabla za radnike (25.11.2026).
+    if (b.prod && typeof b.prod === 'object') {
+      const pr = { ...(cur.prod || {}) };
+      if ('pipelineId' in b.prod) pr.pipelineId = String(b.prod.pipelineId || '').slice(0, 60);
+      if (b.prod.stages && typeof b.prod.stages === 'object') pr.stages = Object.fromEntries(ORDER_KEYS.map((k) => [k, String(b.prod.stages[k] || '').slice(0, 60)]).filter(([, v]) => v));
+      if ('assignTo' in b.prod) { const v = String(b.prod.assignTo || '').trim(); if (v && !/^[A-Za-z0-9]{6,40}$/.test(v)) return json({ error: 'The User ID is the ID from Settings > My Staff (letters and numbers).' }, 400); pr.assignTo = v; pr.assignName = String(b.prod.assignName || '').slice(0, 80); }
+      if ('vision' in b.prod) pr.vision = b.prod.vision === true;
+      if ('enabled' in b.prod) pr.enabled = b.prod.enabled === true;
+      if (pr.enabled && (!pr.pipelineId || !pr.stages?.placed)) return json({ error: 'Pick the production pipeline and at least the "Order placed" stage first.' }, 400);
+      if (pr.enabled && pr.pipelineId && pr.pipelineId === (next.pipelineId || cur.pipelineId)) return json({ error: 'Use a separate pipeline for production, not the sales pipeline, so workers never see sales cards.' }, 400);
+      next.prod = pr;
+    }
     if (!next.enabled) next.backfill = false;
     // Uključenje važi samo za nove leadove (stari se ne šalju naknadno, cron gleda zadnja 24 h).
     if (next.enabled && !cur.enabled) next.enabledAt = Date.now();
@@ -2406,7 +2543,9 @@ function pricingSpec(form) {
   for (const f of fields) { const k = dimKey(f.id); if (k) dims[k] = [...(dims[k] || []), ...opts(f)]; }
   // Izbori po komadu (perPiece): radni sto nudi samo ono što taj komad ima u formi.
   const per = Object.fromEntries(['metal', 'karat', 'stones', 'coverage', 'clarity'].map((k) => [k, by(k)?.perPiece || null]).filter(([, v]) => v));
-  return { type: opts(by('type')), metal: opts(by('metal')), karat: opts(by('karat')), stones: opts(by('stones')), coverage: opts(by('coverage')), clarity: opts(by('clarity')), budget: opts(by('budget')), cut: fields.filter((f) => CUT_FIELD.test(f.id)).flatMap(opts), dims, per };
+  // Stilovi lanca i narukvice (25.11.2026) za izbor reda u katalogu težina u Pricing tabu.
+  const styles = Object.fromEntries(['chain', 'bracelet'].map((t) => [t, (Array.isArray(form?.styles?.[t]) ? form.styles[t] : []).filter((o) => o && o.value).map((o) => ({ value: String(o.value), label: String(o.label || o.value) }))]).filter(([, v]) => v.length));
+  return { styles, type: opts(by('type')), metal: opts(by('metal')), karat: opts(by('karat')), stones: opts(by('stones')), coverage: opts(by('coverage')), clarity: opts(by('clarity')), budget: opts(by('budget')), cut: fields.filter((f) => CUT_FIELD.test(f.id)).flatMap(opts), dims, per };
 }
 function pricingAnswers(a) {
   const out = {};
@@ -2427,7 +2566,13 @@ function cleanPricing(p) {
     offerHours: n(p?.offerHours) != null ? Math.min(720, n(p?.offerHours)) : undefined,
     live: Object.fromEntries(MARKET_METALS.map((m) => [m.key, p?.live?.[m.key] !== false])), grillz: tree(p?.grillz, 3), quoteInfo: quoteInfoText(p?.quoteInfo), depositUrl: httpsUrl(p?.depositUrl), bookingUrl: httpsUrl(p?.bookingUrl),
     // Obavještenja i prva poruka (21.11.2026): kome ide mejl o leadu, na koju adresu kupac odgovara, da li prva poruka ide sama.
-    alertEmails: emailList(p?.alertEmails), replyTo: validEmail(p?.replyTo) || undefined, autoSend: p?.autoSend === true };
+    alertEmails: emailList(p?.alertEmails), replyTo: validEmail(p?.replyTo) || undefined, autoSend: p?.autoSend === true,
+    // Težine lanaca iz kataloga (25.11.2026): uključeno + koji red kataloga ide uz koji stil forme ('' = grami po komadu).
+    chainWeights: p?.chainWeights && typeof p.chainWeights === 'object' ? {
+      on: p.chainWeights.on === true,
+      map: Object.fromEntries(Object.entries(p.chainWeights.map && typeof p.chainWeights.map === 'object' ? p.chainWeights.map : {}).slice(0, 60)
+        .filter(([k, v]) => /^[a-z0-9 _-]{1,40}$/.test(k) && (v === '' || chainLine(v))).map(([k, v]) => [k, v])),
+    } : undefined };
 }
 
 async function demoHandled(request, env, id) {

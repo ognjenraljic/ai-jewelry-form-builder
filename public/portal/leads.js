@@ -15,7 +15,7 @@ export function createLeadStore(request, now = Date.now) {
       // Izabran komad ide sa servera: on filtrira i brojeve po statusu i dane na traci.
       if (!before && !day && !dfrom && !piece && !video && !tag && !budget && !archived && fresh(all) && !all.next) {
         const search = q.toLowerCase();
-        return { ...all, leads: all.leads.filter((l) => (!status || l.status === status) && (!search || [l.name, l.email, l.phone].some((s) => String(s || '').toLowerCase().includes(search)))) };
+        return { ...all, leads: all.leads.filter((l) => (!status || l.status === status) && (!search || [l.name, l.email, l.phone, l.ref, l.ref?.replace(/^L-0*/, ''), l.order?.no].some((s) => String(s || '').toLowerCase().includes(search)))) };
       }
       if (!before && fresh(cached)) return cached;
       pending = new AbortController();

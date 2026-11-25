@@ -1,5 +1,5 @@
 import { createLeadStore } from './leads.js';
-import { estimate, stoneLayout, applyMarket, isLive, MARKET_METALS, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody, iceKey, iceFields, parseBudget } from '/pricing.js';
+import { estimate, stoneLayout, applyMarket, isLive, MARKET_METALS, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody, iceKey, iceFields, parseBudget, CHAIN_CATALOG, chainLine, chainWeight, defaultChainLine } from '/pricing.js';
 import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
 import { SUGGESTED, suggestOptions } from '/option-suggestions.js';
@@ -722,6 +722,50 @@ function setLive(k, on) {
   if (where) where.textContent = on ? 'Live price is used for every metal with this name.' : 'Enter your price in "Metal price per gram".';
 }
 
+// ---------- Težine lanaca iz 14K kataloga (25.11.2026) ----------
+// Stilovi lanca/narukvice iz formi zlatara, uz red kataloga koji im daje grame (zlatar ga može promijeniti).
+const CW_EX = { chain: { widthMm: 8, lengthIn: 22 }, bracelet: { widthMm: 8, lengthIn: 8 } };
+function chainStyles() {
+  const out = new Map();
+  for (const s of Object.values(P.me.formSpecs || {})) for (const [t, list] of Object.entries(s.styles || {})) for (const o of list) {
+    const k = pkey(o.value);
+    if (!out.has(k)) out.set(k, { key: k, label: o.label.replace(/-+$/, ''), types: new Set() });
+    out.get(k).types.add(t);
+  }
+  return [...out.values()].map((x) => ({ ...x, types: [...x.types] }));
+}
+const cwLineOf = (k) => { const m = P.me.pricing?.chainWeights?.map; return m && Object.prototype.hasOwnProperty.call(m, k) ? m[k] : defaultChainLine(k); };
+function cwExample(styleKey, lineKey, type) {
+  if (!lineKey) return '<span class="pcw-ex off">Uses grams per piece from Weight and labor</span>';
+  // Primjer na širini koju katalog ima (najbliža 8 mm), da tanki stilovi (Box, Cable) ne pokazuju razvučen broj.
+  const line = chainLine(lineKey);
+  const base = CW_EX[type] || CW_EX.chain;
+  const mm = line ? line.rows.map((r) => r.mm).reduce((b, x) => (Math.abs(x - base.widthMm) < Math.abs(b - base.widthMm) ? x : b)) : base.widthMm;
+  const ex = { ...base, widthMm: mm };
+  const w = chainWeight({ chainWeights: { on: true, map: { [styleKey]: lineKey } } }, { type, style: styleKey, metal: 'Yellow gold', karat: '14K', ...ex });
+  return w && !w.out ? `<span class="pcw-ex">${type === 'bracelet' ? 'Bracelet' : 'Chain'} ${ex.widthMm} mm × ${ex.lengthIn}" in 14K = <b>${w.grams} g</b></span>` : '';
+}
+function chainWeightsView(pr) {
+  const cw = pr.chainWeights || {};
+  const styles = chainStyles();
+  const lens = (line) => [...new Set(line.rows.flatMap((r) => Object.keys(r.w).map(Number)))].sort((a, b) => a - b);
+  const opt = (sel) => `<option value="" ${sel === '' ? 'selected' : ''}>Grams per piece</option>${CHAIN_CATALOG.map((l) => `<option value="${l.key}" ${sel === l.key ? 'selected' : ''}>${esc(l.label)} (${esc(l.code)})</option>`).join('')}`;
+  const rows = styles.map((st) => { const lk = cwLineOf(st.key); const t = st.types.includes('chain') ? 'chain' : 'bracelet'; return `<div class="pcw-row"><span class="pcw-name">${esc(st.label)}<small>${st.types.map((x) => (x === 'chain' ? 'Chain' : 'Bracelet')).join(' · ')}</small></span><select class="in pcw-sel" data-cw-style="${esc(st.key)}" data-cw-type="${t}" aria-label="Catalog weights for ${esc(st.label)}">${opt(lk)}</select><span class="pcw-exw" data-cw-ex="${esc(st.key)}">${cwExample(st.key, lk, t)}</span></div>`; }).join('');
+  const tiles = CHAIN_CATALOG.map((l) => {
+    const ls = lens(l);
+    const rs = [...l.rows].sort((a, b) => b.mm - a.mm);
+    return `<figure class="pcw-tile"><img src="/library/chain-catalog/${esc(l.image)}.webp" alt="${esc(l.label)} chain" width="480" height="120" decoding="async" /><figcaption><b>${esc(l.label)}</b><span>${esc(l.code)} · ${rs[rs.length - 1].mm} to ${rs[0].mm} mm</span></figcaption>
+      <details><summary>Weights in grams</summary><div class="pcw-table" style="grid-template-columns: 52px repeat(${ls.length}, minmax(34px, 1fr))"><span class="pcw-hd pcw-mm">mm</span>${ls.map((x) => `<span class="pcw-hd">${x}"</span>`).join('')}${rs.map((r) => `<span class="pcw-mm">${r.mm}</span>${ls.map((x) => `<span>${r.w[x] != null ? r.w[x] : ''}</span>`).join('')}`).join('')}</div></details></figure>`;
+  }).join('');
+  return `<h2 class="psec">Chain and bracelet weights</h2>
+    <div class="pcard2 pwide pcw">
+      <label class="pcheck"><input type="checkbox" data-cw-on ${cw.on ? 'checked' : ''} /><span>Price the metal of chains and bracelets by the weight chart below: style, width and length give the grams (14K yellow gold), other karats and metals are worked out by weight (10K × 0.89, 18K × 1.19, silver × 0.79, platinum × 1.64). Off = grams per piece from Weight and labor.</span></label>
+      <p class="hint">Width between two rows of the chart = in between; a little wider or thinner than the chart = the nearest row scaled by width; far outside the chart (for example a 8 mm box chain) = grams per piece. Lengths that are not listed use grams per inch. Styles with no chart (tennis, flat Cuban, Byzantine…) keep grams per piece.</p>
+      ${styles.length ? `<h3 class="pcw-h">Your styles</h3><div class="pcw-rows">${rows}</div>` : '<p class="hint">No chain or bracelet styles in your forms.</p>'}
+      <h3 class="pcw-h">The chart</h3>
+      <div class="pcw-grid">${tiles}</div>
+    </div>`;
+}
 function pricingView() {
   const pr = P.me.pricing || {};
   const specs = Object.values(P.me.formSpecs || {});
@@ -778,6 +822,7 @@ function pricingView() {
           <p class="hint">Natural diamonds: VS is × 1.25, VVS × 1.5 and Flawless × 2 of the price per carat.</p></div>
           <div class="pex" data-pex aria-live="polite">${stoneExample(stones)}</div></div></div>
     </div>
+    ${pieces.some((x) => x === 'chain' || x === 'bracelet') || pr.chainWeights?.on ? chainWeightsView(pr) : ''}
     <div class="pcard2 pwide pinfo"><h3>Store info under every quote message</h3><p class="hint">Address, hours, turnaround, out of state terms. It is added word for word at the end of every quote message.</p>
       <textarea class="in" rows="8" data-quote-info maxlength="1200" placeholder="Your store, address, hours, turnaround times…">${esc(pr.quoteInfo || '')}</textarea>
       <h3 class="plinks-h">Buttons on customer pages</h3><p class="hint">Where "Reserve with a deposit" and "Book an appointment" go (for example a payment link or your booking page). Leave empty and the customer's request shows on the lead, so you can contact them.</p>
@@ -816,6 +861,10 @@ function readPricing() {
   out.replyTo = rt ? rt.value.trim() : P.me.pricing?.replyTo || '';
   const as = app.querySelector('[data-notify="autoSend"]');
   out.autoSend = as ? as.checked : P.me.pricing?.autoSend === true;
+  // Težine lanaca: prekidač i red kataloga za svaki stil (sve što zlatar vidi, i podrazumijevani izbori).
+  const cwOn = app.querySelector('[data-cw-on]');
+  if (cwOn) out.chainWeights = { on: cwOn.checked, map: Object.fromEntries([...app.querySelectorAll('[data-cw-style]')].map((el) => [el.dataset.cwStyle, el.value])) };
+  else if (P.me.pricing?.chainWeights) out.chainWeights = P.me.pricing.chainWeights;
   return out;
 }
 
@@ -1028,7 +1077,7 @@ function leadsView(resultsOnly = false) {
     const n = P.tagCounts?.[t] || 0;
     return `<button class="chip ${P.tag === t ? 'on' : ''}" data-ftag="${esc(t)}" aria-pressed="${P.tag === t}" ${n || P.tag === t ? '' : 'disabled'}>${esc(t)} <span>${n}</span></button>`;
   }).join('')}</div>`;
-  const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email or phone" value="${esc(P.q)}" /></label>`;
+  const search = `<label class="search"><span class="sr-only">Search leads</span><input class="in" type="search" data-search placeholder="Search name, email, phone, lead or order ID" value="${esc(P.q)}" /></label>`;
   const list = P.form ? P.leads.filter((l) => l.formId === P.form) : P.leads;
   const perDay = dayCounts(list);
   let lastDay = '';
@@ -1044,10 +1093,10 @@ function leadsView(resultsOnly = false) {
     const changes = l.renders.map((r, k) => (k && r.tweak ? `<li><b>Change ${k}</b>${esc(r.tweak)}</li>` : '')).join('');
     const sel = `<select class="status-sel s-${esc(l.status)}" data-lead-status="${esc(l.id)}" aria-label="Status of ${esc(l.name)}" ${readOnly() ? 'disabled title="Admin view is read-only. The client changes the status in their own portal."' : ''}>${STATUSES.map(([v, t]) => `<option value="${v}" ${l.status === v ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
     return `${head}
-      <article class="lead has-calc${P.busy ? ' busy' : ''}" data-find="${esc([l.name, l.email, l.phone].join(' ').toLowerCase())}">
+      <article class="lead has-calc${P.busy ? ' busy' : ''}" data-find="${esc([l.name, l.email, l.phone, l.ref, l.ref?.replace(/^L-0*/, ''), l.order?.no].filter(Boolean).join(' ').toLowerCase())}">
         <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}${pageBox(l)}</div>
         <div>
-          <div class="lead-top"><h2>${esc(l.name)}</h2><span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
+          <div class="lead-top"><h2>${esc(l.name)}</h2>${l.ref ? `<span class="lead-ref" title="Lead ID: search it here or in GoHighLevel">${esc(l.ref)}${copyBtn(l.ref, 'lead ID')}</span>` : ''}<span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
           <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span>${areaHint(l.phone)}</div>
           ${replyLine(l)}
           ${orderBox(l)}
@@ -1086,7 +1135,7 @@ function orderBox(l) {
     <div class="ord-top"><p class="ord-t">Order <b>${esc(o.no)}</b>${copyBtn(o.no, 'order ID')}</p><span class="ord-saved" role="status" aria-live="polite"></span></div>
     <ol class="ord-steps">${steps}</ol>
     <label class="ord-note"><span>Message on the tracking page <small>optional</small></span><input class="in" type="text" maxlength="500" data-order-note="${esc(l.id)}" value="${esc(o.note)}" placeholder="e.g. Stones arrived, setting starts Monday" ${ro ? 'disabled' : ''} /></label>
-    <p class="ord-help">Send the customer this order ID. They track the piece on your website with it and their email (${esc(l.email)}).</p>
+    <p class="ord-help">Send the customer this order ID. They track the piece on your website with it and their email (${esc(l.email)}).${l.prodBoard?.on ? ' On the GoHighLevel production board (order ID and specs only); stages your workers set there show here.' : ''}</p>
   </div>`;
 }
 async function saveOrder(id, body) {
@@ -1186,9 +1235,35 @@ function ghlCard() {
     </div>
     <label class="ghl-on"><input type="checkbox" data-ghl-f="enabled" ${g.enabled ? 'checked' : ''} ${g.connected || P.ghlTokenTyped ? '' : 'disabled'} /><span><b>Send new leads to GoHighLevel</b><em>Every lead that arrives from now on. Your tags and status changes follow.</em></span></label>
     <label class="ghl-on"><input type="checkbox" data-ghl-f="backfill" ${g.backfill ? 'checked' : ''} ${g.connected || P.ghlTokenTyped ? '' : 'disabled'} /><span><b>Also send the leads you already have</b><em>${g.counts ? `${g.counts.waiting} not in GoHighLevel yet. ` : ''}They go in oldest first, about 12 every 5 minutes, each into the stage of its status here. Archived leads are never sent. If your GoHighLevel has automations on new contacts, they will run for these too.</em></span></label>
-    ${g.counts && (g.counts.sent || g.counts.failed) ? `<p class="ghl-count">In GoHighLevel: <b>${g.counts.sent}</b> sent${g.counts.waiting ? ` · ${g.counts.waiting} waiting` : ''}${g.counts.failed ? ` · <span class="ghl-bad">${g.counts.failed} failed</span>` : ''}</p>` : ''}
+    ${ghlProdView(g, pipes, pipe)}
+    ${g.counts && (g.counts.sent || g.counts.failed) ? `<p class="ghl-count">In GoHighLevel: <b>${g.counts.sent}</b> sent${g.counts.waiting ? ` · ${g.counts.waiting} waiting` : ''}${g.counts.failed ? ` · <span class="ghl-bad">${g.counts.failed} failed</span>` : ''}${g.counts.renaming ? ` · lead ID being added to ${g.counts.renaming}` : ''}</p>` : ''}
     <div class="ghl-acts"><button type="button" class="btn primary small" data-act="ghl-save">Save</button>${g.connected ? '<button type="button" class="btn small warn" data-act="ghl-disconnect">Disconnect</button>' : ''}</div>
   </section>`;
+}
+// Proizvodna tabla za radnike (25.11.2026): poseban pipeline, kartice samo sa brojem narudžbe i specifikacijama.
+const GHL_ORDER_LABELS = [['placed', 'Order placed'], ['cad', 'CAD approved'], ['cast', 'Wax & cast'], ['setting', 'Stone setting'], ['polish', 'Polish'], ['ready', 'Ready for pick up']];
+function ghlProdView(g, pipes, salesPipe) {
+  const pr = g.prod || {};
+  const opts = (pipes || []).filter((pl) => pl.id !== (salesPipe?.id || g.pipelineId));
+  // Bez sačuvanog izbora: pipeline koji se zove Production / Orders / Workshop se predloži sam.
+  const pick = opts.find((x) => x.id === (P.ghlProdPick ?? pr.pipelineId)) || (P.ghlProdPick == null && !pr.pipelineId ? opts.find((x) => /prod|order|work|bench|shop/i.test(x.name)) : null) || null;
+  const stages = { ...(pick?.guessOrder || {}), ...(pick && pick.id === pr.pipelineId ? pr.stages : {}) };
+  const users = P.ghlUsers || null;
+  const assign = users ? `<select class="in" data-ghl-p="assignTo"><option value="">Nobody (not recommended)</option>${users.map((u) => `<option value="${esc(u.id)}" data-name="${esc(u.name)}" ${pr.assignTo === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select>`
+    : `<input class="in" type="text" data-ghl-p="assignTo" value="${esc(pr.assignTo || '')}" placeholder="${pr.assignName ? esc(pr.assignName) : 'User ID from Settings > My Staff'}" />`;
+  const c = g.counts || {};
+  return `<div class="ghl-prod" data-ghl-prod>
+    <h3>Production board for workers</h3>
+    <p class="faint">Won orders also go to a separate production pipeline, on a card that has only the order number (like DJ-7K4Q9) and the specs: no name, email, phone, address, price or customer page. Workers move the card through the stages; the stage shows here and on the customer's order tracking page. Stage changes here move the card too.</p>
+    <p class="faint ghl-how">In GoHighLevel give each worker a user (Settings > My Staff) and turn on <b>Only assigned data</b> for Contacts, Opportunities and Conversations. Production cards are assigned to the user below, so workers see only those cards, never your sales contacts.</p>
+    ${pipes ? (opts.length ? `<div class="ghl-grid"><label><span>Production pipeline</span><select class="in" data-ghl-ppipe><option value="">Pick a pipeline</option>${opts.map((pl) => `<option value="${esc(pl.id)}" ${pick?.id === pl.id ? 'selected' : ''}>${esc(pl.name)}</option>`).join('')}</select></label></div>
+      ${pick ? `<div class="ghl-stages">${GHL_ORDER_LABELS.map(([k, t]) => `<label><span>${t} →</span><select class="in" data-ghl-pstage="${k}"><option value="">${k === 'placed' ? 'Pick a stage' : 'Keep the stage'}</option>${pick.stages.map((st) => `<option value="${esc(st.id)}" ${stages[k] === st.id ? 'selected' : ''}>${esc(st.name)}</option>`).join('')}</select></label>`).join('')}</div>` : ''}`
+      : '<p class="faint">Make a second pipeline in GoHighLevel (for example "Production" with Order placed, CAD approved, Wax & cast, Stone setting, Polish, Ready for pick up), then Reload pipelines.</p>')
+      : pr.pipelineId ? '<p class="faint">Production pipeline saved. Load pipelines to change it.</p>' : '<p class="faint">Load pipelines above to pick the production pipeline.</p>'}
+    <div class="ghl-grid"><label><span>Assign production cards to</span>${assign}</label><div class="ghl-acts"><button type="button" class="btn small" data-act="ghl-users">${users ? 'Reload users' : 'Load users'}</button></div></div>
+    <div class="ghl-checks"><label><input type="checkbox" data-ghl-p="vision" ${pr.vision ? 'checked' : ''} /> Also show the customer's own description of the design (emails and phone numbers in it are removed; names they wrote stay)</label></div>
+    <label class="ghl-on"><input type="checkbox" data-ghl-p="enabled" ${pr.enabled ? 'checked' : ''} ${g.connected ? '' : 'disabled'} /><span><b>Send Won orders to the production board</b><em>${c.orders ? `${c.onBoard || 0} of ${c.orders} orders on the board. ` : ''}New Won leads go right away; orders you already have go about 10 every 5 minutes. Stages from the board come back here within 5 minutes.</em></span></label>
+  </div>`;
 }
 function ghlRead() {
   const box = app.querySelector('[data-ghl]');
@@ -1198,13 +1273,26 @@ function ghlRead() {
   if (tok) body.token = tok;
   const pipe = box?.querySelector('[data-ghl-pipe]');
   if (pipe) { body.pipelineId = pipe.value; body.stages = Object.fromEntries([...box.querySelectorAll('[data-ghl-stage]')].map((el) => [el.dataset.ghlStage, el.value])); }
+  const pv = (f) => box?.querySelector(`[data-ghl-p="${f}"]`);
+  if (pv('enabled')) {
+    const as = pv('assignTo');
+    body.prod = { enabled: !!pv('enabled').checked, vision: !!pv('vision')?.checked, assignTo: as?.value.trim() || '', assignName: as?.selectedOptions?.[0]?.dataset.name || '' };
+    // Polje bez upisa a sa sačuvanim korisnikom: ostaje sačuvani.
+    if (as?.tagName === 'INPUT' && !as.value.trim() && P.me.ghl?.prod?.assignTo) { delete body.prod.assignTo; delete body.prod.assignName; }
+    const pp = box.querySelector('[data-ghl-ppipe]');
+    if (pp) { body.prod.pipelineId = pp.value; body.prod.stages = Object.fromEntries([...box.querySelectorAll('[data-ghl-pstage]')].map((el) => [el.dataset.ghlPstage, el.value])); }
+  }
   return body;
 }
 async function ghlAction(act) {
   const body = ghlRead();
   P.ghlDraft = body;
   try {
-    if (act === 'load') {
+    if (act === 'users') {
+      P.ghlMsg = 'Loading users…'; render();
+      const r = await api('/api/portal/ghl/users', { method: 'POST', body: JSON.stringify({ token: body.token, locationId: body.locationId }), json: true });
+      P.ghlUsers = r.users; P.ghlMsg = `${r.users.length} user${r.users.length === 1 ? '' : 's'} found. Pick the worker, then Save.`;
+    } else if (act === 'load') {
       P.ghlMsg = 'Loading…'; render();
       const r = await api('/api/portal/ghl/pipelines', { method: 'POST', body: JSON.stringify({ token: body.token, locationId: body.locationId }), json: true });
       P.ghlPipes = r.pipelines; P.ghlPick = r.pipelines.some((x) => x.id === P.me.ghl?.pipelineId) ? P.me.ghl.pipelineId : r.pipelines[0]?.id;
@@ -1280,6 +1368,7 @@ app.addEventListener('input', (e) => {
   if (el.dataset.qmsg && Q[el.dataset.qmsg]) { Q[el.dataset.qmsg].msg = el.value; el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; queueQuoteSave(el.dataset.qmsg); return; }
   if (el.dataset.qrange) { priceLive(el.dataset.qrange, el.value); return; }
   if (el.dataset.price && /^(stones\.|setting$)/.test(el.dataset.price)) renderStoneExample();
+  if (el.dataset.cwStyle) { const box = app.querySelector(`[data-cw-ex="${CSS.escape(el.dataset.cwStyle)}"]`); if (box) box.innerHTML = cwExample(el.dataset.cwStyle, el.value, el.dataset.cwType); }
   if (el.dataset.qprice) { if (Number(el.value) > 0) priceLive(el.dataset.qprice, el.value); return; }
   if (el.dataset.search !== undefined) {
     filterCardsNow(el.value);
@@ -1294,7 +1383,8 @@ app.addEventListener('change', async (e) => {
   if (el.dataset.qshow) { const q = Q[el.dataset.qshow]; if (q) { q.show = el.checked; queueAdjSave(el.dataset.qshow); renderCalc(qkLead(el.dataset.qshow)); } return; }
   if (el.dataset.qprice) { if (Number(el.value) > 0) { priceLive(el.dataset.qprice, el.value); priceCommit(el.dataset.qprice); } else renderCalc(qkLead(el.dataset.qprice)); return; }
   if (el.dataset.q && el.dataset.qf) { quoteEdit(el.dataset.q, el.dataset.qf, el.value); return; }
-  if (el.dataset.ghlPipe !== undefined) { P.ghlPick = el.value; render(); return; }
+  if (el.dataset.ghlPipe !== undefined) { P.ghlDraft = ghlRead(); P.ghlPick = el.value; render(); return; }
+  if (el.dataset.ghlPpipe !== undefined) { P.ghlDraft = ghlRead(); P.ghlProdPick = el.value; render(); return; }
   if (el.dataset.ghlF === 'token') { P.ghlTokenTyped = !!el.value.trim(); const on = app.querySelector('[data-ghl-f="enabled"]'); if (on) on.disabled = !(P.me.ghl?.connected || P.ghlTokenTyped); return; }
   if (el.dataset.pickDay !== undefined) { P.day = el.value || ''; if (await loadLeads()) render(); return; }
   if (el.dataset.leadStatus) {
@@ -1364,7 +1454,7 @@ app.addEventListener('click', async (e) => {
   if (t.dataset.act === 'stats-retry') { P.statsError = ''; render(); loadStats(); return; }
   if (t.dataset.sstatus != null) { P.tab = 'leads'; P.status = t.dataset.sstatus; P.q = ''; P.day = ''; if (await loadLeads()) render(); return; }
   if (t.dataset.ftagGo) { P.tab = 'leads'; P.tag = t.dataset.ftagGo; P.q = ''; P.day = ''; if (await loadLeads()) render(); return; }
-  if (t.dataset.act === 'ghl-load' || t.dataset.act === 'ghl-save' || t.dataset.act === 'ghl-disconnect') { ghlAction(t.dataset.act.slice(4)); return; }
+  if (['ghl-load', 'ghl-save', 'ghl-disconnect', 'ghl-users'].includes(t.dataset.act)) { ghlAction(t.dataset.act.slice(4)); return; }
   if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }

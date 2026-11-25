@@ -278,17 +278,21 @@ export function estimate(pricing, spec) {
   const lines = [];
   const units = spec.type === 'grillz' ? Math.max(1, spec.units || 0) : 1;
   const per = spec.type === 'grillz' ? ' per tooth' : '';
-  const grams = num(pricing?.grams?.[spec.type]);
+  // Lanac i narukvica (25.11.2026): grami iz 14K kataloga po stilu, širini i dužini kad je katalog uključen.
+  const cwAll = chainWeight(pricing, spec);
+  const cw = cwAll && !cwAll.out ? cwAll : null;
+  const grams = cw ? cw.grams : num(pricing?.grams?.[spec.type]);
   const ppg = metalPerGram(pricing, spec.metal, spec.karat);
   // Sat (22.11.2026): bez grama se okiva kupčev sat, pa nema metala; grami se upisuju samo za novo kućište ili narukvicu.
   const ownWatch = spec.type === 'watch' && !grams;
   if (!grams && !ownWatch) missing.push(`grams${per} for ${spec.type}`);
   if (!ppg && !ownWatch) missing.push(`price per gram of ${spec.metal || 'the metal'}${spec.karat ? ` ${spec.karat}` : ''}`);
-  if (grams && ppg) lines.push({ label: `Metal: ${+(grams * units).toFixed(1)} g × ${money(ppg)}/g`, amount: grams * units * ppg });
+  if (grams && ppg) lines.push({ label: cw ? `Metal: ${cw.text}, ${grams} g × ${money(ppg)}/g` : `Metal: ${+(grams * units).toFixed(1)} g × ${money(ppg)}/g`, amount: grams * units * ppg });
   const labor = num(pricing?.labor?.[spec.type]);
   if (labor) lines.push({ label: `Labor${units > 1 ? `: ${units} × ${money(labor)}` : ''}`, amount: labor * units });
   else missing.push(`labor${per} for ${spec.type}`);
   const notes = [];
+  if (cwAll) notes.push(cw ? `Weight from the chain catalog: ${cw.note}` : cwAll.note);
   if (ownWatch) notes.push("Customer's own watch: no metal included. Add grams for watches in Weight and labor to price a new case or bracelet.");
   if (spec.stones && spec.coverage) {
     const row = pricing?.stones?.[key(spec.stones)];
@@ -326,6 +330,143 @@ export function estimate(pricing, spec) {
   const markup = Number(pricing?.markup) > 0 ? Number(pricing.markup) : 0;
   if (markup) lines.push({ label: `Markup ${markup}%`, amount: (sub * markup) / 100 });
   return { total: sub * (1 + markup / 100), lines, missing, notes };
+}
+
+// ---------- Težine lanaca iz 14K kataloga (District 25.11.2026) ----------
+// Lanac i narukvica: grami se ne uzimaju "po komadu" nego iz kataloga dobavljača (14K yellow gold, stil × širina ×
+// dužina). Širina između dva reda = linearno između njih; šire/uže od kataloga = najbliži red × (širina/širina)²;
+// dužina koje nema u redu = grami po inču × dužina. Drugi metal/karat = ista zapremina × gustina (10K lakši, 18K teži).
+// Uključuje se u Pricing tabu (pricing.chainWeights.on); zlatar bira koji red kataloga ide uz koji stil iz forme.
+const L3 = (a, b, c, d, e, f) => ({ [a]: b, [c]: d, [e]: f });
+const CHART_LENS = [8, 16, 18, 20, 22, 24, 26, 28, 30];
+const chart = (mm, ...g) => ({ mm, w: Object.fromEntries(CHART_LENS.map((l, i) => [l, g[i]])) });
+export const CHAIN_CATALOG = [
+  { key: 'cuban-solid', label: 'Solid Miami Cuban', image: 'miami-cuban-solid', code: 'CH4', rows: [
+    { mm: 12, w: L3(24, 252.0, 26, 273.0, 28, 294.0) }, { mm: 10, w: L3(24, 172.8, 26, 187.2, 28, 201.6) }, { mm: 9, w: L3(24, 151.2, 26, 163.8, 28, 176.4) },
+    { mm: 8, w: L3(22, 107.8, 24, 117.6, 26, 127.4) }, { mm: 7, w: L3(22, 81.4, 24, 88.8, 26, 96.2) }, { mm: 6, w: L3(22, 57.2, 24, 62.4, 26, 67.6) },
+    { mm: 5, w: L3(20, 38.0, 22, 41.8, 24, 45.6) }, { mm: 4, w: L3(20, 25.6, 22, 28.2, 24, 30.7) }, { mm: 3.5, w: L3(20, 18.0, 22, 19.8, 24, 21.6) },
+    { mm: 3, w: L3(18, 10.4, 20, 11.6, 22, 12.8) }, { mm: 2, w: L3(16, 5.6, 18, 6.3, 20, 7.0) }] },
+  { key: 'cuban-hollow', label: 'Hollow Miami Cuban', image: 'miami-cuban-hollow', code: 'CH5', rows: [
+    { mm: 13, w: L3(24, 110.4, 26, 119.6, 28, 128.8) }, { mm: 11, w: L3(24, 79.9, 26, 86.6, 28, 93.2) }, { mm: 9.5, w: L3(24, 60.5, 26, 65.5, 28, 70.6) },
+    { mm: 8, w: L3(22, 31.0, 24, 33.8, 26, 36.7) }, { mm: 7, w: L3(22, 25.7, 24, 28.1, 26, 30.4) }, { mm: 6, w: L3(20, 21.0, 22, 23.1, 24, 25.2) },
+    // 5 mm 24" piše 13.1 g u katalogu (manje od 22"), očito greška štampe: ostaje samo 20" i 22".
+    { mm: 5, w: { 20: 13.4, 22: 14.7 } }, { mm: 4, w: L3(20, 8.2, 22, 9.0, 24, 9.8) }, { mm: 3, w: L3(18, 4.5, 20, 5.0, 22, 5.5) },
+    { mm: 2.5, w: L3(16, 3.0, 18, 3.4, 20, 3.8) }] },
+  { key: 'rope', label: 'Rope', image: 'rope', code: 'CH1', rows: [
+    { mm: 12, w: L3(24, 218.4, 26, 236.6, 28, 254.8) }, { mm: 10, w: L3(24, 151.2, 26, 163.8, 28, 176.4) }, { mm: 8, w: L3(22, 105.2, 24, 114.7, 26, 124.3) },
+    { mm: 7, w: L3(22, 82.5, 24, 90.0, 26, 97.5) }, { mm: 6, w: L3(22, 57.9, 24, 63.1, 26, 68.4) }, { mm: 5, w: L3(22, 41.4, 24, 45.1, 26, 48.9) },
+    { mm: 4, w: L3(20, 25.4, 22, 27.9, 24, 30.5) }, { mm: 3.5, w: L3(20, 20.4, 22, 22.4, 24, 24.5) }, { mm: 3, w: L3(20, 15.9, 22, 17.5, 24, 19.1) },
+    { mm: 2.5, w: L3(16, 7.6, 18, 8.6, 20, 9.5) }, { mm: 2, w: L3(16, 6.0, 18, 6.8, 20, 7.5) }, { mm: 1.5, w: L3(16, 3.2, 18, 3.6, 20, 4.0) }] },
+  { key: 'milano', label: 'Milano Figarope', image: 'milano-figarope', code: 'CH3', rows: [
+    { mm: 10, w: L3(24, 165.8, 26, 179.7, 28, 193.5) }, { mm: 8, w: L3(22, 114.0, 24, 124.3, 26, 134.7) }, { mm: 7, w: L3(22, 82.9, 24, 90.5, 26, 98.0) },
+    { mm: 6, w: L3(22, 48.4, 24, 52.8, 26, 57.2) }, { mm: 5, w: L3(22, 35.2, 24, 38.4, 26, 41.6) }, { mm: 4, w: L3(20, 22.6, 22, 24.9, 24, 27.1) },
+    { mm: 3, w: L3(18, 13.5, 20, 15.0, 22, 16.5) }] },
+  { key: 'milano-heavy', label: 'Milano Figarope, heavy', image: 'milano-figarope', code: 'CH2', rows: [
+    { mm: 10, w: L3(24, 176.4, 26, 191.1, 28, 205.8) }, { mm: 7.5, w: L3(22, 112.2, 24, 122.4, 26, 132.6) }, { mm: 6.5, w: L3(22, 86.2, 24, 94.1, 26, 101.9) },
+    { mm: 5, w: L3(22, 59.6, 24, 65.0, 26, 70.5) }] },
+  { key: 'curb', label: 'Curb link', image: 'curb', code: 'Chart', rows: [
+    chart(16.5, 70.0, 140.0, 157.5, 175.0, 192.5, 210.0, 227.5, 245.0, 262.5), chart(13.5, 38.0, 76.0, 85.5, 95.0, 104.5, 114.0, 123.5, 133.0, 142.5),
+    chart(11, 29.6, 59.2, 66.6, 74.0, 81.4, 88.8, 96.2, 103.6, 111.0), chart(10, 17.2, 34.4, 38.7, 43.0, 47.3, 51.6, 55.9, 60.2, 64.5),
+    chart(8, 12.2, 24.3, 27.4, 30.4, 33.4, 36.5, 39.5, 42.6, 45.6), chart(7, 9.4, 18.9, 21.2, 23.6, 26.0, 28.3, 30.7, 33.0, 35.4),
+    chart(6, 6.9, 13.8, 15.5, 17.2, 18.9, 20.6, 22.4, 24.1, 25.8), chart(5, 5.0, 9.9, 11.2, 12.4, 13.6, 14.9, 16.1, 17.4, 18.6),
+    chart(4, 3.0, 6.0, 6.8, 7.5, 8.3, 9.0, 9.8, 10.6, 11.3), chart(3, 2.3, 4.6, 5.2, 5.8, 6.4, 7.0, 7.5, 8.1, 8.7),
+    chart(2.5, 1.8, 3.7, 4.1, 4.6, 5.1, 5.5, 6.0, 6.4, 6.9)] },
+  { key: 'curb-light', label: 'Cuban / Curb, light', image: 'curb', code: 'CH6', rows: [
+    { mm: 7.5, w: L3(22, 26.4, 24, 29.0, 26, 31.4) }, { mm: 6, w: L3(22, 18.4, 24, 20.1, 26, 21.8) }, { mm: 5, w: L3(20, 12.3, 22, 13.5, 24, 14.7) },
+    { mm: 4, w: L3(20, 7.6, 22, 8.4, 24, 9.2) }, { mm: 3, w: L3(18, 4.8, 20, 5.3, 22, 5.8) }, { mm: 2, w: L3(16, 2.3, 18, 2.6, 20, 2.9) }] },
+  { key: 'figaro', label: 'Figaro', image: 'figaro', code: 'Chart', rows: [
+    chart(12, 43.2, 86.4, 97.2, 108.0, 118.8, 129.6, 140.4, 151.2, 162.0), chart(10, 33.4, 66.7, 75.1, 83.4, 91.7, 100.1, 108.4, 116.8, 125.1),
+    chart(8, 21.0, 42.1, 47.3, 52.6, 57.9, 63.1, 68.4, 73.6, 78.9), chart(7, 14.6, 29.1, 32.8, 36.4, 40.0, 43.7, 47.3, 51.0, 54.6),
+    chart(6, 10.1, 20.2, 22.7, 25.2, 27.7, 30.2, 32.8, 35.3, 37.8), chart(5, 8.4, 16.8, 18.9, 21.0, 23.1, 25.2, 27.3, 29.4, 31.5),
+    chart(4, 5.8, 11.7, 13.1, 14.6, 16.1, 17.5, 19.0, 20.4, 21.9), chart(3.5, 3.9, 7.8, 8.8, 9.8, 10.8, 11.8, 12.7, 13.7, 14.7),
+    chart(3, 2.9, 5.8, 6.5, 7.2, 7.9, 8.6, 9.4, 10.1, 10.8)] },
+  { key: 'figaro-light', label: 'Figaro, light', image: 'figaro', code: 'CH7', rows: [
+    { mm: 6, w: L3(22, 23.3, 24, 25.4, 26, 27.5) }, { mm: 5, w: L3(20, 15.0, 22, 16.5, 24, 18.0) }, { mm: 4, w: L3(20, 9.0, 22, 9.9, 24, 10.8) },
+    { mm: 3, w: L3(18, 6.0, 20, 6.6, 22, 7.2) }, { mm: 2.5, w: L3(16, 3.3, 18, 3.7, 20, 4.1) }] },
+  { key: 'franco', label: 'Franco', image: 'franco', code: 'CH9', rows: [
+    { mm: 4, w: L3(22, 47.5, 24, 51.8, 26, 56.2) }, { mm: 3.2, w: L3(22, 29.0, 24, 31.7, 26, 34.3) }, { mm: 2.9, w: L3(22, 21.9, 24, 23.7, 26, 25.6) },
+    { mm: 2.1, w: L3(20, 11.7, 22, 12.8, 24, 13.9) }, { mm: 1.8, w: L3(20, 7.7, 22, 8.5, 24, 9.2) }, { mm: 1.4, w: L3(18, 3.9, 20, 4.3, 22, 4.7) },
+    { mm: 1.2, w: L3(16, 2.8, 18, 3.2, 20, 3.6) }, { mm: 1.0, w: L3(16, 2.3, 18, 2.6, 20, 2.9) }] },
+  { key: 'valentino', label: 'Valentino', image: 'valentino', code: 'CH8', rows: [
+    { mm: 4, w: L3(20, 7.3, 22, 8.1, 24, 8.9) }, { mm: 3, w: L3(18, 4.6, 20, 5.1, 22, 5.6) }, { mm: 2.5, w: L3(16, 2.5, 18, 2.9, 20, 3.3) },
+    { mm: 1.5, w: L3(16, 1.3, 18, 1.5, 20, 1.7) }] },
+  { key: 'box', label: 'Box', image: 'box', code: 'CH10', rows: [
+    { mm: 1.3, w: L3(18, 5.3, 20, 5.9, 22, 6.5) }, { mm: 0.9, w: L3(16, 1.9, 18, 2.1, 20, 2.4) }, { mm: 0.6, w: L3(16, 1.0, 18, 1.1, 20, 1.2) }] },
+  { key: 'cable', label: 'Cable / Tiffany / Rollo', image: 'cable', code: 'CH11', rows: [
+    { mm: 1.8, w: L3(18, 3.4, 20, 3.8, 22, 4.2) }, { mm: 1.5, w: L3(16, 2.2, 18, 2.5, 20, 2.8) }, { mm: 1.2, w: L3(16, 1.8, 18, 2.0, 20, 2.2) }] },
+];
+export const chainLine = (k) => CHAIN_CATALOG.find((x) => x.key === k) || null;
+// Stil iz forme (vrijednost ili natpis) -> red kataloga, dok zlatar ne izabere drugi. Flat Cuban, Tennis, Byzantine... nemaju red.
+export function defaultChainLine(style) {
+  const s = String(style || '').toLowerCase();
+  if (!s || /flat|tennis|byzant|gucci|rolex|herring|anchor|mariner|turkish|paper|bangle|cuff|hermes|van.?cleef|charm|bead|snake|wheat|singapore|id\b/.test(s)) return '';
+  if (/hollow/.test(s)) return 'cuban-hollow';
+  if (/cuban|miami/.test(s)) return 'cuban-solid';
+  if (/milano|figarope/.test(s)) return 'milano';
+  if (/rope/.test(s)) return 'rope';
+  if (/figaro/.test(s)) return 'figaro';
+  if (/curb/.test(s)) return 'curb';
+  if (/franco/.test(s)) return 'franco';
+  if (/valentino/.test(s)) return 'valentino';
+  if (/\bbox\b/.test(s)) return 'box';
+  if (/cable|rol+o|tiffany/.test(s)) return 'cable';
+  return '';
+}
+// Gustina u g/cm³ (katalog je 14K yellow gold): ista zapremina u drugom metalu.
+const DENSITY = { '10k': 11.57, '14k': 13.07, '18k': 15.58, '22k': 17.8, '24k': 19.32, silver: 10.36, platinum: 21.45, palladium: 12.0 };
+export function chainMetalFactor(metal, karat) {
+  const m = key(metal);
+  if (/platinum/.test(m)) return { k: DENSITY.platinum / DENSITY['14k'], name: 'platinum' };
+  if (/silver|925/.test(m)) return { k: DENSITY.silver / DENSITY['14k'], name: 'silver' };
+  if (/palladium/.test(m)) return { k: DENSITY.palladium / DENSITY['14k'], name: 'palladium' };
+  if (/gold|two.?tone/.test(m) && !/dental/.test(m)) {
+    const kt = key(karat).replace(/\s/g, '');
+    if (DENSITY[kt]) return { k: DENSITY[kt] / DENSITY['14k'], name: kt.toUpperCase() };
+    return { k: 1, name: '14K' };
+  }
+  return { k: 1, name: '' };
+}
+const perInch = (row) => { const e = Object.entries(row.w).filter(([l]) => Number(l) >= 16); const use = e.length ? e : Object.entries(row.w); return use.reduce((s, [l, g]) => s + g / Number(l), 0) / use.length; };
+const r1 = (x) => Math.round(x * 10) / 10;
+// Grami za lanac/narukvicu iz kataloga, ili null (isključeno, nepoznat stil, drugi komad).
+export function chainWeight(pricing, spec) {
+  const cw = pricing?.chainWeights;
+  if (!cw?.on || !['chain', 'bracelet'].includes(spec?.type)) return null;
+  const st = key(spec.style);
+  const lk = cw.map && Object.prototype.hasOwnProperty.call(cw.map, st) ? cw.map[st] : defaultChainLine(st);
+  const line = chainLine(lk);
+  if (!line) return null;
+  const def = DIM_DEFAULTS[spec.type];
+  const w = Number(spec.widthMm) > 0 ? Number(spec.widthMm) : def.widthMm;
+  const len = Number(spec.lengthIn) > 0 ? Number(spec.lengthIn) : def.lengthIn;
+  const rows = [...line.rows].sort((a, b) => a.mm - b.mm);
+  let g14; let how;
+  const exact = rows.find((r) => Math.abs(r.mm - w) < 0.01);
+  if (exact) {
+    g14 = exact.w[len] ?? perInch(exact) * len;
+    how = exact.w[len] != null ? `${line.code} ${w} mm, ${len}" in the catalog` : `${line.code} ${w} mm at ${r1(perInch(exact))} g per inch`;
+  } else if (w > rows[0].mm && w < rows[rows.length - 1].mm) {
+    const hi = rows.findIndex((r) => r.mm > w);
+    const a = rows[hi - 1]; const b = rows[hi];
+    const t = (w - a.mm) / (b.mm - a.mm);
+    g14 = (perInch(a) + (perInch(b) - perInch(a)) * t) * len;
+    how = `between ${a.mm} mm and ${b.mm} mm in the catalog`;
+  } else {
+    const near = w < rows[0].mm ? rows[0] : rows[rows.length - 1];
+    // Daleko van kataloga (npr. Box 8 mm, katalog do 1,3 mm) razvlačenje izmišlja broj: grami po komadu, uz razlog.
+    if (w / near.mm > 1.5 || w / near.mm < 0.6) {
+      return { out: true, label: line.label, note: `${line.label} ${w} mm is outside the chart (${rows[0].mm} to ${rows[rows.length - 1].mm} mm), so grams per piece from Weight and labor are used.` };
+    }
+    g14 = perInch(near) * (w / near.mm) ** 2 * len;
+    how = `scaled from the catalog's ${w < near.mm ? 'thinnest' : 'widest'} (${near.mm} mm)`;
+  }
+  const f = chainMetalFactor(spec.metal, spec.karat);
+  const grams = r1(g14 * f.k);
+  return {
+    grams, grams14: r1(g14), line: line.key, label: line.label, widthMm: w, lengthIn: len, factor: f.k,
+    text: `${line.label} ${w} mm × ${len}"`,
+    note: `${line.label} ${w} mm × ${len}": ${r1(g14)} g in 14K (${how})${f.k !== 1 ? `, × ${f.k.toFixed(2)} for ${f.name || spec.metal}` : ''}.`,
+  };
 }
 
 // ---------- Kamenje po površini (komadi van grillza, 22.11.2026) ----------

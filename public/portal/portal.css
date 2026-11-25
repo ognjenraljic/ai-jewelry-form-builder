@@ -913,3 +913,33 @@ button.dbar.future { opacity: .35; cursor: default; }
 .ghl-count { margin: 0 0 12px; font-size: 13px; color: var(--ink-soft); }
 .ghl-count b { color: var(--ink); }
 .ghl-bad { color: #ef6f6f; }
+
+/* Težine lanaca iz 14K kataloga (25.11.2026) */
+.pcw .pcheck { max-width: 900px; }
+.pcw-h { margin: 18px 0 10px !important; font-size: 13px !important; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.08em; }
+.pcw-rows { display: grid; gap: 6px; max-width: 900px; }
+.pcw-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(180px, 1.2fr) minmax(0, 1.4fr); gap: 12px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.pcw-name { display: flex; flex-direction: column; color: var(--ink); font-weight: 600; }
+.pcw-name small { color: var(--ink-faint); font-weight: 500; font-size: 11px; }
+.pcw-sel { padding: 8px 10px; font-size: 13px; }
+.pcw-ex { color: var(--ink-soft); font-size: 12px; }
+.pcw-ex b { color: var(--ink); }
+.pcw-ex.off { color: var(--ink-faint); }
+.pcw-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.pcw-tile { margin: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.pcw-tile img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 1; object-fit: cover; background: #050505; }
+.pcw-tile figcaption { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 10px 12px 4px; font-size: 13px; }
+.pcw-tile figcaption span { color: var(--ink-faint); font-size: 11px; white-space: nowrap; }
+.pcw-tile details { padding: 0 12px 10px; }
+.pcw-tile summary { cursor: pointer; font-size: 12px; color: var(--accent); padding: 4px 0; }
+.pcw-table { display: grid; gap: 3px 6px; margin-top: 6px; font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums; overflow-x: auto; }
+.pcw-table > span { text-align: right; white-space: nowrap; }
+.pcw-table .pcw-hd { color: var(--ink-faint); border-bottom: 1px solid var(--line); padding-bottom: 3px; }
+.pcw-table .pcw-mm { text-align: left; color: var(--ink); font-weight: 600; }
+@media (max-width: 640px) { .pcw-row { grid-template-columns: 1fr; gap: 4px; } }
+/* ID leada (25.11.2026) */
+.lead-ref { display: inline-flex; align-items: center; gap: 2px; padding: 2px 4px 2px 9px; border: 1px solid var(--line-strong); border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.lead-ref .copy-btn { transform: scale(0.85); }
+.ghl-prod { margin: 18px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); }
+.ghl-prod h3 { margin: 0 0 6px; font-size: 15px; }
+.ghl-prod .ghl-how { font-size: 12px; }

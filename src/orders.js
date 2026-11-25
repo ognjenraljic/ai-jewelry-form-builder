@@ -65,3 +65,12 @@ export function nextOrder(raw, { stage, note } = {}, now = Date.now()) {
   if (note != null) out.note = String(note).replace(/\s+$/, '').slice(0, 500);
   return out;
 }
+
+// ID leada (25.11.2026, District: "unique lead ID for filtering"): redni broj po radnji, L-0001, L-0002...
+// Isti broj stoji u portalu, u GoHighLevel opportunity-ju i u bilješci, pa se lead nađe pretragom u oba sistema.
+export const leadRef = (n) => (Number.isInteger(Number(n)) && Number(n) > 0 ? `L-${String(Number(n)).padStart(4, '0')}` : '');
+// "L-0231", "l231", "#231", "0231" -> 231 (samo kad je upit stvarno broj leada, ne dio telefona ili imena).
+export function parseLeadRef(q) {
+  const m = String(q ?? '').trim().match(/^(?:#|l-?\s*)?0*(\d{1,6})$/i);
+  return m && Number(m[1]) > 0 ? Number(m[1]) : null;
+}

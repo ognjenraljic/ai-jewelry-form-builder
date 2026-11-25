@@ -45,8 +45,19 @@ export function ghlPublic(g) {
     connected: !!(g.token && g.locationId), enabled: g.enabled === true, locationId: g.locationId || '', tokenHint: g.tokenHint || '',
     pipelineId: g.pipelineId || '', stages: g.stages && typeof g.stages === 'object' ? g.stages : {}, tags: Array.isArray(g.tags) ? g.tags : ['jewelrylead'],
     pieceTag: g.pieceTag !== false, note: g.note !== false, backfill: g.backfill === true, lastOk: g.lastOk || null, lastError: g.lastError || null,
+    prod: prodPublic(g.prod),
   };
 }
+// Proizvodna tabla za radnike (25.11.2026): poseban pipeline sa fazama izrade, kartice bez podataka kupca.
+export const ORDER_KEYS = ['placed', 'cad', 'cast', 'setting', 'polish', 'ready'];
+export function prodPublic(p) {
+  p = p && typeof p === 'object' ? p : {};
+  return {
+    enabled: p.enabled === true, pipelineId: p.pipelineId || '', stages: p.stages && typeof p.stages === 'object' ? p.stages : {},
+    assignTo: p.assignTo || '', assignName: p.assignName || '', vision: p.vision === true,
+  };
+}
+export const prodReady = (p) => !!(p?.enabled && p.pipelineId && p.stages?.placed);
 export const validLocationId = (v) => /^[A-Za-z0-9]{10,40}$/.test(String(v || '').trim());
 export const validPit = (v) => /^pit-[A-Za-z0-9-]{20,80}$/.test(String(v || '').trim()) || /^[A-Za-z0-9._-]{30,1200}$/.test(String(v || '').trim());
 
@@ -85,6 +96,25 @@ export function guessStages(pipeline) {
   return out;
 }
 
+// Faze izrade po imenu (Order placed / CAD / Casting / Setting / Polish / Ready), zlatar ih može promijeniti.
+export function guessOrderStages(pipeline) {
+  const st = pipeline?.stages || [];
+  const find = (re) => st.find((s) => re.test(s.name))?.id || '';
+  const out = {
+    placed: find(/placed|new|received|queue|order/i), cad: find(/cad|design|approv|model/i), cast: find(/cast|wax|print/i),
+    setting: find(/setting|stone|set\b/i), polish: find(/polish|finish|qc|quality/i), ready: find(/ready|pick|done|complete|ship/i),
+  };
+  // Pipeline sa tačno 6 faza bez prepoznatih imena: redom.
+  if (st.length === ORDER_KEYS.length) ORDER_KEYS.forEach((k, i) => { if (!out[k]) out[k] = st[i].id; });
+  if (!out.placed && st[0]) out.placed = st[0].id;
+  return out;
+}
+// Korisnici sub-accounta (za "Assign to"): traži dozvolu View Users; bez nje zlatar upiše User ID sam.
+export async function ghlUsers(token, locationId, fetchFn = fetch) {
+  const d = await ghlCall(token, 'GET', `/users/?locationId=${encodeURIComponent(locationId)}`, null, fetchFn);
+  return (d.users || []).map((u) => ({ id: u.id, name: u.name || [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || u.id })).slice(0, 100);
+}
+
 const tagOf = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9+ -]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 40);
 export function splitName(name) {
   const parts = String(name || '').trim().split(/\s+/);
@@ -94,7 +124,7 @@ export function splitName(name) {
 // Tekst bilješke: sve što je kupac izabrao i linkovi, da prodavac u GHL-u ne mora otvarati portal.
 export function ghlNoteText(lead) {
   return [
-    `JewelryLead: new custom ${lead.piece || 'piece'} request (${lead.form || 'form'})`,
+    `JewelryLead${lead.ref ? ` ${lead.ref}` : ''}: new custom ${lead.piece || 'piece'} request (${lead.form || 'form'})`,
     lead.details?.length ? lead.details.map((d) => `${d.label}: ${d.value}`).join('\n') : '',
     lead.vision ? `What they want: "${String(lead.vision).slice(0, 800)}"` : '',
     lead.area ? `Phone area: ${lead.area}` : '',
@@ -103,6 +133,71 @@ export function ghlNoteText(lead) {
     lead.price ? `Estimated price: $${Math.round(lead.price).toLocaleString('en-US')}` : '',
     lead.quoteMsg ? `Ready quote message:\n${lead.quoteMsg}` : '',
   ].filter(Boolean).join('\n\n').slice(0, 9000);
+}
+
+// Ime opportunity-ja počinje ID-jem leada (L-0231), pa ga pretraga u GHL Opportunities nađe odmah.
+export const oppName = (lead) => `${lead.ref ? `${lead.ref} · ` : ''}${lead.name} · custom ${lead.piece || 'piece'}`.slice(0, 120);
+export async function ghlRenameOpp(token, oppId, name, fetchFn = fetch) {
+  await ghlCall(token, 'PUT', `/opportunities/${encodeURIComponent(oppId)}`, { name }, fetchFn);
+}
+
+// ---------- Proizvodna tabla (radnici, npr. moissanite izrada van radnje) ----------
+// Radnik ne smije vidjeti kupca: kartica je na POSEBNOM kontaktu koji nosi samo broj narudžbe (bez mejla, telefona,
+// imena, adrese, cijene i linka stranice kupca), u posebnom pipeline-u, dodijeljena korisniku radnika. U GHL-u
+// radnik ima "Assigned data only", pa vidi samo te kartice, nikad prodajni kontakt.
+const PII_LABEL = /e-?mail|phone|address|budget|price|contact/i;
+const scrub = (t) => String(t || '').replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '[email removed]').replace(/\+?\d[\d\s().-]{7,}\d/g, '[number removed]');
+export function ghlOrderNoteText(order) {
+  return [
+    `Order ${order.no}: custom ${order.piece || 'piece'}`,
+    order.details?.length ? order.details.filter((d) => !PII_LABEL.test(d.label)).map((d) => `${d.label}: ${scrub(d.value)}`).join('\n') : '',
+    order.vision ? `Design notes: "${scrub(order.vision).slice(0, 800)}"` : '',
+    order.renderUrl ? `AI design: ${order.renderUrl}` : '',
+    'Move this card through the stages as the piece is made. The store and the customer see each stage.',
+  ].filter(Boolean).join('\n\n').slice(0, 9000);
+}
+export async function ghlPushOrder(token, cfg, order, prev = {}, fetchFn = fetch) {
+  const p = cfg.prod || {};
+  const done = { ...prev };
+  const assign = p.assignTo ? { assignedTo: p.assignTo } : {};
+  if (!done.contactId) {
+    // POST /contacts/ (ne upsert): bez mejla i telefona upsert nema po čemu da spaja, a ovaj kontakt mora ostati prazan.
+    const c = await ghlCall(token, 'POST', '/contacts/', {
+      locationId: cfg.locationId, firstName: 'Order', lastName: order.no, name: `Order ${order.no}`, source: 'JewelryLead order', tags: ['jewelrylead order'], ...assign,
+    }, fetchFn);
+    done.contactId = c.contact?.id || c.id;
+    if (!done.contactId) throw new Error('GHL: order contact returned no id');
+  }
+  if (!done.noted) {
+    await ghlCall(token, 'POST', `/contacts/${encodeURIComponent(done.contactId)}/notes`, { body: ghlOrderNoteText(order) }, fetchFn);
+    done.noted = true;
+  }
+  if (!done.oppId) {
+    const key = ORDER_KEYS[order.stage] || 'placed';
+    const o = await ghlCall(token, 'POST', '/opportunities/', {
+      locationId: cfg.locationId, pipelineId: p.pipelineId, pipelineStageId: p.stages[key] || p.stages.placed, contactId: done.contactId, status: 'open',
+      name: `${order.no} · custom ${order.piece || 'piece'}`.slice(0, 120), source: 'JewelryLead', ...assign,
+    }, fetchFn);
+    done.oppId = o.opportunity?.id || o.id;
+    done.stage = order.stage;
+  }
+  done.at = Date.now();
+  return done;
+}
+// Faza iz portala -> kartica na tabli.
+export async function ghlPushOrderStage(token, cfg, sync, stage, fetchFn = fetch) {
+  const id = cfg.prod?.stages?.[ORDER_KEYS[stage]];
+  if (!sync?.oppId || !id) return false;
+  await ghlCall(token, 'PUT', `/opportunities/${encodeURIComponent(sync.oppId)}`, { pipelineId: cfg.prod.pipelineId, pipelineStageId: id }, fetchFn);
+  return true;
+}
+// Kartica na tabli -> faza (radnik je pomjerio karticu u GHL-u). null = faza nije mapirana ili kartica nije nađena.
+export async function ghlReadOrderStage(token, cfg, sync, fetchFn = fetch) {
+  if (!sync?.oppId) return null;
+  const d = await ghlCall(token, 'GET', `/opportunities/${encodeURIComponent(sync.oppId)}`, null, fetchFn);
+  const sid = (d.opportunity || d).pipelineStageId;
+  const i = ORDER_KEYS.findIndex((k) => cfg.prod?.stages?.[k] && cfg.prod.stages[k] === sid);
+  return i >= 0 ? i : null;
 }
 
 // Pravi kontakt, tagove, bilješku i opportunity za jedan lead. Vraća šta je napravljeno (id-jevi za kasnije izmjene).
@@ -133,7 +228,7 @@ export async function ghlPushLead(token, cfg, lead, prev = {}, fetchFn = fetch) 
     const st = GHL_STATUSES.includes(lead.status) ? lead.status : 'new';
     const o = await ghlCall(token, 'POST', '/opportunities/', {
       locationId: cfg.locationId, pipelineId: cfg.pipelineId, pipelineStageId: cfg.stages[st] || cfg.stages.new, contactId: done.contactId, status: st === 'won' ? 'won' : st === 'lost' ? 'lost' : 'open',
-      name: `${lead.name} · custom ${lead.piece || 'piece'}`.slice(0, 120), ...(lead.price ? { monetaryValue: Math.round(lead.price) } : {}), source: 'JewelryLead',
+      name: oppName(lead), ...(lead.price ? { monetaryValue: Math.round(lead.price) } : {}), source: 'JewelryLead',
     }, fetchFn);
     done.oppId = o.opportunity?.id || o.id;
   }
