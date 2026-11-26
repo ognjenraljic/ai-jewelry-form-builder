@@ -1114,14 +1114,28 @@ async function adminForms(request, env, p) {
     const client = b.clientId ? await env.DB.prepare('SELECT * FROM clients WHERE id = ?').bind(b.clientId).first() : null;
     if (!client) return json({ error: 'Pick a client first' }, 400);
     const cdata = JSON.parse(client.data || '{}');
-    const id = b.id ? String(b.id).trim().toLowerCase() : await uniqueId(env, 'forms', `${client.id}-${slugify(b.piece || b.template || 'form')}`);
+    // Kopija: forma se čita prije ID-a, da nova dobije ime po šablonu izvora (northstar-grillz-2), ne "form".
+    const src = b.copyFrom ? await loadForm(env, b.copyFrom) : null;
+    if (b.copyFrom && !src) return json({ error: 'Form to copy not found' }, 404);
+    const id = b.id ? String(b.id).trim().toLowerCase() : await uniqueId(env, 'forms', `${client.id}-${slugify(b.piece || b.template || src?.template || 'form')}`);
     if (!SLUG_RE.test(id)) return json({ error: 'ID: lowercase letters, numbers and dashes (e.g. northstar-grillz)' }, 400);
     if ((await env.DB.prepare('SELECT 1 FROM forms WHERE id = ?').bind(id).first()) || FORMS[id]) return json({ error: 'A form with this ID already exists' }, 409);
     let form;
-    if (b.copyFrom) {
-      const src = await loadForm(env, b.copyFrom);
-      if (!src) return json({ error: 'Form to copy not found' }, 404);
-      form = { ...structuredClone(src), id, clientId: client.id, name: clean(b.name, 80) || `${src.name} (copy)` };
+    if (src) {
+      form = { ...structuredClone(src), id, clientId: client.id, name: clean(b.name, 80) || `${String(src.name || src.id).replace(/ \(copy\)$/i, '').slice(0, 73)} (copy)` };
+      // Pravne stranice koje JewelryLead pravi idu po ID-u forme: kopija dobija svoje, ne izvorove.
+      const own = (u) => (typeof u === 'string' && u.startsWith(`/legal/${src.id}/`) ? '' : u);
+      if (form.contact) form.contact = { ...form.contact, privacyUrl: own(form.contact.privacyUrl), termsUrl: own(form.contact.termsUrl) };
+      // Kopija u drugi projekat ne nosi tuđu radnju: ime i logo u zaglavlju, ime u tekstovima pristanka i rezultata,
+      // linkove na njihove Privacy/Terms i proizvode iz njihovog shopa.
+      if ((src.clientId || null) !== client.id) {
+        const oldName = String(src.brand?.name || '').trim();
+        const swap = (o) => (o && oldName.length > 1 ? JSON.parse(JSON.stringify(o).split(JSON.stringify(oldName).slice(1, -1)).join(JSON.stringify(client.name).slice(1, -1))) : o);
+        form.brand = { ...form.brand, name: client.name, logo: cdata.logo || '' };
+        form.contact = { ...swap(form.contact || {}), privacyUrl: '', termsUrl: '' };
+        if (form.result) form.result = swap(form.result);
+        if (Array.isArray(form.products)) form.products = [];
+      }
     } else {
       if (!TEMPLATES[b.template]) return json({ error: 'Pick a template' }, 400);
       const piece = b.piece ? String(b.piece) : null;
