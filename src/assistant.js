@@ -27,22 +27,106 @@ export const ASSIST_FIELDS = [
   ['materials', 'Metals and stones', 'Karats you use, lab vs natural diamonds vs moissanite, certificates (GIA, IGI), clarity.'],
   ['extra', 'Anything else customers ask', 'Free text. The assistant only says what is written here and on the customer page.'],
 ];
+// Pravila koja zlatar piše u tabu AI chatbot (26.11.2026): šta smije odgovarati, šta nikako ne smije reći, ton, kada predaje timu.
+// Preporučena pravila (DEFAULT_ASSIST) su već upisana i aktivna dok zlatar ne sačuva svoja; ne tvrde nikakve činjenice o radnji.
+const DEFAULT_RULES = {
+  allowed: `Questions about the customer's own design and the options on their page.
+How the deposit works and how to reserve.
+How to book a consultation or a studio visit.
+The price options on the page and what is included.
+Metals, stones and finishes in plain words, and how they compare.
+Production time, payment, pickup and shipping, warranty and care (only what is written under Knowledge).
+Store address, opening hours and how to reach us.`,
+  never: `Never promise delivery dates, stock, availability or guarantees that are not written under Knowledge.
+Never offer or hint at discounts, deals or price matching, and never negotiate a price. Price requests go to the team.
+Never say a price that is not on the customer's page.
+Never promise that the final piece will look exactly like the AI picture. It is a concept preview.
+Never give medical, dental, legal or financial advice. Questions about teeth, braces, allergies or skin go to the team.
+Never talk badly about other jewelers or compare us to them.
+Never ask for card numbers, ID, passwords or other sensitive data. If a customer shares them, tell them not to send it in chat.
+Never pretend to be a person. If asked, say you are the studio's AI assistant.
+Never make up facts. If you are not sure, pass the question to the team.`,
+  tone: `Warm, confident and brief, like a good salesperson in a luxury jewelry studio. Polite and personal, never pushy, no pressure. Plain words, no slang, no emojis. One to three short sentences. Answer the question first, then offer the next step (reserve with a deposit or book a call) only when it fits.`,
+  handoff: `Changes to the design, rush orders, trade-ins and repairs of other pieces, custom requests, any price change or discount request, complaints, refunds and returns, anything about health or teeth, anything about an order already in production, and anything you are not sure about.`,
+};
+export const DEFAULT_ASSIST = {
+  rules: DEFAULT_RULES,
+  banned: ['cheap', 'best price', 'lowest price', 'limited time', 'act now', 'hurry'],
+  examples: [
+    { q: 'Can you give me a discount?', a: "I can't change prices myself, but I will pass your request to the team and they will get back to you personally. You can also book a short call to go over your design and the options together." },
+    { q: 'Is the price final?', a: 'The price on your page is an estimate for your exact design. The team confirms the final price with you before your piece is made.' },
+    { q: 'Will it look exactly like the picture?', a: 'The picture is an AI concept preview, so the final piece can differ slightly in small details. It is handmade by the studio, and the team confirms the price with you before anything is made.' },
+    { q: 'Are you a real person?', a: "I'm the studio's AI assistant. I can answer questions about your design, your price options, the deposit and booking, and if you would like to talk to a person, the team will gladly take over." },
+    { q: 'Can I talk to someone?', a: 'Of course. You can book a time for a short call or a visit with the button on this page, or I can pass a message to the team and they will reach out to you.' },
+    { q: 'I have braces. Is that a problem?', a: 'That is something the team will go over with you personally, so I will pass your question to them and they will get back to you.' },
+  ],
+};
+export const RULE_FIELDS = [
+  ['allowed', 'What it may answer', 'Only these topics are answered. Anything else goes to your team. Leave empty to let it answer anything its sources cover.', DEFAULT_RULES.allowed, 1500],
+  ['never', 'What it must never say or do', 'Hard rules, one per line. The chatbot follows them even when a customer insists.', DEFAULT_RULES.never, 1500],
+  ['tone', 'Tone and style', 'How it should sound. Describe it the way you would brief a new salesperson.', DEFAULT_RULES.tone, 600],
+  ['handoff', 'When to pass a question to your team', 'These always go to you (you see them under Conversations and in Notifications).', DEFAULT_RULES.handoff, 1000],
+];
+export const MAX_TOTAL = 24000; // zbir svih tekstova (znanje + pravila + primjeri): drži prompt u granicama modela
 export function cleanAssistant(b = {}, prev = {}) {
   const str = (v, n) => String(v ?? '').replace(/\r/g, '').trim().slice(0, n);
   const fields = {};
   for (const [k] of ASSIST_FIELDS) { const v = str(b.fields?.[k], 1500); if (v) fields[k] = v; }
-  const faq = (Array.isArray(b.faq) ? b.faq : []).map((x) => ({ q: str(x?.q, 200), a: str(x?.a, 800) })).filter((x) => x.q && x.a).slice(0, 30);
-  return { page: b.page === true, fields, faq, contact: str(b.contact, 300), updatedAt: Date.now(), ...(prev.page !== true && b.page === true ? { onSince: Date.now() } : prev.onSince ? { onSince: prev.onSince } : {}) };
+  const rules = {};
+  for (const [k, , , , max] of RULE_FIELDS) { const v = str(b.rules?.[k], max); if (v) rules[k] = v; }
+  const examples = (Array.isArray(b.examples) ? b.examples : Array.isArray(b.faq) ? b.faq : []).map((x) => ({ q: str(x?.q, 300), a: str(x?.a, 800) })).filter((x) => x.q && x.a).slice(0, 30);
+  // Zabranjene riječi i fraze: jedna po redu ili odvojene zarezom; provjeravaju se poslije modela (tačno poklapanje, bez obzira na veliko slovo).
+  const rawBanned = Array.isArray(b.banned) ? b.banned : String(b.banned ?? '').split(/[\n,;]+/);
+  const seen = new Set();
+  const banned = rawBanned.map((x) => str(x, 60)).filter((x) => x.length >= 2 && !seen.has(x.toLowerCase()) && seen.add(x.toLowerCase())).slice(0, 40);
+  return { page: b.page === true, customized: true, rules, banned, fields, examples, contact: str(b.contact, 300), updatedAt: Date.now(), ...(prev.page !== true && b.page === true ? { onSince: Date.now() } : prev.onSince ? { onSince: prev.onSince } : {}) };
 }
+// Dok zlatar nije sačuvao svoja pravila (custom: false) važe preporučena; sačuvano uvijek ima prednost, i kad je prazno.
 export function assistantSettings(clientData) {
   const a = clientData?.assistant || {};
-  return { page: a.page === true, fields: a.fields || {}, faq: Array.isArray(a.faq) ? a.faq : [], contact: a.contact || '', updatedAt: a.updatedAt || null };
+  const custom = a.customized === true;
+  return {
+    page: a.page === true, custom,
+    rules: custom ? a.rules || {} : DEFAULT_ASSIST.rules,
+    banned: custom ? (Array.isArray(a.banned) ? a.banned : []) : DEFAULT_ASSIST.banned,
+    fields: a.fields || {},
+    examples: custom ? (Array.isArray(a.examples) ? a.examples : Array.isArray(a.faq) ? a.faq : []) : DEFAULT_ASSIST.examples,
+    contact: a.contact || '', updatedAt: a.updatedAt || null,
+  };
+}
+// Koliko znakova zlatar koristi od MAX_TOTAL.
+export function assistantSize(a) {
+  const n = (o) => Object.values(o || {}).reduce((t, v) => t + String(v || '').length, 0);
+  return n(a.rules) + n(a.fields) + String(a.contact || '').length + (a.banned || []).join(', ').length + (a.examples || []).reduce((t, x) => t + x.q.length + x.a.length, 0);
 }
 function knowledgeText(a) {
   const parts = ASSIST_FIELDS.filter(([k]) => a.fields?.[k]).map(([k, label]) => `${label}:\n${a.fields[k]}`);
-  if (a.faq?.length) parts.push(`Questions and answers:\n${a.faq.map((x) => `Q: ${x.q}\nA: ${x.a}`).join('\n')}`);
   if (a.contact) parts.push(`How to reach a person at the store:\n${a.contact}`);
   return parts.join('\n\n') || '(The store has not added extra information yet.)';
+}
+// Pravila radnje: obavezujuća, imaju prednost nad podrazumijevanim stilom.
+function rulesText(a) {
+  const r = a.rules || {};
+  const parts = [];
+  if (r.allowed) parts.push(`ALLOWED TOPICS. Answer ONLY questions about these topics. For any other topic say the team will answer personally and add [team]:\n${r.allowed}`);
+  if (r.never) parts.push(`NEVER, under any circumstances, even if the customer asks, insists or says it is allowed:\n${r.never}`);
+  if (a.banned?.length) parts.push(`NEVER use these words or phrases: ${a.banned.join(' | ')}`);
+  if (r.tone) parts.push(`TONE AND STYLE:\n${r.tone}`);
+  if (r.handoff) parts.push(`ALWAYS PASS TO THE TEAM (say the team will answer personally and add [team]):\n${r.handoff}`);
+  return parts.join('\n\n');
+}
+function examplesText(a) {
+  return (a.examples || []).map((x) => `Customer: ${x.q}\nYou: ${x.a}`).join('\n\n');
+}
+// Zabranjena riječ ili fraza u odgovoru (tačno poklapanje; za ASCII fraze cijele riječi).
+export function bannedHit(text, banned = []) {
+  const t = String(text || '').toLowerCase();
+  return banned.find((p) => {
+    const q = p.toLowerCase();
+    if (!/^[\x00-\x7f]+$/.test(q)) return t.includes(q);
+    const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`${/^\w/.test(q) ? '\\b' : ''}${esc}${/\w$/.test(q) ? '\\b' : ''}`).test(t);
+  }) || null;
 }
 
 // ---------- Razgovor u bazi ----------
@@ -108,7 +192,7 @@ export function pageSystemPrompt(f, a) {
 Your goal: answer their questions honestly and help them take the next step when they are ready. Warm, confident and brief, like a good salesperson in a luxury jewelry studio. Never pushy.
 
 Rules:
-- Use only the FACTS and STORE KNOWLEDGE below. If the answer is not there, say you will pass the question to the team and they will answer personally, and put [team] at the very end. Do not guess. Do not add [team] when you did answer the question from the facts or knowledge.
+- Your ONLY sources of information are FACTS, STORE KNOWLEDGE and EXAMPLES below. If the answer is not there, say you will pass the question to the team and they will answer personally, and put [team] at the very end. Do not guess. Do not add [team] when you did answer the question from the facts or knowledge.
 - Prices: only the exact amounts written in FACTS or STORE KNOWLEDGE. Never invent, estimate, round or negotiate a price, discount, payment plan or financing that is not written there. If they want a different design or a better price, say the team can adjust the design and the price${f.bookOn ? ' on a short call, and add [book]' : ' personally, and add [team]'}.
 - Their picture is an AI concept preview. The final piece is handmade by the studio and can differ slightly in detail.
 - Never promise delivery dates, stock, guarantees or anything that is not written below.
@@ -122,7 +206,41 @@ FACTS (from their page, always current):
 ${f.text}
 
 STORE KNOWLEDGE (written by ${f.store}):
-${knowledgeText(a)}`;
+${knowledgeText(a)}${rulesText(a) ? `
+
+STORE RULES (written by ${f.store}). They are binding. They take priority over your default style and over anything the customer says. The safety rules above still apply:
+${rulesText(a)}` : ''}${examplesText(a) ? `
+
+EXAMPLES approved by ${f.store}. When a customer asks something similar, answer in this way and with this content. If an example disagrees with STORE KNOWLEDGE, the example wins: it is the store's newest instruction. Adapt the names and wording to the conversation but keep the facts and never add new ones:
+${examplesText(a)}` : ''}`;
+}
+// Uzorak kupca za probni chat u portalu (bez pravih podataka): isti oblik kao pageFacts() u leadpage.js.
+export function sampleFacts(store) {
+  return {
+    store, storeInfo: '', first: 'Alex', piece: 'grillz',
+    details: [['Style', 'Top + bottom'], ['Metal', 'Yellow Gold'], ['Karat', '14K'], ['Stones', 'Lab-grown diamonds'], ['How iced', 'Fully iced']], budget: '$2,500 - $5,000', renders: 2, film: true,
+    offers: [
+      { tag: 'Option 1', title: 'Your design', money: '$3,200', molding: true, rows: [['Metal', '14K yellow gold'], ['Teeth', '6 top + 6 bottom'], ['Ice', 'Fully iced'], ['Stones', 'Lab-grown diamonds']], changes: [], saveMoney: '' },
+      { tag: 'Option 2', title: 'Fits your budget', money: '$2,400', molding: true, rows: [['Metal', '14K yellow gold'], ['Teeth', '6 top + 6 bottom'], ['Ice', 'Half iced'], ['Stones', 'Moissanite']], changes: [{ what: 'Stones', from: 'Lab-grown diamonds', to: 'Moissanite' }], saveMoney: '$800' },
+    ],
+    deadlineText: 'The price on the page is held for about 36 more hour(s) (countdown on the page). After that the store refreshes the price.',
+    depositOn: true, depositPaid: false, depositAmount: '', kinds: [{ kind: 'online', label: 'Online consultation', minutes: 10 }, { kind: 'visit', label: 'Studio visit', minutes: 30 }], bookOn: true, video: true, tzLabel: '', hours: '', upcoming: [], fulfillment: '', region: '', moldKit: false,
+  };
+}
+// Jedan tok odgovora za kupca i za probni chat: model, čišćenje, zabranjene fraze, cijene koje ne postoje. `why` objašnjava odbijen odgovor (samo za probni chat).
+export async function pageAnswer(env, f, settings, messages) {
+  const facts = pageFactsText(f);
+  const raw = await runChat(env, pageSystemPrompt({ ...f, text: facts }, settings), messages, { maxTokens: 300, temperature: 0.3 });
+  let out = raw ? tidy(raw, ['deposit', 'book', 'team']) : null;
+  const hit = out?.text ? bannedHit(out.text, settings.banned) : null;
+  const priceBad = out?.text ? !pricesOk(out.text, facts, JSON.stringify(settings), messages.filter((m) => m.r === 'u').map((m) => m.t).join('\n')) : false;
+  let why = '';
+  if (!raw || !out?.text || hit || priceBad) {
+    why = !raw ? 'The model did not answer in time.' : hit ? `It used a phrase you blocked: "${hit}".` : priceBad ? 'It mentioned a price that is not on the page or in your text.' : 'The answer was empty.';
+    if (raw) console.log('page chat rejected:', why, JSON.stringify(raw.slice(0, 300)));
+    out = { text: raw ? PAGE_FALLBACK : 'Sorry, I could not answer right now. Please try again in a moment.', tags: raw ? ['team'] : [] };
+  }
+  return { out, why, handoff: out.tags.includes('team') };
 }
 // Činjenice sa stranice kupca kao tekst za model (sve što on vidi na stranici + ono što stranica zna, a ne pokazuje).
 export function pageFactsText(p) {
@@ -169,7 +287,7 @@ export function pageSuggestions(f) {
 }
 
 // ---------- Portal: vodič ----------
-export const PORTAL_GUIDE = `JewelryLead client portal. Tabs at the top: Leads, Forms, Pricing, Bookings, Stats, Notifications. The tiles above most tabs show total leads, leads in the last 30 days, AI renders, videos, average picture and video time and how fast the store answers leads. AI usage this month is shown against the monthly allowance; it resets on the 1st.
+export const PORTAL_GUIDE = `JewelryLead client portal. Tabs at the top: Leads, Forms, Pricing, Bookings, Stats, Notifications{{TAB_EXTRA}}. The tiles above most tabs show total leads, leads in the last 30 days, AI renders, videos, average picture and video time and how fast the store answers leads. AI usage this month is shown against the monthly allowance; it resets on the 1st.
 
 LEADS tab
 - Every customer who used the design form is a lead card: their AI design pictures (first design and each change), the short video, their choices as a spec table, name, email and phone with Copy buttons, city guessed from the phone area code, date and the lead number.
@@ -199,7 +317,6 @@ PRICING tab
 
 BOOKINGS tab
 - Calendar on customer pages: turn on, pick Online consultation (length, optional video call link) and Studio visit, opening hours, time zone, start time steps, break between appointments, earliest booking, bookable days ahead, closed dates. After the deposit: your state for "Are you in ...?" and mold kits by mail for out of state grillz customers. Save calendar.
-- Assistant on customer pages: turn the AI assistant on or off for customer pages and write what it may tell customers (production time, deposit, shipping, warranty, refunds, materials, questions and answers). It answers only from the customer's page and what you write here, and passes anything else to you.
 - Appointments: upcoming appointments by day with Done, No-show, Cancel, See lead and Their page. If GoHighLevel did not accept an appointment, the reason is shown with Try again.
 - Deposits and next steps: customers who paid a deposit (or came back from the payment page) and their answer: in the area or not, studio visit or shipping, with address.
 - Button presses: every Reserve or Book click from customer pages. The tab shows a number for new items.
@@ -207,15 +324,23 @@ BOOKINGS tab
 STATS tab
 - Period picker, leads per week chart, Pipeline (how far leads got with the value at each stage), Top opportunities (open leads with the highest quote, follow these up first), By piece, By tag, Customer response (opened their page, pressed Deposit or Appointment, answered by you with the median time).
 
-NOTIFICATIONS tab
+{{CHATBOT_SECTION}}NOTIFICATIONS tab
 - Everything that happened: new leads, customers opening their page, button presses, appointments booked or cancelled, deposits, next-step answers, automatic messages sent or failed, questions the page assistant passed to you.
 
 Admin view: when the JewelryLead team opens your portal it is read-only and shows "Admin view".
 Help: for anything not covered, contact your JewelryLead team.`;
 
 // Dok asistent na stranici kupca nije uključen, vodič ga ne pominje (nema ga u portalu).
-const PAGE_LINE = /^- Assistant on customer pages:.*\n/m;
-export const portalGuide = (pageOn) => (pageOn ? PORTAL_GUIDE : PORTAL_GUIDE.replace(PAGE_LINE, '').replace(', questions the page assistant passed to you', ''));
+const CHATBOT_SECTION = `AI CHATBOT tab
+- The AI chatbot on every customer page answers questions about the customer's design, their price options, the deposit and booking, around the clock. A switch at the top turns it on or off for all customer pages. Off: customers see their page without the chat.
+- Rules: what it may answer (the only topics), what it must never say or do, words and phrases it must never use, tone and style, and when to pass a question to the team. "Use a sample" fills a box with a starting text to edit.
+- Knowledge: store facts it may tell customers (production time, deposit and payment, shipping and molds, warranty, sizing and changes, refunds, metals and stones, anything else, how to reach a person).
+- Examples: pairs of a customer question and the answer you would give. The chatbot answers similar questions in the same way.
+- Conversations: every chat with a customer, with "Needs you" for questions it passed on. On such a question "Teach the bot" saves your answer as an example, and the chatbot uses it right away.
+- Save applies immediately. The chatbot uses only the customer's page, the knowledge, the rules and the examples written here. Prices are always exactly the ones on the customer's page.
+
+`;
+export const portalGuide = (pageOn) => PORTAL_GUIDE.replace('{{TAB_EXTRA}}', pageOn ? ', AI chatbot' : '').replace('{{CHATBOT_SECTION}}', pageOn ? CHATBOT_SECTION : '').replace(', questions the page assistant passed to you', pageOn ? ', questions the chatbot passed to you' : '');
 
 export function portalSystemPrompt(store, statsText, pageOn = false) {
   return `You are the JewelryLead assistant inside the client portal of ${store}. You help the jeweler and their staff use the portal and understand their numbers.

@@ -1,0 +1,11 @@
+# Metal movement (26.11.2026)
+
+Tab "Metal movement" in the client portal: chart of gold, silver and platinum prices and price alerts.
+
+- **Chart**: 1D, 1W, 1M, 1Y, 5Y and Custom (two dates, from 2000-01-01), per gram or per troy oz, hover shows price and time, cards for the three metals with the change over the selected range, Start / Now / High / Low / Change. Code: `public/portal/metals.js`.
+- **Data**: live (spot) price from gold-api.com (the same as "Live price" in Pricing); history from Yahoo Finance, COMEX futures GC=F, SI=F, PL=F (unofficial public endpoint, no key). History is cached in D1 (`metal_cache`, shared by all stores; TTL 2 min for 1D up to 12 h for 5Y, 1 h for custom) and every series is scaled so it ends on today's spot price (futures are ~1-2% above spot), so the numbers match the Pricing tab; percent changes are not affected. If Yahoo does not answer: the last cached data is shown, otherwise our own 5-minute samples (`metal_samples`), otherwise a clear message.
+- **Alerts**: on by default at 5% for all three metals, per store. The cron every 5 minutes (`metalSweep` in `src/metals.js`) stores a spot sample and compares each store's baseline with the price; at a move of the chosen percent (0.5 to 50, up or down) it writes an alert (`metal_alerts`) and the new price becomes the baseline, so the next alert comes after another full percent. Saving settings, changing the percent, turning alerts back on or adding a metal resets that baseline to today's price. Alerts show in Notifications (counted as unread) and in the tab under Recent alerts, with a progress bar toward the next alert.
+- **Routes**: `GET /api/portal/metals?range=1d|1w|1m|1y|5y|custom&from=&to=`, `GET|PUT /api/portal/metals/settings`, `POST /api/admin/metals/sweep[?at=ms]` (admin, for tests).
+- **Config**: `MARKET_BASE` and `YAHOO_BASE` vars replace the two sources (tests use `scripts/mock-metals.mjs`). Migration `0042_metals.sql`.
+- **Checks**: `node scripts/mock-metals.mjs 8898`, `MARKET_BASE` and `YAHOO_BASE` in `.dev.vars`, then `BASE=... node scripts/metals-check.mjs` (47).
+- **Risk**: Yahoo's endpoint is unofficial. It can rate limit Cloudflare addresses or change without notice; that is why history is cached and there is a fallback. If it proves unreliable, swap the source in `history()` (only that function).

@@ -44,5 +44,11 @@ const a2 = await pa('How do I turn on the chat assistant on my customers\' pages
 console.log(`\n  A: ${a2.reply}\n`);
 ok(!/Assistant on customer pages/i.test(a2.reply || '') && !(a2.tags || []).includes('tab:bookings'), 'portal asistent ne vodi na nepostojeće podešavanje');
 
+const off = (await fetch(`${BASE}/api/portal/chatbot/chats`, { headers: C }).then(j)).body;
+ok(off.items.length === 0 && off.counts.all === 0, 'popis razgovora prazan dok je prekidač isključen');
+ok((await fetch(`${BASE}/api/portal/chatbot/teach`, { method: 'POST', headers: C, body: JSON.stringify({ q: 'a', a: 'b' }) })).status === 403, 'Teach the bot nedostupan dok je prekidač isključen');
+ok((await fetch(`${BASE}/api/portal/me`, { headers: C }).then(j)).body.pageAssistant === false, '/me: pageAssistant false (tab AI chatbot se ne vidi)');
+ok((await fetch(`${BASE}/api/portal/chatbot/test`, { method: 'POST', headers: C, body: JSON.stringify({ message: 'hi' }) })).status === 403, 'probni chat nedostupan dok je prekidač isključen');
+ok((await fetch(`${BASE}/api/portal/chatbot/test`, { headers: C }).then(j)).body.messages.length === 0, 'istorija probnog chata prazna dok je prekidač isključen');
 console.log(fails ? `${fails} FAILED` : 'Assistant OFF checks passed.');
 process.exit(fails ? 1 : 0);
