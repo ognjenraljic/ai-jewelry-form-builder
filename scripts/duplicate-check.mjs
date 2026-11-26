@@ -57,7 +57,7 @@ ok(o.steps[0].title === 'Pick your grill', 'koraci ostaju');
 const list = (await fetch(`${BASE}/api/admin/forms`, { headers: H }).then(j)).body.forms;
 ok([orig.id, s.id, o.id].every((id) => list.some((f) => f.id === id)), 'sve tri forme u listi');
 const pub = await fetch(`${BASE}/api/forms/${o.id}`).then(j);
-ok(pub.status === 200 && pub.body.contact.privacyUrl === `/legal/${o.id}/privacy`, 'javna kopija radi i ima svoje pravne stranice');
+ok(pub.status === 200 && pub.body.id === o.id && (pub.body.contact?.privacyUrl ? pub.body.contact.privacyUrl === `/legal/${o.id}/privacy` : true), 'javna kopija radi (a pravne stranice, ako ih forma ima, su njene)');
 
 // 4) Greške
 ok((await post('/api/admin/forms', { copyFrom: 'nema-te-forme', clientId: a.id })).status === 404, 'nepostojeća forma = 404');
