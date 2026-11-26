@@ -297,3 +297,9 @@ Ognjen: "checkbox da bude po A2P". Ranije je jedan OBAVEZAN checkbox tražio pri
 - **GoHighLevel:** tag `sms consent` i/ili `sms marketing consent` na kontaktu + red "Text messages: YES/NO ... marketing ..." u bilješci. GHL workflowi biraju SMS korake po tagu. SMS poslije depozita (`ghlAfterDeposit`) ide samo uz `sms`; inače `deposit.smsSkipped = 'no consent'` (kupac i dalje vidi pitanja na stranici poslije plaćanja).
 - **Portal:** pored telefona "Texts OK" (· offers too) ili "No texts · email or call".
 - Provjera: `scripts/booking-check.mjs` (57, uključuje depozit bez pristanka i oznaku u portalu), `scripts/ghl-flow-check.mjs`.
+
+## AI asistenti (26.11.2026)
+
+- Stranica kupca (iza prekidača `PAGE_ASSISTANT=1` na Workeru, bez njega ništa od ovoga nije vidljivo): asistent odgovara o dizajnu, ponudama (tačne cijene), depozitu, terminima i radnji; podrazumijevano ISKLJUČEN, zlatar ga pali u Portal → Bookings → Assistant on customer pages i upisuje šta smije reći. Nepoznato ide timu (Notifications + razgovor na kartici leada).
+- Portal: dugme "Ask" na svakom tabu, pomoć za korištenje (vodič `PORTAL_GUIDE`) i brojevi koje server sam izračuna.
+- Workers AI (binding `AI`, `CHAT_MODEL` mijenja model), razgovori u D1 `chats` (migracija 0041). Detalji `docs/assistants.md`, pitanja za radnju `docs/assistant-store-questions.md`, provjera `scripts/assistant-check.mjs`.

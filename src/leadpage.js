@@ -200,6 +200,44 @@ function validityHtml(deadline, hours) {
     <span class="v-sub">${st.sub}</span></div>`;
 }
 
+// Rok ponude (22.11.2026): od zadnje poslate ponude (poruka Estimated price ili uključen Option 2), podrazumijevano 48 h.
+function offerDeadline(d, offers) {
+  const hours = Number.isFinite(Number(d.pricing?.offerHours)) && d.pricing?.offerHours !== '' && d.pricing?.offerHours != null ? Number(d.pricing.offerHours) : 48;
+  const from = Math.max(Number(d.quotes?.picked?.at) || 0, d.quotes?.fit?.show ? Number(d.quotes.fit.showAt || d.quotes.fit.at) || 0 : 0) || Number(d.lead?.createdAt) || Date.now();
+  return { hours, deadline: offers.length && hours > 0 ? from + hours * 3600_000 : 0 };
+}
+
+// Asistent na stranici (26.11.2026): iste činjenice koje stranica pokazuje, kao podaci za model (src/assistant.js).
+export function pageFacts(d) {
+  const bk = d.booking || {};
+  const offers = offersOf(d);
+  const { deadline } = offerDeadline(d, offers);
+  const left = deadline - Date.now();
+  return {
+    store: d.store.name, storeInfo: d.store.info || '', first: firstName(d.lead.name), piece: pieceLabel(d.form, d.answers.type).toLowerCase(),
+    details: heroDetails(d.details), budget: d.ls?.budgetLabel || '', renders: d.renders.length, film: !!d.film,
+    offers: offers.map((o) => ({ ...o, money: money(o.total), saveMoney: o.save ? money(o.save) : '' })),
+    deadlineText: deadline ? (left > 0 ? `The price on the page is held for about ${Math.max(1, Math.round(left / 3600_000))} more hour(s) (countdown on the page). After that the store refreshes the price.` : 'The price hold on the page has expired; the store can refresh the price if they reply.') : '',
+    depositOn: !!bk.deposit?.on, depositPaid: !!bk.deposit?.paid, depositAmount: bk.deposit?.amount ? money(bk.deposit.amount) : '',
+    kinds: bk.kinds || [], bookOn: true, video: !!bk.video, tzLabel: bk.tzLabel || '', hours: d.hoursText || '',
+    upcoming: bk.upcoming || [], fulfillment: bk.fulfillment?.text || '', region: bk.region || '', moldKit: !!bk.moldKit,
+  };
+}
+
+// Widget asistenta: dugme dolje desno i panel; logika u /page-chat.js (učitava se samo kad je asistent uključen).
+function chatWidget(a, store) {
+  if (!a?.on) return '';
+  return `<link rel="stylesheet" href="/page-chat.css" /><script type="module" src="/page-chat.js"></script>
+<button type="button" class="pc-fab" id="pc-fab" aria-controls="pc-panel" aria-expanded="false"><svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4H6.5A2.5 2.5 0 0 1 4 13.5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>Questions? Ask us</button>
+<section class="pc-panel" id="pc-panel" role="dialog" aria-modal="false" aria-labelledby="pc-title" hidden>
+  <header class="pc-head"><div><p class="pc-kicker">${esc(store)}</p><h2 id="pc-title">Ask about your design</h2></div><button type="button" class="pc-x" data-pc-close aria-label="Close">&times;</button></header>
+  <div class="pc-log" id="pc-log" aria-live="polite"></div>
+  <div class="pc-sugg" id="pc-sugg"></div>
+  <form class="pc-form" id="pc-form"><textarea id="pc-in" rows="1" maxlength="600" placeholder="Type your question" aria-label="Your question"></textarea><button type="submit" class="pc-send" aria-label="Send"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></form>
+  <p class="pc-fine">AI assistant. ${esc(store)} confirms every price and detail.</p>
+</section>`;
+}
+
 export function leadPageHtml(d) {
   const { key, form, answers, lead, store, renders, film } = d;
   const bk = d.booking || null;
@@ -223,10 +261,7 @@ export function leadPageHtml(d) {
     ? `<div class="thumbs" role="list">${media.map((m, k) => `<button type="button" role="listitem" class="thumb${m.kind === 'video' ? ' is-video' : ''}${k === renders.length - 1 ? ' on' : ''}" data-${m.kind === 'video' ? 'video' : 'src'}="${esc(m.src)}"${m.poster ? ` data-poster="${esc(m.poster)}"` : ''} aria-label="${esc(m.label)}">${m.kind === 'video' ? `<img src="${esc(m.poster)}" alt="" loading="lazy" width="96" height="96" /><span class="play" aria-hidden="true"></span>` : `<img src="${esc(m.src)}" alt="" loading="lazy" width="96" height="96" />`}<span class="thumb-l">${esc(m.label)}</span></button>`).join('')}</div>`
     : '';
 
-  // Rok ponude (22.11.2026): od zadnje poslate ponude (poruka Estimated price ili uključen Option 2), podrazumijevano 48 h.
-  const hours = Number.isFinite(Number(d.pricing?.offerHours)) && d.pricing?.offerHours !== '' && d.pricing?.offerHours != null ? Number(d.pricing.offerHours) : 48;
-  const from = Math.max(Number(d.quotes?.picked?.at) || 0, d.quotes?.fit?.show ? Number(d.quotes.fit.showAt || d.quotes.fit.at) || 0 : 0) || Number(lead.createdAt) || Date.now();
-  const deadline = offers.length && hours > 0 ? from + hours * 3600_000 : 0;
+  const { hours, deadline } = offerDeadline(d, offers);
   const validity = deadline ? validityHtml(deadline, hours) : '';
   const offerSection = offers.length
     ? `<div class="offers${offers.length === 1 ? ' one' : ''}">${offers.map((o) => offerCard(o, offers.length === 1, bk)).join('')}</div>`
@@ -302,6 +337,7 @@ ${showSection}
 <dialog class="sheet sched" id="sched" aria-labelledby="sched-h"><div class="sched-body"></div></dialog>
 ${bk ? `<script type="application/json" id="bk-data">${JSON.stringify({ kinds: bk.kinds, video: bk.video, tzLabel: bk.tzLabel, store: store.name, grillz: answers.type === 'grillz', paid: bk.deposit.paid }).replace(/</g, '\\u003c')}</script>` : ''}
 <div class="lightbox" id="lightbox" hidden><img alt="" /></div>
+${chatWidget(d.assistant, store.name)}
 </body>
 </html>`;
 }

@@ -10,7 +10,8 @@ import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
 import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ, middleGround, specDiff, chainLine } from '../public/pricing.js';
-import { leadPageHtml, PAGE_ACTIONS } from './leadpage.js';
+import { leadPageHtml, PAGE_ACTIONS, pageFacts } from './leadpage.js';
+import { cleanAssistant, assistantSettings, ASSIST_FIELDS, loadChat, saveChat, overLimit, publicMessages, runChat, tidy, pageSystemPrompt, pageFactsText, pricesOk, PAGE_FALLBACK, pageGreeting, pageSuggestions, portalSystemPrompt, PORTAL_SUGGESTIONS, statsText, MAX_MESSAGE } from './assistant.js';
 import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
@@ -153,6 +154,8 @@ async function route(request, env, ctx, url) {
   if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/appointments\/([a-z0-9]{16})\/cancel$/)) && request.method === 'POST') return pageCancel(request, env, ctx, m[1], m[2]);
   if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/appointments\/([a-z0-9]{16})\.ics$/)) && read) return pageIcs(request, env, m[1], m[2]);
   if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/next$/)) && request.method === 'POST') return pageNext(request, env, ctx, m[1]);
+  // AI asistent na stranici kupca (26.11.2026): samo kad ga je zlatar uključio.
+  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/chat$/)) && (read || request.method === 'POST')) return pageChat(request, env, ctx, m[1], url);
   if (p === '/deposit/done' && read) return depositDone(request, env, url);
   // A2P (25.11.2026): Privacy Policy i Terms radnje koja nema svoje linkove u formi.
   if ((m = p.match(/^\/legal\/([a-z0-9][a-z0-9-]{0,39})\/(privacy|terms)$/)) && read) return legalPage(request, env, m[1], m[2]);
@@ -1612,6 +1615,24 @@ async function portalApi(request, env, p, secure, ctx) {
       usage: { spent: Math.round(spent * 100) / 100, limit: monthlyBudget(env), resetsAt: monthStart(Date.now(), 1) },
     });
   }
+  // AI asistenti (26.11.2026): podešavanje asistenta na stranicama kupaca, razgovor kupca na leadu i asistent portala.
+  if (p === '/api/portal/assistant/settings' && request.method === 'GET') return json({ available: pageAssistantOn(env), settings: assistantSettings(JSON.parse(client.data || '{}')), fields: ASSIST_FIELDS });
+  if (p === '/api/portal/assistant/settings' && request.method === 'PUT') {
+    if (!pageAssistantOn(env)) return json({ error: 'Not available yet.' }, 403);
+    if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const d = JSON.parse(client.data || '{}');
+    d.assistant = cleanAssistant(b.settings || {}, d.assistant || {});
+    await env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify(d), client.id).run();
+    return json({ available: true, settings: assistantSettings(d), fields: ASSIST_FIELDS });
+  }
+  let cm;
+  if ((cm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/chat$/)) && request.method === 'GET') {
+    const lead = await env.DB.prepare('SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(cm[1], client.id).first();
+    if (!lead) return json({ error: 'Not found' }, 404);
+    return json({ messages: publicMessages((await loadChat(env, `p_${lead.id}`)).messages) });
+  }
+  if (p === '/api/portal/assistant' && (request.method === 'GET' || request.method === 'POST')) return portalAssistant(request, env, client, sess, formRows, forms);
   // Bookings (19.11.2026): kupci koji su na svojoj stranici kliknuli Reserve with a deposit ili Book an appointment.
   if (p === '/api/portal/bookings' && request.method === 'GET') return json(await portalBookings(env, client));
   // Zlatar je otvorio tab: zahtjevi do sada su viđeni (obavještenje nestaje). Admin pregled ne mijenja ništa.
@@ -1686,7 +1707,8 @@ async function portalApi(request, env, p, secure, ctx) {
     const tz = Math.max(-840, Math.min(840, Number(u.searchParams.get('tz')) || 0));
     const [leadRes, countRows, pieceRows, dayRes, vrowsRes, tagRows, budgetRows, archRow] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page, l.tags, l.archived_at, l.consent,
         l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data, l.lead_no, l.ghl_order, l.deposit, l.fulfillment,
-        (SELECT json_object('kind', a.kind, 'start', a.start_at, 'via', a.via, 'purpose', a.purpose) FROM appointments a WHERE a.lead_id = l.id AND a.status = 'booked' AND a.end_at > CAST(strftime('%s', 'now') AS INTEGER) * 1000 ORDER BY a.start_at LIMIT 1) AS appt
+        (SELECT json_object('kind', a.kind, 'start', a.start_at, 'via', a.via, 'purpose', a.purpose) FROM appointments a WHERE a.lead_id = l.id AND a.status = 'booked' AND a.end_at > CAST(strftime('%s', 'now') AS INTEGER) * 1000 ORDER BY a.start_at LIMIT 1) AS appt,
+        ${pageAssistantOn(env) ? "(SELECT json_object('turns', ch.turns, 'handoff', ch.handoff, 'at', ch.updated_at) FROM chats ch WHERE ch.id = 'p_' || l.id)" : 'NULL'} AS chat
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
     // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
     env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
@@ -1912,6 +1934,55 @@ function parseTags(raw) {
   try { const t = JSON.parse(raw || '[]'); return Array.isArray(t) ? t.filter((x) => typeof x === 'string' && x).slice(0, 8) : []; } catch { return []; }
 }
 const STATS_MAX = 5000;
+// Asistent portala (26.11.2026): vodič za korištenje + tačni zbirovi iz baze; razgovor po sesiji portala.
+async function portalAssistant(request, env, client, sess, formRows, forms) {
+  const id = `a_${sess.id}`;
+  const chat = await loadChat(env, id);
+  if (request.method === 'GET') return json({ suggestions: PORTAL_SUGGESTIONS, messages: publicMessages(chat.messages) });
+  const b = await request.json().catch(() => ({}));
+  const text = clean(b.message, MAX_MESSAGE);
+  if (!text) return json({ error: 'Write a question first.' }, 400);
+  const limit = overLimit(chat.messages, { per10: 25, perDay: 200 });
+  if (limit) return json({ error: limit }, 429);
+  const cdata = JSON.parse(client.data || '{}');
+  const tz = bookingSettings(cdata.booking).tz || 'America/Denver';
+  const since30 = Date.now() - 30 * 864e5;
+  const pageOn = pageAssistantOn(env);
+  const [rows, speed, gen, ap, spent, cq, chatN] = await Promise.all([
+    env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.phone, l.created_at, COALESCE(l.status, 'new') AS status, l.first_reply_at, l.tags, l.lead_no, l.deposit,
+        json_extract(l.answers, '$.type') AS type, json_extract(l.answers, '$.budget') AS budget,
+        json_extract(l.quotes, '$.picked.price') AS p_price, json_extract(l.quotes, '$.picked.total') AS p_total,
+        json_extract(l.page, '$.views') AS views, json_array_length(COALESCE(json_extract(l.page, '$.actions'), '[]')) AS actions
+      FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL ORDER BY l.created_at DESC LIMIT ${STATS_MAX}`).bind(client.id).all(),
+    replySpeed(env, client.id),
+    env.DB.prepare(`SELECT (SELECT COUNT(*) FROM renders r JOIN leads l ON l.id = r.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND r.status = 'ok' AND l.archived_at IS NULL) AS renders,
+        (SELECT COUNT(*) FROM films fl JOIN leads l ON l.id = fl.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1 AND fl.status = 'ok') AS films`).bind(client.id).first(),
+    env.DB.prepare(`SELECT SUM(CASE WHEN a.status = 'booked' AND a.end_at > ?2 THEN 1 ELSE 0 END) AS upcoming, SUM(CASE WHEN a.created_at > ?3 THEN 1 ELSE 0 END) AS last30,
+        SUM(CASE WHEN a.status = 'done' THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN a.status = 'noshow' THEN 1 ELSE 0 END) AS noshow
+      FROM appointments a JOIN leads l ON l.id = a.lead_id JOIN forms f ON f.id = l.form_id WHERE f.client_id = ?1`).bind(client.id, Date.now(), since30).first().catch(() => null),
+    clientMonthCost(env, client.id),
+    env.DB.prepare(`SELECT e.at, l.name, json_extract(e.meta, '$.q') AS q FROM lead_events e JOIN leads l ON l.id = e.lead_id JOIN forms f ON f.id = l.form_id
+      WHERE f.client_id = ? AND e.type = 'chat_question' AND e.at > ? ORDER BY e.at DESC LIMIT 15`).bind(client.id, since30).all().catch(() => ({ results: [] })),
+    env.DB.prepare(`SELECT COUNT(*) AS n FROM chats WHERE client_id = ? AND scope = 'page' AND updated_at > ?`).bind(client.id, since30).first().catch(() => null),
+  ]);
+  const pieceNames = {};
+  for (const fd of Object.values(forms)) for (const o of (fd.steps || []).flatMap((st) => st.fields || []).find((x) => x.id === 'type')?.options || []) pieceNames[o.value] = o.label;
+  const stats = statsText(rows.results, {
+    tz, forms: formRows.filter((r) => !r.archived_at).map((r) => ({ id: r.id, name: forms[r.id]?.name || r.id })), speed,
+    renders: gen?.renders || 0, films: gen?.films || 0, usage: { spent, limit: monthlyBudget(env) },
+    appts: ap ? { upcoming: ap.upcoming || 0, last30: ap.last30 || 0, done: ap.done || 0, noshow: ap.noshow || 0 } : null,
+    pieceName: (t) => pieceNames[t] || null,
+    chatQuestions: pageOn ? cq.results.map((x) => ({ at: x.at, name: x.name, q: x.q })) : [], chats: pageOn ? chatN?.n ?? null : null,
+  });
+  const messages = [...chat.messages, { r: 'u', t: text, at: Date.now() }];
+  const raw = await runChat(env, portalSystemPrompt(client.name, stats, pageOn), messages, { maxTokens: 500, temperature: 0.2 });
+  const out = raw ? tidy(raw, ['tab:']) : { text: 'Sorry, I could not answer right now. Please try again in a moment.', tags: [] };
+  const tags = out.tags.filter((t) => /^tab:(leads|forms|pricing|bookings|stats|notifications)$/.test(t));
+  messages.push({ r: 'a', t: out.text, at: Date.now(), ...(tags.length ? { tags } : {}) });
+  await saveChat(env, { id, scope: 'portal', clientId: client.id, messages });
+  return json({ reply: out.text, tags });
+}
+
 async function portalStats(env, client) {
   const rows = (await env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.created_at, COALESCE(l.status, 'new') AS status, l.status_at, l.first_reply_at, l.tags,
       json_extract(l.answers, '$.type') AS type, json_extract(l.answers, '$.budget') AS budget,
@@ -1932,7 +2003,7 @@ async function portalStats(env, client) {
   };
 }
 // Automatske quote poruke nisu ovdje: stižu uz svaki lead (dvije po leadu) i samo bi zatrpale listu.
-const NOTIFY_TYPES = ['created', 'page_view', 'page_action', 'auto_sent', 'auto_send_failed', 'alert_failed', 'order_created', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment'];
+const NOTIFY_TYPES = ['created', 'page_view', 'page_action', 'chat_question', 'auto_sent', 'auto_send_failed', 'alert_failed', 'order_created', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment'];
 async function portalNotifications(env, client) {
   const since = Date.now() - 30 * 864e5;
   const rows = (await env.DB.prepare(`SELECT e.id, e.lead_id, e.type, e.at, e.meta, l.name, l.email, json_extract(l.answers, '$.type') AS piece
@@ -3044,6 +3115,21 @@ async function leadPage(request, env, ctx, key, url) {
   const row = await env.DB.prepare(`SELECT l.*, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id
       LEFT JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?`).bind(key).first();
   if (!row) return notFoundPage();
+  const d = await pageData(env, row, key, url);
+  const html = leadPageHtml(d);
+  // Pregled: zlatar (?preview=1) i roboti za preglede linkova se ne broje.
+  if (request.method === 'GET' && url.searchParams.get('preview') !== '1' && !BOT_UA.test(request.headers.get('user-agent') || '')) {
+    const now = Date.now();
+    ctx.waitUntil(env.DB.prepare(`UPDATE leads SET page = json_set(COALESCE(page, '{}'), '$.views', COALESCE(json_extract(page, '$.views'), 0) + 1, '$.lastView', ?, '$.firstView', COALESCE(json_extract(page, '$.firstView'), ?)) WHERE id = ?`).bind(now, now, row.id).run());
+    let seen = false;
+    try { seen = !!JSON.parse(row.page || '{}')?.firstView; } catch {}
+    if (!seen) ctx.waitUntil(logEvent(env, row.id, 'page_view', null, now));
+  }
+  const res = new Response(request.method === 'HEAD' ? null : html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
+  return withSecurity(res, { page: true, ancestors: "'none'" });
+}
+// Sve što stranica kupca zna (i asistent na njoj): dizajn, ponude, kalendar, depozit, radnja.
+async function pageData(env, row, key, url) {
   const form = JSON.parse(row.form_data || '{}');
   const answers = JSON.parse(row.answers || '{}');
   let client = {};
@@ -3072,24 +3158,61 @@ async function leadPage(request, env, ctx, key, url) {
     fulfillment: ff ? { ...ff, text: fulfillmentText(ff, { grillz: answers.type === 'grillz', region: bcfg.region }) } : null,
     showNext: !!(dep.paidAt || dep.returnedAt || ff || url.searchParams.get('next') === '1' || url.searchParams.get('deposit') === '1'),
   };
-  const html = leadPageHtml({
+  return {
     booking,
     key, origin: url.origin, form, answers, details: leadDetails(form, answers), ls, pricing, quotes,
     lead: { name: row.name, createdAt: row.created_at },
     store: { name: form.brand?.name || row.client_name || 'Our studio', logo: form.brand?.logo || '', info: quoteInfoText(pricing?.quoteInfo) || '' },
     renders: renders.map((r, k) => ({ url: `/media/${r.image_key}`, label: k === 0 ? 'First design' : r.tweak ? `Change ${k}` : `Version ${k + 1}` })),
     film: film ? `/media/${film.video_key}` : '',
-  });
-  // Pregled: zlatar (?preview=1) i roboti za preglede linkova se ne broje.
-  if (request.method === 'GET' && url.searchParams.get('preview') !== '1' && !BOT_UA.test(request.headers.get('user-agent') || '')) {
-    const now = Date.now();
-    ctx.waitUntil(env.DB.prepare(`UPDATE leads SET page = json_set(COALESCE(page, '{}'), '$.views', COALESCE(json_extract(page, '$.views'), 0) + 1, '$.lastView', ?, '$.firstView', COALESCE(json_extract(page, '$.firstView'), ?)) WHERE id = ?`).bind(now, now, row.id).run());
-    let seen = false;
-    try { seen = !!JSON.parse(row.page || '{}')?.firstView; } catch {}
-    if (!seen) ctx.waitUntil(logEvent(env, row.id, 'page_view', null, now));
+    assistant: { on: pageAssistantOn(env) && !!row.client_id && assistantSettings(client).page },
+    hoursText: bcfg.enabled ? hoursText(bcfg) : '',
+  };
+}
+// Radno vrijeme za asistenta: "Mon 10:00-18:00, Tue ..., Sun closed".
+function hoursText(cfg) {
+  const days = [['mon', 'Mon'], ['tue', 'Tue'], ['wed', 'Wed'], ['thu', 'Thu'], ['fri', 'Fri'], ['sat', 'Sat'], ['sun', 'Sun']];
+  return days.map(([k, l]) => { const h = cfg.hours?.[k]; return `${l} ${h ? `${h[0]}-${h[1]}` : 'closed'}`; }).join(', ') + (cfg.closed?.length ? `. Closed on ${cfg.closed.join(', ')}` : '');
+}
+
+// ---------- AI asistent na stranici kupca (26.11.2026) ----------
+// Jedan razgovor po leadu (chats.id = p_<lead>); pregled zlatara (?preview=1) ide u poseban razgovor i ne obavještava.
+// Asistent na stranici kupca je iza prekidača: dok PAGE_ASSISTANT nije '1' na Workeru, nema widgeta, odgovora ni podešavanja (26.11.2026).
+const pageAssistantOn = (env) => env.PAGE_ASSISTANT === '1';
+async function pageChat(request, env, ctx, key, url) {
+  if (!pageAssistantOn(env)) return json({ on: false });
+  const row = await env.DB.prepare(`SELECT l.*, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id
+      LEFT JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?`).bind(key).first();
+  if (!row) return json({ error: 'Not found' }, 404);
+  const settings = assistantSettings(parseJson(row.client_data));
+  if (!row.client_id || !settings.page) return json({ on: false });
+  const preview = url.searchParams.get('preview') === '1';
+  const id = `${preview ? 'pv' : 'p'}_${row.id}`;
+  const d = await pageData(env, row, key, url);
+  const f = pageFacts(d);
+  const chat = await loadChat(env, id);
+  if (request.method !== 'POST') return json({ on: true, greeting: pageGreeting(f), suggestions: pageSuggestions(f), messages: publicMessages(chat.messages) });
+  const b = await request.json().catch(() => ({}));
+  const text = clean(b.message, MAX_MESSAGE);
+  if (!text) return json({ error: 'Write a question first.' }, 400);
+  const limit = overLimit(chat.messages, { per10: 12, perDay: 50 });
+  if (limit) return json({ error: limit }, 429);
+  const facts = pageFactsText(f);
+  const knowledge = JSON.stringify(settings);
+  const messages = [...chat.messages, { r: 'u', t: text, at: Date.now() }];
+  const raw = await runChat(env, pageSystemPrompt({ ...f, text: facts }, settings), messages, { maxTokens: 300, temperature: 0.3 });
+  let out = raw ? tidy(raw, ['deposit', 'book', 'team']) : null;
+  // Iznos koji ne postoji na stranici ni u znanju radnje = odgovor se ne pokazuje (asistent ne smije izmišljati cijene).
+  const fallback = !out?.text || !pricesOk(out.text, facts, knowledge, messages.filter((m) => m.r === 'u').map((m) => m.t).join('\n'));
+  if (fallback) { if (raw) console.log('page chat rejected', JSON.stringify(raw.slice(0, 300))); out = { text: raw ? PAGE_FALLBACK : 'Sorry, I could not answer right now. Please try again in a moment.', tags: raw ? ['team'] : [] }; }
+  const handoff = out.tags.includes('team');
+  messages.push({ r: 'a', t: out.text, at: Date.now(), ...(out.tags.length ? { tags: out.tags } : {}) });
+  await saveChat(env, { id, scope: preview ? 'preview' : 'page', clientId: row.client_id, leadId: row.id, messages, handoff });
+  if (!preview) {
+    if (!chat.messages.some((m) => m.r === 'u')) ctx.waitUntil(logEvent(env, row.id, 'chat_started', { q: text.slice(0, 200) }));
+    if (handoff) ctx.waitUntil(logEvent(env, row.id, 'chat_question', { q: text.slice(0, 300) }));
   }
-  const res = new Response(request.method === 'HEAD' ? null : html, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow' } });
-  return withSecurity(res, { page: true, ancestors: "'none'" });
+  return json({ reply: out.text, tags: out.tags.filter((t) => t !== 'team'), handoff });
 }
 // Deposit / Book appointment: zabilježi klik uz lead (zlatar ga vidi u portalu) i vrati link radnje ako ga je upisala.
 async function pageAction(request, env, key, secure = true) {
@@ -3480,6 +3603,7 @@ function leadBookingInfo(l, cfg) {
     deposit: dep && (dep.paidAt || dep.returnedAt) ? { paidAt: dep.paidAt || null, amount: dep.amount ?? null, returnedAt: dep.returnedAt || null } : null,
     fulfillment: ff ? { text: fulfillmentText(ff, { grillz: type === 'grillz', region: cfg.region }), method: ff.method, kit: !!ff.kit } : null,
     nextUrl: l.page_key ? `/p/${l.page_key}?next=1` : '',
+    chat: (() => { const c = parseJson(l.chat, null); return c?.turns ? { turns: c.turns, handoff: !!c.handoff, at: c.at } : null; })(),
   };
 }
 async function portalApptStatus(request, env, ctx, client, id) {

@@ -94,7 +94,7 @@
     };
     document.addEventListener('focusin', (e) => {
       const el = e.target;
-      if (!el.matches?.('input[maxlength], textarea[maxlength]') || el.readOnly || !(el.maxLength > 0)) return hide();
+      if (!el.matches?.('input[maxlength], textarea[maxlength]') || el.readOnly || !(el.maxLength > 0) || el.hasAttribute('data-no-count')) return hide();
       hide();
       field = el;
       tip.style.display = 'block';
