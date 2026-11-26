@@ -333,7 +333,7 @@ function renderHubList() {
       return `<tr class="${f.archivedAt ? 'archived' : ''}">
         <td><button class="linkish" data-act="open-form" data-id="${esc(f.id)}">${esc(f.name || f.id)}</button><small>${f.archivedAt ? `Archived ${esc(day(f.archivedAt))} · ` : ''}${esc(f.builtin ? 'Built-in demo' : tplLabel(f.template))} · ${esc(f.id)}</small></td>
         <td class="num">${s.leads}</td><td class="num">${s.renders}</td><td class="when">${esc(day(s.lastLead)) || '<span class="faint">none</span>'}</td><td class="num">${usd(s.cost)}</td>
-        <td class="acts"><button class="btn small" data-act="open-form" data-id="${esc(f.id)}">Edit</button><a class="btn small ghost" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open ↗</a><button class="btn small ghost" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button>${f.archivedAt ? `<button class="btn small" data-act="restore-form" data-id="${esc(f.id)}">Restore</button>` : f.builtin ? '' : `<button class="btn small ghost danger" data-act="archive-form" data-id="${esc(f.id)}" title="Hide it and stop new leads. Nothing is deleted.">Archive</button>`}</td>
+        <td class="acts"><button class="btn small" data-act="open-form" data-id="${esc(f.id)}">Edit</button><a class="btn small ghost" href="/f/${esc(f.id)}" target="_blank" rel="noopener">Open ↗</a><button class="btn small ghost" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button>${f.builtin || f.archivedAt ? '' : `<button class="btn small ghost" data-act="duplicate-form" data-id="${esc(f.id)}" title="Make a copy with all steps, styles, prices and look. Leads are not copied.">Duplicate</button>`}${f.archivedAt ? `<button class="btn small" data-act="restore-form" data-id="${esc(f.id)}">Restore</button>` : f.builtin ? '' : `<button class="btn small ghost danger" data-act="archive-form" data-id="${esc(f.id)}" title="Hide it and stop new leads. Nothing is deleted.">Archive</button>`}</td>
       </tr>`;
     }).join('') + (c && !c.archivedAt ? obRows(c.id) : '');
     return `<section class="hub-client ${c?.archivedAt ? 'archived' : ''}">
@@ -346,7 +346,7 @@ function renderHubList() {
           <button class="btn small" data-act="new-form" data-cid="${esc(c.id)}">${nav('plus')}New form</button>
           <button class="btn small ghost danger" data-act="archive-client" data-cid="${esc(c.id)}" title="Hide the client and their forms, turn off the portal link. Nothing is deleted.">Archive</button>` : ''}
       </div>
-      ${rows ? `<div class="table-wrap"><table class="hub-table"><colgroup><col /><col style="width:70px" /><col style="width:84px" /><col style="width:120px" /><col style="width:90px" /><col style="width:320px" /></colgroup><thead><tr><th>Form</th><th class="num">Leads</th><th class="num">Renders</th><th>Last lead</th><th class="num">AI cost</th><th></th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td>Total${forms.length > 1 ? ` · ${forms.length} forms` : ''}</td><td class="num">${tot.leads}</td><td class="num">${tot.renders}</td><td class="when">${esc(day(tot.lastLead)) || '<span class="faint">none</span>'}</td><td class="num">${usd(tot.cost)}</td><td></td></tr></tfoot></table></div>` : '<p class="hint" style="margin:0">No forms yet.</p>'}
+      ${rows ? `<div class="table-wrap"><table class="hub-table"><colgroup><col /><col style="width:70px" /><col style="width:84px" /><col style="width:120px" /><col style="width:90px" /><col style="width:410px" /></colgroup><thead><tr><th>Form</th><th class="num">Leads</th><th class="num">Renders</th><th>Last lead</th><th class="num">AI cost</th><th></th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td>Total${forms.length > 1 ? ` · ${forms.length} forms` : ''}</td><td class="num">${tot.leads}</td><td class="num">${tot.renders}</td><td class="when">${esc(day(tot.lastLead)) || '<span class="faint">none</span>'}</td><td class="num">${usd(tot.cost)}</td><td></td></tr></tfoot></table></div>` : '<p class="hint" style="margin:0">No forms yet.</p>'}
     </section>`;
   }).join('') || '<p class="hint">Nothing matches your search.</p>';
 }
@@ -901,6 +901,7 @@ function clientView() {
       <div class="card-head"><div class="grow"><b>${esc(f.name || f.id)}</b><p class="hint" style="margin:2px 0 0">${esc(tplLabel(f.template))} · id: ${esc(f.id)}</p></div>
         ${f.id === B.id ? '<span class="pill">Editing</span>' : `<button class="btn small" data-act="open-form" data-id="${esc(f.id)}">Edit</button>`}
         <button class="btn small" data-act="copy-text" data-text="${esc(snippetFor(f.id))}">Copy embed</button>
+        <button class="btn small ghost" data-act="duplicate-form" data-id="${esc(f.id)}" title="Make a copy with all steps, styles, prices and look. Leads are not copied.">Duplicate</button>
       </div>
     </div>`).join('');
   return `
@@ -1532,6 +1533,7 @@ app.addEventListener('click', async (e) => {
   }
   if (act === 'save-client') saveClient();
   if (act === 'new-form') newFormChoice(el.dataset.cid || B.client?.id);
+  if (act === 'duplicate-form') duplicateForm(el.dataset.id);
   if (act === 'notifs') toggleNotifs(el);
   if (act === 'ob-review') reviewOnboarding(el.dataset.obid);
   if (act === 'ob-edit') { el.disabled = true; try { await editOnboarding(el.dataset.obid); } catch (err) { toast(err.message); } el.disabled = false; }
@@ -1763,9 +1765,9 @@ async function saveClient() {
   } catch (err) { setStatus(err.message, 'err'); }
 }
 
-function dialog(html, onSubmit) {
+function dialog(html, onSubmit, { ok = 'Create', busy = 'Creating…' } = {}) {
   const d = document.createElement('dialog');
-  d.innerHTML = `<form method="dialog">${html}<p class="err-text"></p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">Create</button></div></form>`;
+  d.innerHTML = `<form method="dialog">${html}<p class="err-text"></p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" value="cancel" formnovalidate>Cancel</button><button class="btn primary" value="ok">${esc(ok)}</button></div></form>`;
   document.body.appendChild(d);
   d.querySelector('form').addEventListener('submit', async (e) => {
     if (e.submitter?.value !== 'ok') return;
@@ -1773,7 +1775,7 @@ function dialog(html, onSubmit) {
     if (d.dataset.busy === 'true') return;
     d.dataset.busy = 'true';
     const submit = e.submitter; const label = submit.innerHTML;
-    submit.disabled = true; submit.innerHTML = '<span class="jl-spinner"></span> Creating…';
+    submit.disabled = true; submit.innerHTML = `<span class="jl-spinner"></span> ${esc(busy)}`;
     try { await onSubmit(d); d.close(); }
     catch (err) { d.querySelector('.err-text').textContent = err.message; }
     finally { d.dataset.busy = 'false'; submit.disabled = false; submit.innerHTML = label; }
@@ -1858,6 +1860,31 @@ function newForm(clientId = B.client?.id, name = '') {
     B.saved = JSON.stringify(B.draft);
     B.clientSaved = JSON.stringify(B.client);
     await loadAll(form.id);
+  });
+}
+
+// Duplicate: kopija sačuvane verzije forme (koraci, stilovi, slike, cijene, izgled), bez leadova i istorije.
+// Podrazumijevano ostaje u istom projektu; u drugom projektu dobija ime i logo te radnje.
+function duplicateForm(id) {
+  const f = B.forms.find((x) => x.id === id);
+  if (!f) return;
+  const editingUnsaved = id === B.id && dirty();
+  const cOpts = activeClients().map((c) => `<option value="${esc(c.id)}" ${c.id === f.clientId ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  dialog(`<h2>Duplicate form</h2>
+    <p class="lead">${esc(f.name || f.id)}</p>
+    <label class="f"><span>Name of the copy</span><input class="in" name="name" maxlength="80" value="${esc(`${String(f.name || f.id).replace(/ \(copy\)$/i, '').slice(0, 73)} (copy)`)}" required /></label>
+    <label class="f"><span>Project</span><select class="sel" name="client">${cOpts}</select></label>
+    <p class="hint">Everything is copied: steps, questions, styles, pictures, prices and look. Leads, renders and history stay with the original. The copy gets its own link and embed code.${editingUnsaved ? ' Your unsaved changes in this form are not in the copy. Save first if you want them.' : ''}</p>
+    <p class="hint" data-other-project ${activeClients().some((c) => c.id === f.clientId) ? 'hidden' : ''}>In another project the copy uses that store's name and logo, and the shop products are left out.</p>`, async (d) => {
+    const body = { copyFrom: id, clientId: d.querySelector('[name=client]').value, name: d.querySelector('[name=name]').value };
+    if ((dirty() || clientDirty()) && !(await confirmBox('Unsaved changes', 'The copy opens in the editor. Discard your unsaved changes in the current form?', 'Discard and duplicate'))) return;
+    const { form } = await api('/api/admin/forms', { method: 'POST', body: JSON.stringify(body) });
+    B.saved = JSON.stringify(B.draft);
+    B.clientSaved = JSON.stringify(B.client);
+    await loadAll(form.id);
+    setStatus(`Copy created: ${form.name}. It is a separate form with its own link.`, 'ok');
+  }, { ok: 'Duplicate', busy: 'Duplicating…' }).querySelector('[name=client]').addEventListener('change', (e) => {
+    e.target.closest('dialog').querySelector('[data-other-project]').hidden = e.target.value === f.clientId;
   });
 }
 
