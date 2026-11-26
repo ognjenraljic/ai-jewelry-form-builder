@@ -10,6 +10,7 @@ import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
 import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ, middleGround, specDiff, chainLine } from '../public/pricing.js';
 import { leadPageHtml, PAGE_ACTIONS, pageFacts } from './leadpage.js';
+import { METALS, THRESHOLDS, rangeParams, metalSeries, metalSettings, cleanMetalSettings, metalSweep, fetchSpot, recentAlerts } from './metals.js';
 import { cleanAssistant, assistantSettings, assistantSize, bannedHit, RULE_FIELDS, DEFAULT_ASSIST, sampleFacts, pageAnswer, MAX_TOTAL, ASSIST_FIELDS, loadChat, saveChat, overLimit, publicMessages, runChat, tidy, pageSystemPrompt, pageFactsText, pricesOk, PAGE_FALLBACK, pageGreeting, pageSuggestions, portalSystemPrompt, PORTAL_SUGGESTIONS, statsText, MAX_MESSAGE } from './assistant.js';
 import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
@@ -100,7 +101,7 @@ export default {
   // Svaku noć: brisanje selfija i proba na osmijehu starijih od 30 dana, i gašenje rendera koji su ostali "u toku".
   // Svakih 5 minuta: slika i video za kupce koji su zatvorili stranicu prije kraja (za outreach iz portala).
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(event.cron === '*/5 * * * *' ? catchUp(env) : nightly(env));
+    ctx.waitUntil(event.cron === '*/5 * * * *' ? Promise.all([catchUp(env), metalSweep(env).catch((e) => console.error('metal sweep', e.message))]) : nightly(env));
   },
 };
 
@@ -127,6 +128,7 @@ async function route(request, env, ctx, url) {
   if (p === '/api/portal/session' && request.method === 'POST') return portalLogin(request, env, secure);
   if (p === '/api/portal/logout' && request.method === 'POST') return portalLogout(request, env, secure);
   if (p.startsWith('/api/portal/')) return portalApi(request, env, p, secure, ctx);
+  if (p === '/api/admin/metals/sweep' && request.method === 'POST') return (await isAdmin(request, env)) ? json(await metalSweep(env, Number(url.searchParams.get('at')) || Date.now())) : json({ error: 'Not allowed.' }, 403);
   if (p === '/api/admin/view-as-log' && request.method === 'GET') return viewAsLog(request, env);
   if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/view-as$/)) && request.method === 'POST') return startViewAs(request, env, m[1]);
   if ((m = p.match(/^\/api\/admin\/clients\/([a-z0-9-]+)\/portal-link$/)) && ['GET', 'POST', 'DELETE'].includes(request.method)) return clientLink(request, env, m[1]);
@@ -1712,6 +1714,40 @@ async function portalApi(request, env, p, secure, ctx) {
     return json({ ok: true });
   }
   if (p === '/api/portal/assistant' && (request.method === 'GET' || request.method === 'POST')) return portalAssistant(request, env, client, sess, formRows, forms);
+  // Metal movement (26.11.2026): grafik cijena metala i podešavanje upozorenja (cron ih piše u Notifications).
+  const metalPayload = async (d) => {
+    const spot = await getMarket(env).catch(() => ({}));
+    return { settings: metalSettings(d), thresholds: THRESHOLDS, spot: Object.fromEntries(METALS.map((m) => [m.key, spot[`${m.key}Oz`] || null])), alerts: await recentAlerts(env, client.id) };
+  };
+  if (p === '/api/portal/metals' && request.method === 'GET') {
+    const u = new URL(request.url);
+    const range = u.searchParams.get('range') || '1m';
+    const params = rangeParams(range, u.searchParams.get('from'), u.searchParams.get('to'));
+    if (params.error) return json({ error: params.error }, 400);
+    const spot = await getMarket(env).catch(() => ({}));
+    const entries = await Promise.all(METALS.map(async (m) => [m.key, await metalSeries(env, m, params, spot[`${m.key}Oz`])]));
+    return json({ range, from: u.searchParams.get('from') || null, to: u.searchParams.get('to') || null, at: spot.at || Date.now(), spot: Object.fromEntries(METALS.map((m) => [m.key, spot[`${m.key}Oz`] || null])), metals: Object.fromEntries(entries) });
+  }
+  if (p === '/api/portal/metals/settings' && request.method === 'GET') return json(await metalPayload(JSON.parse(client.data || '{}')));
+  if (p === '/api/portal/metals/settings' && request.method === 'PUT') {
+    if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const alerts = cleanMetalSettings(b.alerts || {});
+    if (alerts.error) return json({ error: alerts.error }, 400);
+    const d = JSON.parse(client.data || '{}');
+    const prev = metalSettings(d);
+    // Osnovica kreće od današnje cijene kad se uključi upozorenje, promijeni prag ili doda metal: razlika se računa od tog trenutka.
+    const base = { ...prev.base };
+    const reset = !prev.alerts.on || prev.alerts.threshold !== alerts.threshold;
+    const spot = await fetchSpot(env);
+    for (const m of METALS) {
+      if (!alerts.metals[m.key]) delete base[m.key];
+      else if (spot[m.key] > 0 && (reset || !prev.alerts.metals[m.key] || !(base[m.key] > 0))) base[m.key] = spot[m.key];
+    }
+    d.metals = { ...(d.metals || {}), alerts, base };
+    await env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify(d), client.id).run();
+    return json(await metalPayload(d));
+  }
   // Bookings (19.11.2026): kupci koji su na svojoj stranici kliknuli Reserve with a deposit ili Book an appointment.
   if (p === '/api/portal/bookings' && request.method === 'GET') return json(await portalBookings(env, client));
   // Zlatar je otvorio tab: zahtjevi do sada su viđeni (obavještenje nestaje). Admin pregled ne mijenja ništa.
@@ -2098,6 +2134,11 @@ async function portalNotifications(env, client) {
     items.push({ id: r.id, lead: r.lead_id, type: r.type, at: r.at, name: r.name, email: r.email, piece: r.piece || '', meta: { action: meta.action || null, option: meta.option || null, kind: meta.kind || null, start: meta.start || null, amount: meta.amount ?? null, method: meta.method || null, kit: meta.kit || null, by: meta.by || null, moved: meta.moved || null } });
     if (items.length >= 150) break;
   }
+  // Upozorenja o kretanju cijena metala (Metal movement) idu u isti spisak.
+  const metals = (await env.DB.prepare('SELECT id, metal, from_price, to_price, pct, at FROM metal_alerts WHERE client_id = ? AND at > ? ORDER BY at DESC LIMIT 60').bind(client.id, since).all().catch(() => ({ results: [] }))).results;
+  for (const m of metals) items.push({ id: `m${m.id}`, lead: null, type: 'metal_move', at: m.at, name: '', email: '', piece: '', meta: { metal: m.metal, from: m.from_price, to: m.to_price, pct: m.pct } });
+  items.sort((a, b) => b.at - a.at);
+  items.length = Math.min(items.length, 150);
   return { seenAt, unseen: items.filter((x) => x.at > seenAt).length, items };
 }
 

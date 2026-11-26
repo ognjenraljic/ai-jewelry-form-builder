@@ -1139,4 +1139,70 @@ button.dbar.future { opacity: .35; cursor: default; }
   .cb-test { position: static; max-height: none; min-height: 0; margin-top: 22px; }
   .cb-t-log { max-height: 420px; }
   .cb-tryjump { display: inline; }
+/* Tab Metal movement (26.11.2026): grafik cijena metala i upozorenja. */
+.mm-top { display: grid; gap: 14px; margin-bottom: 18px; }
+.mm-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mm-bar .chips { margin: 0; }
+.mm-custom { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.mm-custom label { display: grid; gap: 4px; font-size: 12px; color: var(--ink-soft); }
+.mm-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.mm-card { display: grid; gap: 2px; padding: 14px 16px; text-align: left; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.mm-card:hover { border-color: var(--line-strong); }
+.mm-card.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+.mm-card-n { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-soft); }
+.mm-card b { font-weight: 700; font-size: 24px; line-height: 1.15; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.mm-card small { color: var(--ink-faint); font-size: 11.5px; }
+.mm-chg { margin-top: 4px; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.mm-main { position: relative; padding: 14px 14px 12px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); min-height: 300px; transition: opacity .2s; }
+.mm-main.is-loading { opacity: .55; }
+.mm-skel, .mm-empty { display: grid; place-items: center; align-content: center; gap: 12px; min-height: 280px; color: var(--ink-faint); text-align: center; }
+.mm-skel { background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--ink) 6%, transparent) 50%, transparent 70%) 0 0 / 200% 100%; animation: mm-sh 1.4s linear infinite; border-radius: 12px; }
+@keyframes mm-sh { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .mm-skel { animation: none; } }
+.mm-chart-wrap { position: relative; }
+.mm-chart [hidden] { display: none; }
+.mm-chart { display: block; width: 100%; height: auto; touch-action: pan-y; cursor: crosshair; }
+.mm-grid { stroke: var(--line); stroke-width: 1; }
+.mm-ax { fill: var(--ink-faint); font: 500 11px var(--sans); }
+.mm-cross { stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.mm-tip { position: absolute; transform: translate(-50%, -100%); display: grid; gap: 1px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface-2); pointer-events: none; white-space: nowrap; box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
+.mm-tip[hidden] { display: none; }
+.mm-tip b { font-size: 14px; font-variant-numeric: tabular-nums; }
+.mm-tip span { font-size: 11px; color: var(--ink-soft); }
+.mm-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--line); }
+.mm-stats div { display: grid; gap: 2px; }
+.mm-stats span { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+.mm-stats b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.mm-stats small { font-size: 11px; color: var(--ink-faint); }
+.mm-foot { margin: 10px 0 0; font-size: 11.5px; color: var(--ink-faint); }
+.mm-alerts .row { margin-bottom: 6px; }
+.mm-set { display: grid; gap: 14px; margin: 14px 0 4px; }
+.mm-set.off { opacity: .45; pointer-events: none; }
+.mm-field { display: grid; gap: 6px; }
+.mm-lab { font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+.mm-th { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mm-thin { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; font-size: 13px; color: var(--ink-soft); }
+.mm-thin input { width: 84px; }
+.mm-mets { display: flex; gap: 18px; flex-wrap: wrap; }
+.mm-progs { display: grid; gap: 12px; margin-bottom: 8px; }
+.mm-prog { display: grid; gap: 4px; }
+.mm-prog-t { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.mm-prog-t span { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.mm-prog-t em { font-style: normal; font-weight: 700; }
+.mm-bar-track { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.mm-bar-track i { display: block; height: 100%; border-radius: 999px; }
+.mm-prog small { color: var(--ink-faint); font-size: 11px; }
+.mm-recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.mm-recent li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.mm-recent li > span { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.mm-recent li em { font-style: normal; font-weight: 700; }
+.mm-recent time { margin-left: auto; font-size: 12px; color: var(--ink-faint); }
+.mm-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+@media (max-width: 700px) {
+  .mm-cards { gap: 8px; }
+  .mm-card { padding: 10px 11px; }
+  .mm-card b { font-size: 18px; }
+  .mm-chg { font-size: 12px; }
+  .mm-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mm-recent time { margin-left: 0; width: 100%; }
 }

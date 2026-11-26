@@ -1,5 +1,6 @@
 import { createLeadStore } from './leads.js';
 import { initChatbot, openChatbot, chatbotView, openTranscript, confirmLeaveChatbot } from './chatbot.js';
+import { initMetals, openMetals, metalsView } from './metals.js';
 import { estimate, stoneLayout, applyMarket, isLive, MARKET_METALS, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody, iceKey, iceFields, parseBudget, CHAIN_CATALOG, chainLine, chainWeight, defaultChainLine } from '/pricing.js';
 import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
@@ -1032,6 +1033,7 @@ async function boot() {
     return ended('Your portal', 'Open the portal link your JewelryLead team sent you.');
   }
   initChatbot({ api, esc, when, readOnly, rerender: () => render(), app, P });
+  initMetals({ api, esc, readOnly, rerender: () => render(), app, P });
   // A new setup draft must not hide a client's existing forms or enquiries.
   P.onboardingFlow = hasDraftOnboarding() && (onboardingRequested || (!P.me.forms.length && !P.me.stats.leads));
   P.tab = P.onboardingFlow ? 'onboarding' : 'leads';
@@ -1112,7 +1114,7 @@ const hasDraftOnboarding = () => P.me.onboarding?.status === 'draft';
 function portalTabs() {
   const unseen = P.bookings?.unseen || 0;
   const nUnseen = P.tab === 'notifications' ? 0 : P.notif?.unseen || 0;
-  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ['pricing', 'Pricing'], ['bookings', `Bookings${unseen ? ` <span class="tab-badge" aria-label="${unseen} new">${unseen}</span>` : ''}`], ['stats', 'Stats'], ['notifications', `Notifications${nUnseen ? ` <span class="tab-badge nbadge" aria-label="${nUnseen} new">${nUnseen > 99 ? '99+' : nUnseen}</span>` : ''}`], ...(P.me.pageAssistant ? [['chatbot', 'AI chatbot']] : []), ...(P.onboardingFlow && hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
+  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ['pricing', 'Pricing'], ['bookings', `Bookings${unseen ? ` <span class="tab-badge" aria-label="${unseen} new">${unseen}</span>` : ''}`], ['stats', 'Stats'], ['metals', 'Metal movement'], ['notifications', `Notifications${nUnseen ? ` <span class="tab-badge nbadge" aria-label="${nUnseen} new">${nUnseen > 99 ? '99+' : nUnseen}</span>` : ''}`], ...(P.me.pageAssistant ? [['chatbot', 'AI chatbot']] : []), ...(P.onboardingFlow && hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
   return `<nav class="tabs" aria-label="Client portal">${tabs.map(([key, label]) => `<button class="tab ${P.tab === key ? 'on' : ''}" data-tab="${key}" ${P.tab === key ? 'aria-current="page"' : ''}>${label}</button>`).join('')}</nav>`;
 }
 
@@ -1139,7 +1141,7 @@ function render() {
     <main class="wrap ${P.tab === 'leads' || P.tab === 'chatbot' ? 'wide' : ''}">
       ${portalTabs()}
       ${bookingAlert()}
-      ${P.tab === 'stats' || P.tab === 'notifications' || P.tab === 'chatbot' ? '' : `<div class="stats">
+      ${P.tab === 'stats' || P.tab === 'notifications' || P.tab === 'chatbot' || P.tab === 'metals' ? '' : `<div class="stats">
         <div class="stat">Leads<b>${stats.leads}</b></div>
         <div class="stat">Last 30 days<b>${stats.recent}</b></div>
         <div class="stat">AI renders<b>${stats.renders}</b></div>
@@ -1150,7 +1152,7 @@ function render() {
       </div>
       ${P.tab === 'leads' ? '' : usageView()}`}
       ${P.me.onboarding?.status === 'submitted' || P.me.onboarding?.status === 'building' ? `<div class="ob-sent"><b>Thank you, we have your answers.</b> We are building your form now and it will appear under Forms. Your leads will show up here as soon as customers use it.</div>` : ''}
-      ${P.tab === 'leads' ? leadsView() : P.tab === 'pricing' ? pricingView() : P.tab === 'bookings' ? bookingsView() : P.tab === 'stats' ? statsView() : P.tab === 'notifications' ? notifView() : P.tab === 'chatbot' ? chatbotView() : formsView()}
+      ${P.tab === 'leads' ? leadsView() : P.tab === 'pricing' ? pricingView() : P.tab === 'bookings' ? bookingsView() : P.tab === 'stats' ? statsView() : P.tab === 'notifications' ? notifView() : P.tab === 'chatbot' ? chatbotView() : P.tab === 'metals' ? metalsView() : formsView()}
       <p class="note">Want to change a form, add styles or questions? Contact your JewelryLead team.</p>
     </main>`;
 }
@@ -1650,7 +1652,7 @@ app.addEventListener('click', async (e) => {
   }
   if (['ghl-load', 'ghl-save', 'ghl-disconnect', 'ghl-users', 'ghl-calendars', 'ghl-hook'].includes(t.dataset.act)) { ghlAction(t.dataset.act.slice(4)); return; }
   if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
-  if (t.dataset.tab) { if (P.tab === 'chatbot' && t.dataset.tab !== 'chatbot' && !(await confirmLeaveChatbot())) return; P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); if (P.tab === 'chatbot') openChatbot(); }
+  if (t.dataset.tab) { if (P.tab === 'chatbot' && t.dataset.tab !== 'chatbot' && !(await confirmLeaveChatbot())) return; P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); if (P.tab === 'chatbot') openChatbot(); if (P.tab === 'metals') openMetals(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
   if (t.dataset.act === 'bk-save') { saveBooking(); return; }
   if (t.dataset.leadChat) { openTranscript(t.dataset.leadChat, t.dataset.leadName || ''); return; }
@@ -1928,6 +1930,7 @@ async function openNotif() {
 const NT = {
   created: ['new', (x) => `New lead: <b>${esc(x.name)}</b>${x.piece ? ` · ${esc(pieceName(x.piece))}` : ''}`],
   page_view: ['view', (x) => `<b>${esc(x.name)}</b> opened their page`],
+  metal_move: ['hot', (x) => `<b>${esc(({ gold: 'Gold', silver: 'Silver', platinum: 'Platinum' })[x.meta.metal] || x.meta.metal)}</b> moved <b style="color:${x.meta.pct >= 0 ? '#3ccf91' : '#ef6a6a'}">${x.meta.pct > 0 ? '+' : ''}${x.meta.pct}%</b> · $${(x.meta.from / 31.1035).toFixed(2)} to $${(x.meta.to / 31.1035).toFixed(2)} per gram`],
   chat_question: ['hot', (x) => `<b>${esc(x.name)}</b> asked the page assistant something only you can answer${x.meta?.q ? `: "${esc(x.meta.q)}"` : ''}`],
   page_action: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.action === 'appointment' ? 'asked for an appointment' : 'wants to reserve with a deposit'}${x.meta.option === 'fit' ? ' · Option 2' : x.meta.option === 'picked' ? ' · Option 1' : ''}`],
   auto_sent: ['mail', (x) => `First message emailed to <b>${esc(x.name)}</b> automatically`],
@@ -1954,7 +1957,7 @@ function notifView() {
     const k = dayKey(x.at);
     const head = k !== last ? `<h3 class="day-head"><span>${esc(dayTitle(k))}</span></h3>` : '';
     last = k;
-    return `${head}<button type="button" class="nt nt-${kind} ${x.at > seen ? 'is-new' : ''}" data-see-lead="${esc(x.email)}"><i class="nt-ic" aria-hidden="true"></i><span class="nt-t">${text(x)}</span><time>${esc(new Date(x.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))}</time>${x.at > seen ? '<em>New</em>' : ''}</button>`;
+    return `${head}<button type="button" class="nt nt-${kind} ${x.at > seen ? 'is-new' : ''}" ${x.type === 'metal_move' ? 'data-tab="metals"' : `data-see-lead="${esc(x.email)}"`}><i class="nt-ic" aria-hidden="true"></i><span class="nt-t">${text(x)}</span><time>${esc(new Date(x.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))}</time>${x.at > seen ? '<em>New</em>' : ''}</button>`;
   }).join('');
   return `${settings}<div class="nt-list">${list}</div><p class="note">Last 30 days. Tap a notification to open the lead.</p>`;
 }
