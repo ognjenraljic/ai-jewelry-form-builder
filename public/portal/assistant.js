@@ -1,7 +1,7 @@
 // Asistent portala (26.11.2026): dugme dolje desno otvara panel; pitanja o korištenju portala i o brojevima.
 // Istorija razgovora je na serveru (po sesiji portala), ovdje se samo crta.
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const TAB_LABEL = { leads: 'Open Leads', forms: 'Open Forms', pricing: 'Open Pricing', bookings: 'Open Bookings', stats: 'Open Stats', notifications: 'Open Notifications' };
+const TAB_LABEL = { leads: 'Open Leads', forms: 'Open Forms', pricing: 'Open Pricing', bookings: 'Open Bookings', stats: 'Open Stats', notifications: 'Open Notifications', metals: 'Open Metal movement', chatbot: 'Open AI chatbot' };
 const fmt = (t) => esc(t).replace(/\n/g, '<br />');
 
 export function mount({ api, store, goTab }) {

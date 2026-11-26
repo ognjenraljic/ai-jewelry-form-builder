@@ -1,6 +1,6 @@
-// Asistent na stranici kupca ISKLJUČEN prekidačem (PAGE_ASSISTANT nije '1', 26.11.2026): ni kad je u bazi sačuvano "page: true"
+// Asistent na stranici kupca ISKLJUČEN glavnim prekidačem (PAGE_ASSISTANT=0, 26.11.2026): ni kad je u bazi sačuvano "page: true"
 // nema widgeta, odgovora ni podešavanja, a asistent portala radi i ne pominje stranicu kupca.
-//   BASE=http://127.0.0.1:8823 node scripts/assistant-off-check.mjs   (server BEZ PAGE_ASSISTANT u .dev.vars)
+//   BASE=http://127.0.0.1:8823 node scripts/assistant-off-check.mjs   (server sa PAGE_ASSISTANT=0 u .dev.vars)
 import { readFileSync } from 'node:fs';
 import { SUGGESTED_PRICING } from '../public/pricing.js';
 

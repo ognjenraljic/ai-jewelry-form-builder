@@ -1651,6 +1651,7 @@ app.addEventListener('click', async (e) => {
     return;
   }
   if (['ghl-load', 'ghl-save', 'ghl-disconnect', 'ghl-users', 'ghl-calendars', 'ghl-hook'].includes(t.dataset.act)) { ghlAction(t.dataset.act.slice(4)); return; }
+  if (t.dataset.ntGroup) { P.notifGroup = t.dataset.ntGroup; render(); return; }
   if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if (t.dataset.tab) { if (P.tab === 'chatbot' && t.dataset.tab !== 'chatbot' && !(await confirmLeaveChatbot())) return; P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); if (P.tab === 'chatbot') openChatbot(); if (P.tab === 'metals') openMetals(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
@@ -1943,6 +1944,16 @@ const NT = {
   auto_send_failed: ['warn', (x) => `Could not email <b>${esc(x.name)}</b> automatically. Reply to them yourself.`],
   alert_failed: ['warn', (x) => `The new lead email for <b>${esc(x.name)}</b> did not go out`],
 };
+// Grupe notifikacija (26.11.2026): čipovi iznad liste filtriraju po vrsti, sa brojem i brojem novih.
+const NT_GROUPS = [
+  ['leads', 'New leads', ['created']],
+  ['bookings', 'Bookings & deposits', ['page_action', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment', 'order_created']],
+  ['pages', 'Page visits', ['page_view']],
+  ['chatbot', 'AI chatbot', ['chat_question']],
+  ['metals', 'Metal prices', ['metal_move']],
+  ['email', 'Emails', ['auto_sent', 'auto_send_failed', 'alert_failed']],
+];
+const ntGroupOf = (type) => (NT_GROUPS.find((g) => g[2].includes(type)) || ['other'])[0];
 function notifView() {
   const n = P.notif;
   if (!n) return '<p class="empty" role="status">Loading notifications…</p>';
@@ -1951,15 +1962,22 @@ function notifView() {
   const settings = `<div class="nt-set"><div><b>Email alerts</b><span>${!P.me.mail ? 'Email sending is not set up yet; everything still shows here.' : mails ? `A new lead email goes to ${mails} address${mails === 1 ? '' : 'es'}${pr.autoSend ? ', and the first message goes to the customer automatically' : ''}.` : 'No address yet: add one to get an email for every new lead.'}</span></div><button type="button" class="btn small" data-act="alert-settings">Alert settings</button></div>`;
   if (!n.items.length) return `${settings}<p class="empty">Nothing yet. New leads, customers opening their page and booking requests show up here.</p>`;
   const seen = P.notifShownSeen ?? n.seenAt;
+  const count = {}; const fresh = {};
+  for (const x of n.items) { const g = ntGroupOf(x.type); count[g] = (count[g] || 0) + 1; if (x.at > seen) fresh[g] = (fresh[g] || 0) + 1; }
+  const group = P.notifGroup && count[P.notifGroup] ? P.notifGroup : 'all';
+  const allNew = n.items.filter((x) => x.at > seen).length;
+  const chip = (k, label, c, f) => `<button type="button" class="nt-g ${group === k ? 'on' : ''}" data-nt-group="${k}" aria-pressed="${group === k}" ${c ? '' : 'disabled'}><span>${label}</span><b>${c || 0}</b>${f ? `<em aria-label="${f} new">${f} new</em>` : ''}</button>`;
+  const groups = `<div class="nt-groups" role="group" aria-label="Notification groups">${chip('all', 'All', n.items.length, allNew)}${NT_GROUPS.map(([k, label]) => chip(k, label, count[k], fresh[k])).join('')}</div>`;
+  const items = group === 'all' ? n.items : n.items.filter((x) => ntGroupOf(x.type) === group);
   let last = '';
-  const list = n.items.map((x) => {
+  const list = items.map((x) => {
     const [kind, text] = NT[x.type] || ['view', (y) => esc(y.name)];
     const k = dayKey(x.at);
     const head = k !== last ? `<h3 class="day-head"><span>${esc(dayTitle(k))}</span></h3>` : '';
     last = k;
     return `${head}<button type="button" class="nt nt-${kind} ${x.at > seen ? 'is-new' : ''}" ${x.type === 'metal_move' ? 'data-tab="metals"' : `data-see-lead="${esc(x.email)}"`}><i class="nt-ic" aria-hidden="true"></i><span class="nt-t">${text(x)}</span><time>${esc(new Date(x.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))}</time>${x.at > seen ? '<em>New</em>' : ''}</button>`;
   }).join('');
-  return `${settings}<div class="nt-list">${list}</div><p class="note">Last 30 days. Tap a notification to open the lead.</p>`;
+  return `${settings}${groups}<div class="nt-list">${list}</div><p class="note">Last 30 days. Tap a notification to open the lead${count.metals ? ' (metal alerts open Metal movement)' : ''}.</p>`;
 }
 
 // ---------- Onboarding (vodič za zlatara) ----------
