@@ -730,7 +730,7 @@ function bookingSettingsView() {
 // AI asistent na stranicama kupaca (26.11.2026): uključenje i znanje radnje koje asistent smije da kaže kupcu.
 function assistantSettingsView() {
   const r = P.asCfg;
-  if (!r) return '';
+  if (!r || !r.available) return '';
   const c = r.settings;
   const ro = readOnly();
   const faq = c.faq?.length ? c.faq : [{ q: '', a: '' }];

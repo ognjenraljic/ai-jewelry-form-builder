@@ -288,6 +288,6 @@ Try-on više nije samo za grillz: poslije rendera kupac ubaci fotografiju i vidi
 
 ## AI asistenti (26.11.2026)
 
-- Stranica kupca: asistent odgovara o dizajnu, ponudama (tačne cijene), depozitu, terminima i radnji; podrazumijevano ISKLJUČEN, zlatar ga pali u Portal → Bookings → Assistant on customer pages i upisuje šta smije reći. Nepoznato ide timu (Notifications + razgovor na kartici leada).
+- Stranica kupca (iza prekidača `PAGE_ASSISTANT=1` na Workeru, bez njega ništa od ovoga nije vidljivo): asistent odgovara o dizajnu, ponudama (tačne cijene), depozitu, terminima i radnji; podrazumijevano ISKLJUČEN, zlatar ga pali u Portal → Bookings → Assistant on customer pages i upisuje šta smije reći. Nepoznato ide timu (Notifications + razgovor na kartici leada).
 - Portal: dugme "Ask" na svakom tabu, pomoć za korištenje (vodič `PORTAL_GUIDE`) i brojevi koje server sam izračuna.
 - Workers AI (binding `AI`, `CHAT_MODEL` mijenja model), razgovori u D1 `chats` (migracija 0041). Detalji `docs/assistants.md`, pitanja za radnju `docs/assistant-store-questions.md`, provjera `scripts/assistant-check.mjs`.

@@ -1582,14 +1582,15 @@ async function portalApi(request, env, p, secure, ctx) {
     });
   }
   // AI asistenti (26.11.2026): podešavanje asistenta na stranicama kupaca, razgovor kupca na leadu i asistent portala.
-  if (p === '/api/portal/assistant/settings' && request.method === 'GET') return json({ settings: assistantSettings(JSON.parse(client.data || '{}')), fields: ASSIST_FIELDS });
+  if (p === '/api/portal/assistant/settings' && request.method === 'GET') return json({ available: pageAssistantOn(env), settings: assistantSettings(JSON.parse(client.data || '{}')), fields: ASSIST_FIELDS });
   if (p === '/api/portal/assistant/settings' && request.method === 'PUT') {
+    if (!pageAssistantOn(env)) return json({ error: 'Not available yet.' }, 403);
     if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
     const b = await request.json().catch(() => ({}));
     const d = JSON.parse(client.data || '{}');
     d.assistant = cleanAssistant(b.settings || {}, d.assistant || {});
     await env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify(d), client.id).run();
-    return json({ settings: assistantSettings(d), fields: ASSIST_FIELDS });
+    return json({ available: true, settings: assistantSettings(d), fields: ASSIST_FIELDS });
   }
   let cm;
   if ((cm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/chat$/)) && request.method === 'GET') {
@@ -1673,7 +1674,7 @@ async function portalApi(request, env, p, secure, ctx) {
     const [leadRes, countRows, pieceRows, dayRes, vrowsRes, tagRows, budgetRows, archRow] = await Promise.all([env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.email, l.phone, l.answers, l.ref_key, l.files, l.created_at, l.status, l.note, l.quotes, l.page_key, l.page, l.tags, l.archived_at,
         l.alerted_at, l.auto_sent_at, l.first_reply_at, l.order_no, l.order_data, l.lead_no, l.ghl_order, l.deposit, l.fulfillment,
         (SELECT json_object('kind', a.kind, 'start', a.start_at, 'via', a.via, 'purpose', a.purpose) FROM appointments a WHERE a.lead_id = l.id AND a.status = 'booked' AND a.end_at > CAST(strftime('%s', 'now') AS INTEGER) * 1000 ORDER BY a.start_at LIMIT 1) AS appt,
-        (SELECT json_object('turns', ch.turns, 'handoff', ch.handoff, 'at', ch.updated_at) FROM chats ch WHERE ch.id = 'p_' || l.id) AS chat
+        ${pageAssistantOn(env) ? "(SELECT json_object('turns', ch.turns, 'handoff', ch.handoff, 'at', ch.updated_at) FROM chats ch WHERE ch.id = 'p_' || l.id)" : 'NULL'} AS chat
       FROM leads l JOIN forms f ON f.id = l.form_id WHERE ${where.join(' AND ')} ORDER BY l.created_at DESC LIMIT ${PAGE_SIZE + 1}`).bind(...args).all(),
     // Brojevi po statusu prate izabrani komad; brojevi po komadu su uvijek za sve upite zlatara.
     env.DB.prepare(`SELECT COALESCE(l.status, 'new') AS s, COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL${piece ? " AND json_extract(l.answers, '$.type') = ?" : ''} GROUP BY COALESCE(l.status, 'new')`).bind(...(piece ? [client.id, piece] : [client.id])).all(),
@@ -1912,6 +1913,7 @@ async function portalAssistant(request, env, client, sess, formRows, forms) {
   const cdata = JSON.parse(client.data || '{}');
   const tz = bookingSettings(cdata.booking).tz || 'America/Denver';
   const since30 = Date.now() - 30 * 864e5;
+  const pageOn = pageAssistantOn(env);
   const [rows, speed, gen, ap, spent, cq, chatN] = await Promise.all([
     env.DB.prepare(`SELECT l.id, l.form_id, l.name, l.phone, l.created_at, COALESCE(l.status, 'new') AS status, l.first_reply_at, l.tags, l.lead_no, l.deposit,
         json_extract(l.answers, '$.type') AS type, json_extract(l.answers, '$.budget') AS budget,
@@ -1936,10 +1938,10 @@ async function portalAssistant(request, env, client, sess, formRows, forms) {
     renders: gen?.renders || 0, films: gen?.films || 0, usage: { spent, limit: monthlyBudget(env) },
     appts: ap ? { upcoming: ap.upcoming || 0, last30: ap.last30 || 0, done: ap.done || 0, noshow: ap.noshow || 0 } : null,
     pieceName: (t) => pieceNames[t] || null,
-    chatQuestions: cq.results.map((x) => ({ at: x.at, name: x.name, q: x.q })), chats: chatN?.n ?? null,
+    chatQuestions: pageOn ? cq.results.map((x) => ({ at: x.at, name: x.name, q: x.q })) : [], chats: pageOn ? chatN?.n ?? null : null,
   });
   const messages = [...chat.messages, { r: 'u', t: text, at: Date.now() }];
-  const raw = await runChat(env, portalSystemPrompt(client.name, stats), messages, { maxTokens: 500, temperature: 0.2 });
+  const raw = await runChat(env, portalSystemPrompt(client.name, stats, pageOn), messages, { maxTokens: 500, temperature: 0.2 });
   const out = raw ? tidy(raw, ['tab:']) : { text: 'Sorry, I could not answer right now. Please try again in a moment.', tags: [] };
   const tags = out.tags.filter((t) => /^tab:(leads|forms|pricing|bookings|stats|notifications)$/.test(t));
   messages.push({ r: 'a', t: out.text, at: Date.now(), ...(tags.length ? { tags } : {}) });
@@ -3127,7 +3129,7 @@ async function pageData(env, row, key, url) {
     store: { name: form.brand?.name || row.client_name || 'Our studio', logo: form.brand?.logo || '', info: quoteInfoText(pricing?.quoteInfo) || '' },
     renders: renders.map((r, k) => ({ url: `/media/${r.image_key}`, label: k === 0 ? 'First design' : r.tweak ? `Change ${k}` : `Version ${k + 1}` })),
     film: film ? `/media/${film.video_key}` : '',
-    assistant: { on: !!row.client_id && assistantSettings(client).page },
+    assistant: { on: pageAssistantOn(env) && !!row.client_id && assistantSettings(client).page },
     hoursText: bcfg.enabled ? hoursText(bcfg) : '',
   };
 }
@@ -3139,7 +3141,10 @@ function hoursText(cfg) {
 
 // ---------- AI asistent na stranici kupca (26.11.2026) ----------
 // Jedan razgovor po leadu (chats.id = p_<lead>); pregled zlatara (?preview=1) ide u poseban razgovor i ne obavještava.
+// Asistent na stranici kupca je iza prekidača: dok PAGE_ASSISTANT nije '1' na Workeru, nema widgeta, odgovora ni podešavanja (26.11.2026).
+const pageAssistantOn = (env) => env.PAGE_ASSISTANT === '1';
 async function pageChat(request, env, ctx, key, url) {
+  if (!pageAssistantOn(env)) return json({ on: false });
   const row = await env.DB.prepare(`SELECT l.*, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id
       LEFT JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?`).bind(key).first();
   if (!row) return json({ error: 'Not found' }, 404);
