@@ -30,3 +30,15 @@ Two assistants, one module (`src/assistant.js`), one model call path, transcript
 ## Checks
 
 `BASE=http://127.0.0.1:8823 node scripts/assistant-check.mjs` (real Workers AI through local wrangler dev, a few cents): 34 checks, prints every question and answer.
+
+## AI chatbot tab in the portal (26.11.2026)
+
+Visible only when `PAGE_ASSISTANT=1` (the tab, its routes and the settings do not exist otherwise). Code: `public/portal/chatbot.js`, routes in `src/worker.js` (`/api/portal/assistant/settings`, `/api/portal/chatbot/*`).
+
+- **Switch** at the top: on/off for all customer pages, applied at once, separate from Save (`{ onlyPage: true, page }`). **Off by default** for every store.
+- **Rules** (what it may answer, what it must never say or do, tone, when to pass to the team, blocked words and phrases), **Knowledge** (9 boxes + contact), **Examples** (question + answer pairs, max 30), **Conversations** (every customer chat, "Needs you" filter, "Use as example" / "Teach the chatbot" on any chatbot answer, "Mark as handled"). Total text limit 24,000 characters.
+- **Recommended rules** (`DEFAULT_ASSIST` in `src/assistant.js`) are filled in and active until the store saves its own (`customized: true`). They contain no facts about the store. After the first Save, what the store saved always wins, even when empty. "Reset to the recommended rules / examples" in the tab.
+- **Priority in the prompt**: facts of the page, then knowledge, then the store's rules (binding), then examples. An example wins over knowledge when they disagree (it is the newest instruction). Blocked phrases are checked after the model: a hit replaces the answer with the hand-off message and the question goes to the team. Prices are checked as before.
+- **Try it** (right side of the tab, below on narrow screens): answers with the rules exactly as written in the form, even unsaved, for a sample customer (Alex) or a real lead. Nothing is saved on a lead, no notification, no count (`chats t_<session>`, 30 per 10 min). It shows why an answer was blocked and offers "Save as example".
+- **Unsaved changes**: leaving the tab, Sign out, Exit view, closing or reloading the page asks first. Switching between Rules, Knowledge and Examples keeps the draft.
+- Checks: `scripts/assistant-check.mjs` (72, real Workers AI, `PAGE_ASSISTANT=1` in `.dev.vars`) and `scripts/assistant-off-check.mjs` (13, flag off).

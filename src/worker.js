@@ -10,7 +10,7 @@ import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
 import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ, middleGround, specDiff, chainLine } from '../public/pricing.js';
 import { leadPageHtml, PAGE_ACTIONS, pageFacts } from './leadpage.js';
-import { cleanAssistant, assistantSettings, ASSIST_FIELDS, loadChat, saveChat, overLimit, publicMessages, runChat, tidy, pageSystemPrompt, pageFactsText, pricesOk, PAGE_FALLBACK, pageGreeting, pageSuggestions, portalSystemPrompt, PORTAL_SUGGESTIONS, statsText, MAX_MESSAGE } from './assistant.js';
+import { cleanAssistant, assistantSettings, assistantSize, bannedHit, RULE_FIELDS, DEFAULT_ASSIST, sampleFacts, pageAnswer, MAX_TOTAL, ASSIST_FIELDS, loadChat, saveChat, overLimit, publicMessages, runChat, tidy, pageSystemPrompt, pageFactsText, pricesOk, PAGE_FALLBACK, pageGreeting, pageSuggestions, portalSystemPrompt, PORTAL_SUGGESTIONS, statsText, MAX_MESSAGE } from './assistant.js';
 import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
 import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
@@ -1578,6 +1578,7 @@ async function portalApi(request, env, p, secure, ctx) {
     return json({
       session: { kind: sess.kind, expiresAt: sess.expires_at || null },
       mail: mailOn(env),
+      pageAssistant: pageAssistantOn(env),
       speed,
       client: { id: client.id, name: client.name, logo: d.logo || null, website: d.website || '' },
       onboarding: ob ? { id: ob.id, status: ob.status, rev: ob.rev, data: JSON.parse(ob.data || '{}'), updatedAt: ob.updated_at, submittedAt: ob.submitted_at } : null,
@@ -1595,22 +1596,120 @@ async function portalApi(request, env, p, secure, ctx) {
       usage: { spent: Math.round(spent * 100) / 100, limit: monthlyBudget(env), resetsAt: monthStart(Date.now(), 1) },
     });
   }
-  // AI asistenti (26.11.2026): podešavanje asistenta na stranicama kupaca, razgovor kupca na leadu i asistent portala.
-  if (p === '/api/portal/assistant/settings' && request.method === 'GET') return json({ available: pageAssistantOn(env), settings: assistantSettings(JSON.parse(client.data || '{}')), fields: ASSIST_FIELDS });
+  // AI chatbot (26.11.2026): tab AI chatbot u portalu. Pravila, znanje i primjeri se čitaju iz postavki pri SVAKOJ poruci kupca,
+  // pa sačuvano važi odmah; istorija razgovora kupaca; "Teach the bot" dodaje odgovor među primjere.
+  const botPayload = (d) => ({ available: true, defaults: { rules: DEFAULT_ASSIST.rules, banned: DEFAULT_ASSIST.banned, examples: DEFAULT_ASSIST.examples }, settings: assistantSettings(d), fields: ASSIST_FIELDS, ruleFields: RULE_FIELDS.map(([key, label, hint, sample, max]) => ({ key, label, hint, sample, max })), size: assistantSize(assistantSettings(d)), limit: MAX_TOTAL });
+  const botSave = async (d, next) => {
+    const cleaned = cleanAssistant(next, d.assistant || {});
+    const size = assistantSize(cleaned);
+    if (size > MAX_TOTAL) return json({ error: `Too much text: ${size.toLocaleString('en-US')} of ${MAX_TOTAL.toLocaleString('en-US')} characters. Shorten some boxes or remove an example.` }, 400);
+    d.assistant = cleaned;
+    await env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify(d), client.id).run();
+    return null;
+  };
+  if (p === '/api/portal/assistant/settings' && request.method === 'GET') return pageAssistantOn(env) ? json(botPayload(JSON.parse(client.data || '{}'))) : json({ available: false });
   if (p === '/api/portal/assistant/settings' && request.method === 'PUT') {
     if (!pageAssistantOn(env)) return json({ error: 'Not available yet.' }, 403);
     if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
     const b = await request.json().catch(() => ({}));
     const d = JSON.parse(client.data || '{}');
-    d.assistant = cleanAssistant(b.settings || {}, d.assistant || {});
-    await env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify(d), client.id).run();
-    return json({ available: true, settings: assistantSettings(d), fields: ASSIST_FIELDS });
+    // Prekidač djeluje odmah i ne dira pravila (ne pretvara preporučena pravila u "sačuvana").
+    if (b.settings?.onlyPage === true) {
+      const prev = d.assistant || {};
+      const on = b.settings.page === true;
+      d.assistant = { ...prev, page: on, ...(on && prev.page !== true ? { onSince: Date.now() } : {}) };
+      await env.DB.prepare('UPDATE clients SET data = ? WHERE id = ?').bind(JSON.stringify(d), client.id).run();
+      return json(botPayload(d));
+    }
+    const bad = await botSave(d, b.settings || {});
+    return bad || json(botPayload(d));
+  }
+  if (p === '/api/portal/chatbot/teach' && request.method === 'POST') {
+    if (!pageAssistantOn(env)) return json({ error: 'Not available yet.' }, 403);
+    if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const q = clean(b.q, 300);
+    const a = String(b.a ?? '').replace(/\r/g, '').trim().slice(0, 800);
+    if (!q || !a) return json({ error: 'Write the answer first.' }, 400);
+    const d = JSON.parse(client.data || '{}');
+    const cur = assistantSettings(d);
+    const same = cur.examples.findIndex((x) => x.q.toLowerCase() === q.toLowerCase());
+    if (same < 0 && cur.examples.length >= 30) return json({ error: 'The limit is 30 examples. Remove one in the Examples tab first.' }, 400);
+    const examples = same < 0 ? [...cur.examples, { q, a }] : cur.examples.map((x, k) => (k === same ? { q, a } : x));
+    const bad = await botSave(d, { ...cur, examples });
+    if (bad) return bad;
+    if (/^[a-z0-9]+$/.test(String(b.leadId || ''))) {
+      await env.DB.prepare(`UPDATE chats SET handoff = 0 WHERE id = ? AND client_id = ?`).bind(`p_${b.leadId}`, client.id).run();
+    }
+    return json(botPayload(d));
+  }
+  // Probni chat u tabu: odgovara po pravilima KAKO SU TRENUTNO NAPISANA (i prije snimanja), na uzorku kupca ili na pravom leadu.
+  // Ništa se ne šalje kupcu, ne bilježi na lead i ne obavještava; razgovor je samo u tabu (chats t_<sesija>).
+  if (p === '/api/portal/chatbot/test' && request.method === 'GET') {
+    if (!pageAssistantOn(env)) return json({ messages: [] });
+    const chat = await loadChat(env, `t_${sess.id}`);
+    return json({ messages: chat.messages.map((m) => ({ role: m.r === 'u' ? 'user' : 'assistant', text: m.t, tags: m.tags || [], why: m.why || '' })) });
+  }
+  if (p === '/api/portal/chatbot/test/reset' && request.method === 'POST') {
+    await env.DB.prepare('DELETE FROM chats WHERE id = ?').bind(`t_${sess.id}`).run();
+    return json({ ok: true });
+  }
+  if (p === '/api/portal/chatbot/test' && request.method === 'POST') {
+    if (!pageAssistantOn(env)) return json({ error: 'Not available yet.' }, 403);
+    const b = await request.json().catch(() => ({}));
+    const text = clean(b.message, MAX_MESSAGE);
+    if (!text) return json({ error: 'Write a question first.' }, 400);
+    const id = `t_${sess.id}`;
+    const chat = await loadChat(env, id);
+    const limit = overLimit(chat.messages, { per10: 30, perDay: 300 });
+    if (limit) return json({ error: limit }, 429);
+    let f;
+    if (/^[a-z0-9]+$/.test(String(b.leadId || ''))) {
+      const row = await env.DB.prepare(`SELECT l.*, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id
+          LEFT JOIN clients c ON c.id = f.client_id WHERE l.id = ? AND f.client_id = ?`).bind(b.leadId, client.id).first();
+      if (!row?.page_key) return json({ error: 'That customer has no page yet.' }, 404);
+      f = pageFacts(await pageData(env, row, row.page_key, new URL(request.url)));
+    } else f = sampleFacts(client.name);
+    const settings = b.settings ? assistantSettings({ assistant: cleanAssistant(b.settings, {}) }) : assistantSettings(JSON.parse(client.data || '{}'));
+    const messages = [...chat.messages, { r: 'u', t: text, at: Date.now() }];
+    const { out, why, handoff } = await pageAnswer(env, f, settings, messages);
+    messages.push({ r: 'a', t: out.text, at: Date.now(), ...(out.tags.length ? { tags: out.tags } : {}), ...(why ? { why } : {}) });
+    await saveChat(env, { id, scope: 'test', clientId: client.id, leadId: null, messages });
+    return json({ reply: out.text, tags: out.tags, handoff, why });
+  }
+  if (p === '/api/portal/chatbot/chats' && request.method === 'GET') {
+    if (!pageAssistantOn(env)) return json({ items: [], more: false, next: null, counts: { all: 0, needs: 0 } });
+    const u = new URL(request.url);
+    const needs = u.searchParams.get('filter') === 'needs';
+    const before = Number(u.searchParams.get('before')) || Date.now() + 1;
+    const [rows, counts] = await Promise.all([
+      env.DB.prepare(`SELECT c.lead_id, c.turns, c.handoff, c.updated_at, c.messages, l.name, l.lead_no, json_extract(l.answers, '$.type') AS type
+          FROM chats c JOIN leads l ON l.id = c.lead_id JOIN forms f ON f.id = l.form_id
+          WHERE f.client_id = ? AND c.scope = 'page' AND c.turns > 0 AND c.updated_at < ? ${needs ? 'AND c.handoff = 1' : ''} ORDER BY c.updated_at DESC LIMIT 31`).bind(client.id, before).all(),
+      env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(c.handoff), 0) AS h FROM chats c JOIN leads l ON l.id = c.lead_id JOIN forms f ON f.id = l.form_id
+          WHERE f.client_id = ? AND c.scope = 'page' AND c.turns > 0`).bind(client.id).first(),
+    ]);
+    const more = rows.results.length > 30;
+    const items = rows.results.slice(0, 30).map((r) => {
+      const msgs = parseJson(r.messages, []);
+      const lastQ = Array.isArray(msgs) ? [...msgs].reverse().find((m) => m.r === 'u') : null;
+      return { leadId: r.lead_id, ref: leadRef(r.lead_no), name: r.name, piece: r.type || '', turns: r.turns, handoff: !!r.handoff, at: r.updated_at, last: lastQ ? String(lastQ.t).slice(0, 140) : '' };
+    });
+    return json({ items, more, next: more ? items[items.length - 1].at : null, counts: { all: counts?.n || 0, needs: counts?.h || 0 } });
   }
   let cm;
   if ((cm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/chat$/)) && request.method === 'GET') {
     const lead = await env.DB.prepare('SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(cm[1], client.id).first();
     if (!lead) return json({ error: 'Not found' }, 404);
-    return json({ messages: publicMessages((await loadChat(env, `p_${lead.id}`)).messages) });
+    const chat = await loadChat(env, `p_${lead.id}`);
+    return json({ messages: publicMessages(chat.messages), handoff: !!chat.row?.handoff });
+  }
+  if ((cm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/chat\/handled$/)) && request.method === 'POST') {
+    if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
+    const lead = await env.DB.prepare('SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id WHERE l.id = ? AND f.client_id = ?').bind(cm[1], client.id).first();
+    if (!lead) return json({ error: 'Not found' }, 404);
+    await env.DB.prepare('UPDATE chats SET handoff = 0 WHERE id = ?').bind(`p_${lead.id}`).run();
+    return json({ ok: true });
   }
   if (p === '/api/portal/assistant' && (request.method === 'GET' || request.method === 'POST')) return portalAssistant(request, env, client, sess, formRows, forms);
   // Bookings (19.11.2026): kupci koji su na svojoj stranici kliknuli Reserve with a deposit ili Book an appointment.
@@ -3175,15 +3274,8 @@ async function pageChat(request, env, ctx, key, url) {
   if (!text) return json({ error: 'Write a question first.' }, 400);
   const limit = overLimit(chat.messages, { per10: 12, perDay: 50 });
   if (limit) return json({ error: limit }, 429);
-  const facts = pageFactsText(f);
-  const knowledge = JSON.stringify(settings);
   const messages = [...chat.messages, { r: 'u', t: text, at: Date.now() }];
-  const raw = await runChat(env, pageSystemPrompt({ ...f, text: facts }, settings), messages, { maxTokens: 300, temperature: 0.3 });
-  let out = raw ? tidy(raw, ['deposit', 'book', 'team']) : null;
-  // Iznos koji ne postoji na stranici ni u znanju radnje = odgovor se ne pokazuje (asistent ne smije izmišljati cijene).
-  const fallback = !out?.text || !pricesOk(out.text, facts, knowledge, messages.filter((m) => m.r === 'u').map((m) => m.t).join('\n'));
-  if (fallback) { if (raw) console.log('page chat rejected', JSON.stringify(raw.slice(0, 300))); out = { text: raw ? PAGE_FALLBACK : 'Sorry, I could not answer right now. Please try again in a moment.', tags: raw ? ['team'] : [] }; }
-  const handoff = out.tags.includes('team');
+  const { out, handoff } = await pageAnswer(env, f, settings, messages);
   messages.push({ r: 'a', t: out.text, at: Date.now(), ...(out.tags.length ? { tags: out.tags } : {}) });
   await saveChat(env, { id, scope: preview ? 'preview' : 'page', clientId: row.client_id, leadId: row.id, messages, handoff });
   if (!preview) {

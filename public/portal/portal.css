@@ -1064,3 +1064,79 @@ button.dbar.future { opacity: .35; cursor: default; }
   .pa-panel { inset: auto 0 0 0; width: 100%; height: min(88dvh, 100dvh - 40px); border-radius: 20px 20px 0 0; border-bottom: 0; padding-bottom: env(safe-area-inset-bottom); }
   .pa-form textarea { font-size: 16px; }
 }
+
+/* Tab AI chatbot (26.11.2026): prekidač, pravila, znanje, primjeri i istorija razgovora. */
+.cb-top { display: grid; gap: 12px; }
+.cb-switch { margin: 0; }
+.cb-intro { margin: 0; line-height: 1.55; }
+.cb-intro a { color: var(--accent); font-weight: 600; }
+.cb-subs { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 16px; border-bottom: 1px solid var(--line); }
+.cb-sub-btn { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 14px; margin-bottom: -1px; color: var(--ink-soft); font: 600 13.5px/1 var(--sans); cursor: pointer; }
+.cb-sub-btn:hover { color: var(--ink); }
+.cb-sub-btn.on { color: var(--ink); border-bottom-color: var(--accent); }
+.cb-lead { margin: 0 0 14px; max-width: 760px; line-height: 1.55; }
+.cb-rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.cb-box { display: grid; gap: 6px; align-content: start; }
+.cb-box textarea, .as-grid textarea { resize: vertical; font: 13.5px/1.5 var(--sans); }
+.cb-box .hint { margin: 0; }
+.cb-lab { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.cb-count { font-weight: 500; font-size: 11.5px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.cb-link { background: none; border: 0; padding: 0; color: var(--accent); font: 600 12.5px/1.3 var(--sans); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.cb-save { position: sticky; bottom: 0; z-index: 5; margin: 18px 0 0; padding: 12px 0; background: linear-gradient(to top, var(--bg) 70%, transparent); flex-wrap: wrap; }
+.cb-meter { margin-left: auto; font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.cb-meter.over { color: var(--warn); font-weight: 700; }
+.cb-addrow { display: flex; align-items: center; gap: 12px; margin: 4px 0 10px; }
+.cb-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0 4px; }
+.cb-empty { padding: 26px 0; }
+.cb-ex input.in { font-weight: 600; }
+.cb-err { margin: 0 0 12px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warn) 50%, var(--line)); border-radius: 10px; color: var(--warn); font-size: 13px; }
+.cb-filters { display: flex; gap: 6px; margin-bottom: 14px; }
+.cb-chats { display: grid; gap: 8px; margin-bottom: 14px; }
+.cb-chat { display: grid; gap: 4px; width: 100%; padding: 12px 14px; text-align: left; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.cb-chat:hover { border-color: var(--line-strong); }
+.cb-chat.needs { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+.cb-chat-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cb-chat-top b { font-size: 14px; }
+.cb-chat-when { margin-left: auto; font-size: 12px; color: var(--ink-faint); }
+.cb-chat-last { font-size: 13px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cl-handoff { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--warn) 50%, var(--line)); border-radius: 12px; color: var(--warn); font-size: 13px; font-weight: 600; }
+.cl-teach { margin-top: 8px; display: grid; gap: 8px; }
+.cl-tl { display: grid; gap: 4px; font-size: 12px; color: var(--ink-soft); }
+.cl-tact { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cl-saved { margin: 0 !important; font-size: 12.5px !important; font-weight: 600; color: var(--accent); }
+@media (max-width: 700px) { .cb-rules { grid-template-columns: 1fr; } .cb-chat-when { margin-left: 0; } .cb-save { padding-right: 104px; } .cb-meter { margin-left: 0; width: 100%; } }
+
+/* Probni chat i preporučena pravila u tabu AI chatbot. */
+.cb-note { margin: 0 0 16px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--accent) 7%, transparent); font-size: 13.5px; line-height: 1.55; color: var(--ink-soft); }
+.cb-note b { color: var(--ink); }
+.cb-right { float: right; margin-left: 12px; }
+.cb-layout { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 24px; align-items: start; }
+.cb-main { min-width: 0; }
+.cb-test { position: sticky; top: 14px; display: flex; flex-direction: column; gap: 10px; max-height: calc(100vh - 28px); min-height: 480px; padding: 16px; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--panel); }
+.cb-t-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.cb-t-kick { margin: 0 0 2px; font-size: 10.5px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); }
+.cb-t-head h3 { margin: 0; font-family: var(--serif); font-weight: 500; font-size: 22px; }
+.cb-t-sub { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-soft); }
+.cb-t-sub b { color: var(--ink); }
+.cb-t-lead { display: grid; gap: 4px; font-size: 12px; color: var(--ink-soft); }
+.cb-t-log { flex: 1; min-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 2px 2px 4px; overscroll-behavior: contain; }
+.cb-t-empty { margin: auto; text-align: center; font-size: 13px; color: var(--ink-faint); }
+.cb-t-m { max-width: 92%; display: grid; gap: 4px; }
+.cb-t-m p { margin: 0; padding: 9px 12px; border-radius: 14px; font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.cb-t-a { align-self: flex-start; }
+.cb-t-a p { background: var(--surface); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+.cb-t-a.err p { border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); color: var(--warn); }
+.cb-t-u { align-self: flex-end; }
+.cb-t-u p { background: color-mix(in srgb, var(--accent) 15%, var(--surface)); border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent); border-bottom-right-radius: 5px; }
+.cb-t-note { font-size: 11.5px; color: var(--ink-faint); padding: 0 4px; }
+.cb-t-note.warn { color: var(--warn); font-weight: 600; }
+.cb-t-a .cb-link { justify-self: start; padding: 0 4px; font-size: 12px; }
+.cb-t-sugg { display: flex; flex-wrap: wrap; gap: 6px; }
+.cb-t-form { margin: 0; }
+.cb-tryjump { display: none; }
+@media (max-width: 1180px) {
+  .cb-layout { grid-template-columns: 1fr; }
+  .cb-test { position: static; max-height: none; min-height: 0; margin-top: 22px; }
+  .cb-t-log { max-height: 420px; }
+  .cb-tryjump { display: inline; }
+}
