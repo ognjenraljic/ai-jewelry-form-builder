@@ -31,6 +31,7 @@ createServer((req, res) => {
     if (url === '/file/video.mp4') return send(res, 200, video, 'video/mp4');
     if (req.method === 'PUT') { log.uploads++; return send(res, 200, {}); }
     if (req.headers['x-api-key'] !== 'mock-local') return send(res, 401, { message: 'no key' });
+    if (url === '/billing/balance') return send(res, 200, { balance_micro_usd: +(process.env.MOCK_BALANCE_USD || 12.34) * 1e6 });
     if (url === '/v1/media/uploads') return send(res, 200, { upload_url: `${self}/put/${++n}`, url: `https://cdn.mock/${n}`, headers: {} });
     const m = url.match(/^\/v1\/media\/jobs\/(.+)$/);
     if (m) {
