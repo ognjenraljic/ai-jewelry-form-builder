@@ -40,30 +40,36 @@ const MODELS = {
   gptflare: { provider: 'openai', id: 'gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high', mask: true },
   gptsun: { provider: 'openai', id: 'gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high', mask: true },
   gpt2: { provider: 'openai', id: 'gpt-image-2', label: 'GPT Image 2', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high', mask: true },
-  // Isti modeli preko Pike (jedan ključ, cijene po Pika katalogu).
+  // Isti modeli preko Pike (jedan ključ, cijene po Pika katalogu). Od 26.11.2026 Pika je podrazumijevani put za sve slike
+  // (Ognjen: "skroz na Piku, isti model kao u OpenAI"): svaki OpenAI model ima svog Pika blizanca istog imena (PIKA_TWIN).
+  pika26flare: { provider: 'pika', id: 'openai/gpt-image-2.6-flare', label: 'GPT Image 2.6 Flare (Pika)', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high' },
+  pika26sun: { provider: 'pika', id: 'openai/gpt-image-2.6-sunburst', label: 'GPT Image 2.6 Sunburst (Pika)', inPerM: 5, imgInPerM: 8, outPerM: 30, quality: 'high' },
+  pikaflare: { provider: 'pika', id: 'openai/gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare (Pika)', inPerM: 4.75, imgInPerM: 7.6, outPerM: 28.5, quality: 'high', mask: true },
   pikapro: { provider: 'pika', id: 'google/gemini-3-pro-image', label: 'Nano Banana Pro (Pika)', inPerM: 2, outPerM: 120 },
   pikaflash: { provider: 'pika', id: 'google/gemini-3.1-flash-image', label: 'Nano Banana (Pika)', inPerM: 0.5, outPerM: 60 },
   pikagpt: { provider: 'pika', id: 'openai/gpt-image-2.5-sunburst', label: 'GPT Image 2.5 Sunburst (Pika)', inPerM: 4.75, imgInPerM: 7.6, outPerM: 28.5, quality: 'high', mask: true },
 };
 
+const PIKA_TWIN = { gpt26flare: 'pika26flare', gpt26sun: 'pika26sun', gptflare: 'pikaflare', gptsun: 'pikagpt', gpt2: 'pikagpt', pro: 'pikapro', flash: 'pikaflash' };
 // Model mora imati svoj ključ: bez OPENAI_API_KEY renderi idu na Gemini i obrnuto, umjesto da padaju.
 function withKey(env, key, geminiFallback) {
   const openai = MODELS[key].provider === 'openai';
-  // PIKA_IMAGES=1: i slike idu preko Pike (jedan račun). GPT ostaje samo gdje treba tačan broj zuba i maska.
-  if (pikaImages(env)) return key === 'pikagpt' || key === 'gptsun' ? 'pikagpt' : 'pikapro';
+  // Pika (podrazumijevano kad postoji PIKA_API_KEY): isti model, samo preko Pike.
+  if (pikaImages(env)) return PIKA_TWIN[key] || key;
   if (openai && !env.OPENAI_API_KEY && env.GEMINI_API_KEY) return geminiFallback;
   if (!openai && !env.GEMINI_API_KEY && env.OPENAI_API_KEY) return 'gptflare';
   return key;
 }
-const maskModel = (env, model) => (pikaImages(env) ? MODELS.pikagpt : model);
-const firstModel = (env) => (pikaImages(env) ? 'pikapro' : withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro'));
-const tweakModel = (env) => (pikaImages(env) ? 'pikaflash' : withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash'));
+// Označen dio slike ide istim modelom kao i do sada (maska se šalje samo modelima koji je primaju).
+const maskModel = (env, model) => model;
+const firstModel = (env) => withKey(env, MODELS[env.FIRST_MODEL] ? env.FIRST_MODEL : 'pro', 'pro');
+const tweakModel = (env) => withKey(env, MODELS[env.TWEAK_MODEL] ? env.TWEAK_MODEL : 'flash', 'flash');
 // Grillz: isti brzi model kao ostali komadi (2.6 Flare, ~10 s umjesto 40-70 s na 2.5 Sunburstu). Broj zuba drži mapa zuba
 // kao referenca uz prompt (Ognjen 16.11: slika odmah, bez brojanja). GRILLZ_MODEL (npr. gptsun) vraća sporiji, tačniji model.
 const grillzModel = (env) => (MODELS[env.GRILLZ_MODEL] ? withKey(env, env.GRILLZ_MODEL, 'pro') : firstModel(env));
 const tryOnModel = (env) => {
   const model = MODELS[withKey(env, MODELS[env.TRYON_MODEL] ? env.TRYON_MODEL : 'gptsun', 'pro')];
-  return { ...model, quality: /^gpt-image-2\.[56]-/.test(model.id) ? 'xhigh' : model.quality };
+  return { ...model, quality: /(^|\/)gpt-image-2\.[56]-/.test(model.id) ? 'xhigh' : model.quality };
 };
 
 const LEADS_PER_IP_HOUR = 10;
@@ -874,7 +880,7 @@ async function renderInputs(env, request, form, answers, { ref = null, tweak = '
   }
   if (ref) { images.push(ref); refs.push('customer'); }
   // Hiperrealni izgled (Ognjen 23.11.2026) je podrazumijevan; REALISM=off na Workeru vraća stari katalog stil bez deploya.
-  return { images, prompt: buildPrompt(form, answers, { refs, style, cinematic: pikaImages(env), realism: env.REALISM === 'off' ? '' : 'ultra' }) };
+  return { images, prompt: buildPrompt(form, answers, { refs, style, cinematic: env.CINEMATIC === '1', realism: env.REALISM === 'off' ? '' : 'ultra' }) };
 }
 
 async function r2Image(env, key) {
@@ -901,7 +907,7 @@ function maskFrom(v) {
 async function runModel(env, model, prompt, images, mask = null, size = '1024x1024') {
   const t0 = Date.now();
   if (model.provider === 'pika') {
-    const out = await pikaImage(env, model, prompt, images.map((x) => ({ bytes: fromB64(x.b64), mime: x.mime })), mask, size);
+    const out = await pikaImage(env, { ...model, quality: quality(env, model) }, prompt, images.map((x) => ({ bytes: fromB64(x.b64), mime: x.mime })), mask, size);
     const inT = out.usage.input_tokens || 0;
     const outT = out.usage.image_output_tokens || 0;
     return { b64: toB64(out.buf), mime: out.mime, ms: Date.now() - t0, inT, outT, cost: out.cost ?? (inT * model.inPerM + outT * model.outPerM) / 1e6 };

@@ -23,6 +23,7 @@
   // Workers AI: quote poruka za kupca u portalu (bez ključa; bez veze portal piše standardnu poruku).
   "ai": { "binding": "AI" },
   // First render and refinement model keys (see MODELS in src/worker.js): flash, pro, gpt26sun, gpt26flare, gptflare, gptsun, gpt2
+  // With PIKA_API_KEY these run through Pika on the same model (PIKA_TWIN); PIKA_IMAGES=0 sends them back to OpenAI.
   // Grillz generation and smile edits default to gptsun; GRILLZ_MODEL / TRYON_MODEL optionally override them.
   // Budžet i pauza se podešavaju u Cloudflare dashboardu (Variables), bez deploya; keep_vars ih čuva:
   // DAILY_BUDGET_USD (podrazumijevano 30), FORM_DAILY_BUDGET_USD (15), RENDERS_PAUSED = "1" gasi sve rendere odmah.
