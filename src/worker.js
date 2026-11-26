@@ -3317,8 +3317,9 @@ function hoursText(cfg) {
 
 // ---------- AI asistent na stranici kupca (26.11.2026) ----------
 // Jedan razgovor po leadu (chats.id = p_<lead>); pregled zlatara (?preview=1) ide u poseban razgovor i ne obavještava.
-// Asistent na stranici kupca je iza prekidača: dok PAGE_ASSISTANT nije '1' na Workeru, nema widgeta, odgovora ni podešavanja (26.11.2026).
-const pageAssistantOn = (env) => env.PAGE_ASSISTANT === '1';
+// Asistent na stranici kupca: tab AI chatbot je u portalu za sve radnje, a na stranici kupca radi tek kad ga radnja uključi
+// (podrazumijevano isključen). PAGE_ASSISTANT=0 na Workeru gasi sve odjednom: tab, widget, odgovore i podešavanja (26.11.2026).
+const pageAssistantOn = (env) => env.PAGE_ASSISTANT !== '0';
 async function pageChat(request, env, ctx, key, url) {
   if (!pageAssistantOn(env)) return json({ on: false });
   const row = await env.DB.prepare(`SELECT l.*, f.data AS form_data, c.id AS client_id, c.name AS client_name, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id

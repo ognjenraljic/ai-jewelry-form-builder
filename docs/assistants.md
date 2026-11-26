@@ -4,7 +4,7 @@ Two assistants, one module (`src/assistant.js`), one model call path, transcript
 
 ## 1. Customer page assistant (`/p/<key>`)
 
-- **Behind a switch (26.11.2026): `PAGE_ASSISTANT=1` on the Worker (Cloudflare dashboard → Variables, `keep_vars` keeps it across deploys, no deploy needed). Without it there is no widget, no chat answer, no settings section and the guide of the portal assistant does not mention it, even if a store saved `page: true`. Local tests: `scripts/assistant-off-check.mjs` (flag off) and `scripts/assistant-check.mjs` (add `PAGE_ASSISTANT=1` to `.dev.vars`).**
+- **Master kill switch (26.11.2026, later the same day): the AI chatbot tab is in every portal; `PAGE_ASSISTANT=0` on the Worker (Cloudflare dashboard → Variables, `keep_vars` keeps it across deploys, no deploy needed) turns everything off at once: no tab, no widget, no chat answer, no settings, and the portal assistant's guide does not mention it, even if a store saved `page: true`. Earlier the same day it was the other way round (only `PAGE_ASSISTANT=1` turned it on). Local tests: `scripts/assistant-off-check.mjs` (`PAGE_ASSISTANT=0` in `.dev.vars`) and `scripts/assistant-check.mjs` (no flag).**
 - **Off by default for every store.** The store turns it on in Portal → Bookings → Assistant on customer pages (`clients.data.assistant.page`). Off = no widget, no script, the API answers `{ on: false }` without calling the model.
 - **Knows**: everything the page shows (`pageFacts()` in `src/leadpage.js`: design choices, budget, Option 1 / Option 2 with exact prices, price hold, deposit and booking state, open times, appointments, next step after deposit, store info) plus the store's own knowledge (9 text boxes, Q&A list, contact line). Questions the store should answer: `docs/assistant-store-questions.md`.
 - **Guardrails**: only facts and knowledge; prices exactly as written (`pricesOk()` rejects any dollar amount that is not on the page, in the knowledge or in the customer's own messages, and shows a hand-off reply instead); no dates, discounts, financing or medical advice that are not written; replies in the customer's language; prompt injection ignored; 12 messages per 10 min and 50 per day per lead.
@@ -33,7 +33,7 @@ Two assistants, one module (`src/assistant.js`), one model call path, transcript
 
 ## AI chatbot tab in the portal (26.11.2026)
 
-Visible only when `PAGE_ASSISTANT=1` (the tab, its routes and the settings do not exist otherwise). Code: `public/portal/chatbot.js`, routes in `src/worker.js` (`/api/portal/assistant/settings`, `/api/portal/chatbot/*`).
+Visible in every portal unless `PAGE_ASSISTANT=0` (then the tab, its routes and the settings do not exist). Code: `public/portal/chatbot.js`, routes in `src/worker.js` (`/api/portal/assistant/settings`, `/api/portal/chatbot/*`).
 
 - **Switch** at the top: on/off for all customer pages, applied at once, separate from Save (`{ onlyPage: true, page }`). **Off by default** for every store.
 - **Rules** (what it may answer, what it must never say or do, tone, when to pass to the team, blocked words and phrases), **Knowledge** (9 boxes + contact), **Examples** (question + answer pairs, max 30), **Conversations** (every customer chat, "Needs you" filter, "Use as example" / "Teach the chatbot" on any chatbot answer, "Mark as handled"). Total text limit 24,000 characters.
@@ -41,4 +41,4 @@ Visible only when `PAGE_ASSISTANT=1` (the tab, its routes and the settings do no
 - **Priority in the prompt**: facts of the page, then knowledge, then the store's rules (binding), then examples. An example wins over knowledge when they disagree (it is the newest instruction). Blocked phrases are checked after the model: a hit replaces the answer with the hand-off message and the question goes to the team. Prices are checked as before.
 - **Try it** (right side of the tab, below on narrow screens): answers with the rules exactly as written in the form, even unsaved, for a sample customer (Alex) or a real lead. Nothing is saved on a lead, no notification, no count (`chats t_<session>`, 30 per 10 min). It shows why an answer was blocked and offers "Save as example".
 - **Unsaved changes**: leaving the tab, Sign out, Exit view, closing or reloading the page asks first. Switching between Rules, Knowledge and Examples keeps the draft.
-- Checks: `scripts/assistant-check.mjs` (72, real Workers AI, `PAGE_ASSISTANT=1` in `.dev.vars`) and `scripts/assistant-off-check.mjs` (13, flag off).
+- Checks: `scripts/assistant-check.mjs` (72, real Workers AI, no flag) and `scripts/assistant-off-check.mjs` (13, `PAGE_ASSISTANT=0`).
