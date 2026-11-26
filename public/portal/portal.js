@@ -600,7 +600,7 @@ async function pollBookings() {
   if (P.tab === 'bookings' && !P.bkDirty && !app.querySelector('.bk-list textarea:focus')) render();
 }
 async function openBookings() {
-  await Promise.all([loadBookings(), api('/api/portal/booking').then((r) => { P.bookingCfg = r; }).catch(() => {})]);
+  await Promise.all([loadBookings(), api('/api/portal/booking').then((r) => { P.bookingCfg = r; }).catch(() => {}), api('/api/portal/assistant/settings').then((r) => { P.asCfg = r; }).catch(() => {})]);
   render();
   if (!P.bookings?.unseen || readOnly()) return;
   try { await api('/api/portal/bookings/seen', { method: 'POST' }); } catch {}
@@ -644,7 +644,7 @@ const APPT_ST = { booked: 'Booked', done: 'Done', noshow: 'No-show', cancelled: 
 function bookingsView() {
   const b = P.bookings;
   if (!b) return '<p class="empty" role="status">Loading bookings…</p>';
-  return `${bookingSettingsView()}${appointmentsView(b)}${depositsView(b)}${bookingClicksView()}`;
+  return `${bookingSettingsView()}${assistantSettingsView()}${appointmentsView(b)}${depositsView(b)}${bookingClicksView()}`;
 }
 function apptRow(a) {
   const ro = readOnly();
@@ -727,6 +727,62 @@ function bookingSettingsView() {
     <div class="pfoot"><button type="button" class="btn gold" data-act="bk-save">Save calendar</button><span class="psaved" data-bk-msg role="status"></span></div>
   </details>`;
 }
+// AI asistent na stranicama kupaca (26.11.2026): uključenje i znanje radnje koje asistent smije da kaže kupcu.
+function assistantSettingsView() {
+  const r = P.asCfg;
+  if (!r) return '';
+  const c = r.settings;
+  const ro = readOnly();
+  const faq = c.faq?.length ? c.faq : [{ q: '', a: '' }];
+  return `<details class="bk-set form-card as-set" ${P.asOpen ? 'open' : ''} data-as-set>
+    <summary><h2>Assistant on customer pages</h2><span class="pill ${c.page ? 'on' : ''}">${c.page ? 'On' : 'Off'}</span></summary>
+    <p class="faint">An AI assistant on every customer page answers questions about their design, their price options, the deposit and booking, around the clock. It only uses what is on the customer's page and what you write below. Anything else it passes to you: you see the question in Notifications and the whole chat on the lead.</p>
+    <label class="ghl-on"><input type="checkbox" data-as="page" ${c.page ? 'checked' : ''} ${ro ? 'disabled' : ''} /><span><b>Show the assistant on customer pages</b><em>Off: customers see the page without the chat.</em></span></label>
+    <h3 class="bks-h">What the assistant may tell customers</h3>
+    <p class="hint">Write it the way you would answer a customer. Leave a box empty and the assistant says the team will answer that personally. It never makes up prices, discounts or dates.</p>
+    <div class="as-grid">${r.fields.map(([k, label, hint]) => `<label><span>${esc(label)}</span><textarea class="in" rows="3" maxlength="1500" data-as-f="${esc(k)}" placeholder="${esc(hint)}" ${ro ? 'readonly' : ''}>${esc(c.fields?.[k] || '')}</textarea></label>`).join('')}</div>
+    <h3 class="bks-h">Questions customers ask</h3>
+    <div class="as-faq" data-as-faq>${faq.map((x) => asFaqRow(x, ro)).join('')}</div>
+    ${ro ? '' : '<button type="button" class="btn small" data-act="as-faq-add">+ Add a question</button>'}
+    <label class="as-contact"><span>How customers reach a person (optional)</span><input class="in" type="text" maxlength="300" data-as="contact" value="${esc(c.contact || '')}" placeholder="Text or call (303) 555-0100, Instagram @yourstore" ${ro ? 'readonly' : ''} /></label>
+    ${ro ? '' : `<div class="pfoot"><button type="button" class="btn gold" data-act="as-save">Save assistant</button><span class="psaved" data-as-msg role="status"></span></div>`}
+  </details>`;
+}
+const asFaqRow = (x, ro) => `<div class="as-q"><input class="in" type="text" maxlength="200" data-as-q value="${esc(x.q)}" placeholder="Question, e.g. Do you do payment plans?" ${ro ? 'readonly' : ''} /><textarea class="in" rows="2" maxlength="800" data-as-a placeholder="Your answer" ${ro ? 'readonly' : ''}>${esc(x.a)}</textarea>${ro ? '' : '<button type="button" class="icon-x" data-act="as-faq-del" aria-label="Remove this question">&times;</button>'}</div>`;
+async function saveAssistant() {
+  const box = app.querySelector('[data-as-set]');
+  const msg = box.querySelector('[data-as-msg]');
+  const settings = {
+    page: box.querySelector('[data-as="page"]').checked,
+    contact: box.querySelector('[data-as="contact"]').value,
+    fields: Object.fromEntries([...box.querySelectorAll('[data-as-f]')].map((el) => [el.dataset.asF, el.value])),
+    faq: [...box.querySelectorAll('.as-q')].map((row) => ({ q: row.querySelector('[data-as-q]').value, a: row.querySelector('[data-as-a]').value })),
+  };
+  if (msg) msg.textContent = 'Saving…';
+  try {
+    P.asCfg = await api('/api/portal/assistant/settings', { method: 'PUT', body: JSON.stringify({ settings }), json: true });
+    P.asOpen = true;
+    P.bkDirty = false;
+    render();
+    const m2 = app.querySelector('[data-as-msg]');
+    if (m2) m2.textContent = P.asCfg.settings.page ? 'Saved. The assistant is on every customer page now.' : 'Saved. The assistant is off.';
+  } catch (err) { if (msg) msg.textContent = err.message || 'Could not save.'; }
+}
+// Razgovor kupca sa asistentom na njegovoj stranici (dugme na kartici leada).
+async function openLeadChat(id, name) {
+  const d = document.createElement('dialog');
+  d.className = 'chat-log-dlg';
+  d.innerHTML = `<div class="cl-head"><h2>Assistant chat${name ? ` · ${esc(name)}` : ''}</h2><button type="button" class="icon-x" data-close aria-label="Close">&times;</button></div><div class="cl-body"><p class="faint">Loading…</p></div>`;
+  document.body.appendChild(d);
+  d.addEventListener('click', (e) => { if (e.target === d || e.target.closest('[data-close]')) d.close(); });
+  d.addEventListener('close', () => d.remove());
+  d.showModal();
+  try {
+    const r = await api(`/api/portal/leads/${encodeURIComponent(id)}/chat`);
+    d.querySelector('.cl-body').innerHTML = r.messages.length ? r.messages.map((m) => `<div class="cl-m ${m.role === 'user' ? 'cl-u' : 'cl-a'}"><p class="cl-who">${m.role === 'user' ? esc(name || 'Customer') : 'Assistant'} · ${esc(when(m.at))}</p><p>${esc(m.text).replace(/\n/g, '<br />')}</p>${m.tags?.includes('team') ? '<p class="cl-flag">Passed to you</p>' : ''}</div>`).join('') : '<p class="faint">No messages yet.</p>';
+  } catch (err) { d.querySelector('.cl-body').innerHTML = `<p class="faint">${esc(err.message)}</p>`; }
+}
+
 function readBooking() {
   const box = app.querySelector('[data-bk-set]');
   const v = (k) => box.querySelector(`[data-bk="${k}"]`);
@@ -757,7 +813,7 @@ async function saveBooking() {
 app.addEventListener('change', (e) => {
   const d = e.target.dataset?.bkOpen;
   if (d) app.querySelectorAll(`[data-bk-from="${d}"], [data-bk-to="${d}"]`).forEach((el) => { el.disabled = !e.target.checked; });
-  if (e.target.closest?.('[data-bk-set]')) P.bkDirty = true;
+  if (e.target.closest?.('[data-bk-set]') || e.target.closest?.('[data-as-set]')) P.bkDirty = true;
 });
 app.addEventListener('input', (e) => { if (e.target.closest?.('[data-bk-set]')) P.bkDirty = true; });
 app.addEventListener('toggle', (e) => { if (e.target.matches?.('[data-bk-set]')) P.bkSetOpen = e.target.open; }, true);
@@ -1036,6 +1092,8 @@ async function boot() {
   await listsReady;
   document.title = `${P.me.client.name} · JewelryLead`;
   render();
+  // AI asistent portala (26.11.2026): pomoć za korištenje i pitanja o brojevima; svoj modul, ne dira render().
+  import('/portal/assistant.js').then((m) => m.mount({ api, store: P.me.client.name, goTab: (tab) => app.querySelector(`.tab[data-tab="${tab}"]`)?.click() })).catch(() => {});
   setInterval(tick, 30_000);
   setInterval(pollBookings, 60_000);
   setInterval(pollNotif, 60_000);
@@ -1302,7 +1360,8 @@ function pageBox(l) {
   return `<div class="lpage"><p class="lpage-t">Customer page</p>
     <div class="lpage-row"><a class="lpage-link" href="${esc(pg.url)}?preview=1" target="_blank" rel="noopener" title="${esc(full)}">Open page ↗</a>${copyBtn(full, 'customer page link')}</div>
     <p class="lpage-v">${pg.views ? `Viewed ${pg.views}× · last ${esc(when(pg.lastView))}` : 'Not opened yet'}</p>
-    ${acts ? `<ul class="lpage-acts">${acts}</ul>` : ''}</div>`;
+    ${acts ? `<ul class="lpage-acts">${acts}</ul>` : ''}
+    ${l.chat ? `<button type="button" class="lpage-chat${l.chat.handoff ? ' needs' : ''}" data-lead-chat="${esc(l.id)}" data-lead-name="${esc(l.name || '')}">Assistant chat · ${l.chat.turns} question${l.chat.turns === 1 ? '' : 's'}${l.chat.handoff ? ' · needs you' : ''}</button>` : ''}</div>`;
 }
 
 // Copy pored mejla i telefona (District 19.11.2026): jedan klik kopira, ikonica se na trenutak pretvori u kvačicu.
@@ -1648,6 +1707,10 @@ app.addEventListener('click', async (e) => {
   if (t.dataset.tab) { P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
   if (t.dataset.act === 'bk-save') { saveBooking(); return; }
+  if (t.dataset.act === 'as-save') { saveAssistant(); return; }
+  if (t.dataset.act === 'as-faq-add') { app.querySelector('[data-as-faq]')?.insertAdjacentHTML('beforeend', asFaqRow({ q: '', a: '' }, false)); P.bkDirty = true; return; }
+  if (t.dataset.act === 'as-faq-del') { t.closest('.as-q')?.remove(); P.bkDirty = true; return; }
+  if (t.dataset.leadChat) { openLeadChat(t.dataset.leadChat, t.dataset.leadName || ''); return; }
   if (t.dataset.apSet) { setApptStatus(t.dataset.apId, t.dataset.apSet); return; }
   if (t.dataset.apGhl) {
     t.disabled = true; t.textContent = 'Sending…';
@@ -1920,6 +1983,7 @@ async function openNotif() {
 const NT = {
   created: ['new', (x) => `New lead: <b>${esc(x.name)}</b>${x.piece ? ` · ${esc(pieceName(x.piece))}` : ''}`],
   page_view: ['view', (x) => `<b>${esc(x.name)}</b> opened their page`],
+  chat_question: ['hot', (x) => `<b>${esc(x.name)}</b> asked the page assistant something only you can answer${x.meta?.q ? `: "${esc(x.meta.q)}"` : ''}`],
   page_action: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.action === 'appointment' ? 'asked for an appointment' : 'wants to reserve with a deposit'}${x.meta.option === 'fit' ? ' · Option 2' : x.meta.option === 'picked' ? ' · Option 1' : ''}`],
   auto_sent: ['mail', (x) => `First message emailed to <b>${esc(x.name)}</b> automatically`],
   appointment_booked: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.moved ? 'moved their' : 'booked an'} ${x.meta.kind === 'online' ? 'online consultation' : 'studio visit'}${x.meta.start ? ` for ${esc(apptWhen(x.meta.start))}` : ''}`],
