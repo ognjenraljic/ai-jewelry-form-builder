@@ -44,9 +44,10 @@ export const FILM_API = VIDEO_MODELS.flex.api;
 export const FILM_EST_USD = VIDEO_MODELS.flex.est;
 
 export const pikaOn = (env) => !!env.PIKA_API_KEY;
-// Slike preko Pike samo kad se izričito uključi (PIKA_IMAGES=1). Ključ sam po sebi pali samo video komada,
-// a renderi ostaju na OpenAI/Gemini modelima na kojima su podešeni prompt i provjera broja zuba (16.11.2026).
-export const pikaImages = (env) => pikaOn(env) && env.PIKA_IMAGES === '1';
+// Slike preko Pike (26.11.2026, Ognjen: "skroz na Piku, isti model"): podrazumijevano čim postoji PIKA_API_KEY, na ISTIM
+// GPT Image modelima kao ranije preko OpenAI-ja (PIKA_TWIN u workeru). PIKA_IMAGES=0 na Workeru vraća OpenAI bez deploya.
+// Lokalno (DEV_MODE) samo uz izričito PIKA_IMAGES=1, da provjere ne troše pravi Pika balans.
+export const pikaImages = (env) => pikaOn(env) && (env.DEV_MODE === '1' ? env.PIKA_IMAGES === '1' : env.PIKA_IMAGES !== '0');
 // Samo lokalno: lažni Pika server za provjere bez troška (scripts/mock-pika.mjs).
 const base = (env) => (env.DEV_MODE === '1' && env.PIKA_BASE ? env.PIKA_BASE : API);
 const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
@@ -94,9 +95,10 @@ export async function jobCharge(env, job) {
 // images: [{ bytes, mime }]. Bez slika ide text-to-image, sa njima image-to-image.
 export async function pikaImage(env, model, prompt, images, mask = null, size = '1024x1024') {
   const body = { prompt, num_images: 1, output_format: 'png' };
-  if (model.mask) { body.size = size; body.quality = model.quality; } else { body.aspect_ratio = '1:1'; body.resolution = '1K'; }
+  // GPT Image modeli (openai/...) primaju tačnu veličinu i kvalitet, kao na OpenAI-ju; Gemini odnos i rezoluciju.
+  if (model.id.startsWith('openai/')) { body.size = size; body.quality = model.quality || 'high'; } else { body.aspect_ratio = '1:1'; body.resolution = '1K'; }
   if (images.length) body.image_urls = await Promise.all(images.map((x) => upload(env, x.bytes, x.mime)));
-  if (mask) body.mask_image_url = await upload(env, mask, 'image/png');
+  if (mask && model.mask) body.mask_image_url = await upload(env, mask, 'image/png');
   let job = await submit(env, `${model.id}/${images.length ? 'image-to-image' : 'text-to-image'}`, body);
   const t0 = Date.now();
   while (job.status !== 'completed' && job.status !== 'failed') {
