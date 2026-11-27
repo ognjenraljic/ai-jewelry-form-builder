@@ -1,3 +1,5 @@
+// Vremenska zona kupca ide uz klik i zakazivanje: podsjetnici i poruke po njegovom satu (27.11.2026).
+const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
 // Stranica kupca: zamjena slike i videa u velikom prikazu, uvećanje, tiho pojavljivanje sekcija, dugmad Deposit i
 // Book appointment (zabilježe se uz lead; ako je zlatar upisao link, kupac ide tamo), traka sa dugmadima na telefonu.
 document.documentElement.classList.add('js');
@@ -74,7 +76,7 @@ document.addEventListener('click', async (e) => {
   b.disabled = true;
   let redirect = null;
   try {
-    const res = await fetch(`/api/page/${encodeURIComponent(key)}/action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: b.dataset.action, option: b.dataset.option || '' }) });
+    const res = await fetch(`/api/page/${encodeURIComponent(key)}/action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: b.dataset.action, option: b.dataset.option || '', tz: TZ }) });
     redirect = (await res.json().catch(() => ({}))).redirect || null;
   } catch {}
   b.disabled = false;
@@ -98,9 +100,9 @@ function stageOf(left, hours) {
   return left <= 0 ? 'expired' : left <= l ? 'last' : left <= r ? 'red' : left <= y ? 'yellow' : 'fresh';
 }
 const STAGE = {
-  fresh: (h) => [`Reserved for you for ${h} hours`, 'Your price and design are held until the timer ends.'],
+  fresh: (h) => [`Reserved for you for ${h} hours`, 'Your price and design are held until the timer ends. After that we re-quote at that day\'s metal price, which can go up or down.'],
   yellow: (h) => [h > 24 ? 'Less than 24 hours left' : 'Less than half of your time left', 'Reserve now to keep this price.'],
-  red: (h) => [h > 24 ? 'Final 12 hours on your price' : 'Final hours on your price', 'When the timer ends, your offer is locked.'],
+  red: (h) => [h > 24 ? 'Final 12 hours on your price' : 'Final hours on your price', 'When the timer ends, we re-quote at that day\'s metal price.'],
   last: () => ['Last hour to keep this price', 'Reserve now, before the timer runs out.'],
   expired: () => ['This offer has expired', 'Request a refreshed quote below.'],
 };
@@ -225,7 +227,7 @@ function openScheduler(kind, option) {
       btn.disabled = true;
       btn.textContent = 'Booking…';
       try {
-        const r = await api('/book', { method: 'POST', body: JSON.stringify({ kind: k, start, via, option, note: body.querySelector('[data-note]').value }) });
+        const r = await api('/book', { method: 'POST', body: JSON.stringify({ kind: k, start, via, option, note: body.querySelector('[data-note]').value, tz: TZ }) });
         done(r.appointment);
       } catch (e2) {
         err.textContent = e2.message;

@@ -35,7 +35,10 @@ export function parseOrder(raw) {
   try { d = JSON.parse(raw || '{}') || {}; } catch {}
   const stage = Number.isInteger(d.stage) && d.stage >= 0 && d.stage <= LAST_STAGE ? d.stage : 0;
   const at = d.at && typeof d.at === 'object' ? d.at : {};
-  return { stage, at, note: typeof d.note === 'string' ? d.note : '', updatedAt: Number(d.updatedAt) || null };
+  // Preuzimanje i recenzija (27.11.2026): kad je kupac preuzeo komad, poklon (datum prilike), otvorena prepravka.
+  const ymd = typeof d.occasion === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.occasion) ? d.occasion : '';
+  return { stage, at, note: typeof d.note === 'string' ? d.note : '', updatedAt: Number(d.updatedAt) || null,
+    pickedAt: stage === LAST_STAGE ? Number(d.pickedAt) || null : null, gift: d.gift === true, occasion: ymd, remake: d.remake === true };
 }
 
 // Faze sa vremenom kad je koja završena (vrijeme pamti zadnji put kad je zlatar stigao do te faze).
@@ -43,15 +46,15 @@ export function orderView(no, raw) {
   if (!no) return null;
   const o = parseOrder(raw);
   return {
-    no, stage: o.stage, note: o.note, updatedAt: o.updatedAt,
+    no, stage: o.stage, note: o.note, updatedAt: o.updatedAt, pickedAt: o.pickedAt, gift: o.gift, occasion: o.occasion, remake: o.remake,
     stages: ORDER_STAGES.map((s, i) => ({ key: s.key, label: s.label, at: i <= o.stage ? Number(o.at[s.key]) || null : null })),
   };
 }
 
 // Nova faza i/ili poruka kupcu. Vraćanje na raniju fazu briše vremena kasnijih (zlatar je pogriješio klik).
-export function nextOrder(raw, { stage, note } = {}, now = Date.now()) {
+export function nextOrder(raw, { stage, note, picked, gift, occasion, remake } = {}, now = Date.now()) {
   const o = parseOrder(raw);
-  const out = { stage: o.stage, at: { ...o.at }, note: o.note, updatedAt: now };
+  const out = { stage: o.stage, at: { ...o.at }, note: o.note, updatedAt: now, pickedAt: o.pickedAt, gift: o.gift, occasion: o.occasion, remake: o.remake };
   if (stage != null) {
     const s = Number(stage);
     if (!Number.isInteger(s) || s < 0 || s > LAST_STAGE) return null;
@@ -63,6 +66,12 @@ export function nextOrder(raw, { stage, note } = {}, now = Date.now()) {
     out.stage = s;
   }
   if (note != null) out.note = String(note).replace(/\s+$/, '').slice(0, 500);
+  // "Picked up" samo na zadnjoj fazi; vraćanje sa "Ready for pick up" briše preuzimanje.
+  if (picked === true && out.stage === LAST_STAGE) out.pickedAt = out.pickedAt || now;
+  if (picked === false || out.stage !== LAST_STAGE) out.pickedAt = null;
+  if (gift != null) out.gift = gift === true;
+  if (occasion != null) out.occasion = /^\d{4}-\d{2}-\d{2}$/.test(String(occasion)) ? String(occasion) : '';
+  if (remake != null) out.remake = remake === true;
   return out;
 }
 

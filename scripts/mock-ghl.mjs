@@ -2,7 +2,7 @@
 // Pamti kontakte, tagove, bilješke i opportunity-je; GET /_state vraća sve što je stiglo. Token mora biti "pit-...".
 import { createServer } from 'node:http';
 const port = Number(process.argv[2]) || 8897;
-const S = { contacts: {}, opportunities: {}, calls: [], appointments: {}, messages: [] };
+const S = { contacts: {}, opportunities: {}, calls: [], appointments: {}, messages: [], fields: [], tagLog: [] };
 let seq = 0;
 const send = (res, status, data) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
 createServer(async (req, res) => {
@@ -12,6 +12,7 @@ createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/_state') return send(res, 200, S);
   if (url.pathname === '/_fail') { S.failAppt = url.searchParams.get('appt') || ''; return send(res, 200, { failAppt: S.failAppt }); }
+  if (req.method === 'POST' && url.pathname === '/_appt') { Object.assign(S.appointments[body.id] || {}, body.patch); return send(res, 200, S.appointments[body.id] || {}); }
   S.calls.push({ method: req.method, path: url.pathname, version: req.headers.version });
   if (!/^Bearer pit-/.test(req.headers.authorization || '')) return send(res, 401, { message: 'Invalid token' });
   // Kalendari i poruke (25.11.2026) idu na 2021-04-15, kao pravi GHL.
@@ -33,10 +34,16 @@ createServer(async (req, res) => {
   // /_fail?appt=scope → 401 bez dozvole; /_fail?appt=host → 422 dok zahtjev nema assignedUserId (pa prolazi sa domaćinom).
   if (req.method === 'POST' && url.pathname === '/calendars/events/appointments' && S.failAppt === 'scope') return send(res, 401, { statusCode: 401, message: 'The token is not authorized for this scope.' });
   if (req.method === 'POST' && url.pathname === '/calendars/events/appointments' && S.failAppt === 'host' && !body.assignedUserId) return send(res, 422, { statusCode: 422, message: ['assignedUserId is required for this calendar'] });
-  if (req.method === 'POST' && url.pathname === '/calendars/events/appointments') { const a = { id: `ev${++seq}`, ...body }; S.appointments[a.id] = a; return send(res, 201, { id: a.id, ...a }); }
+  if (req.method === 'POST' && url.pathname === '/calendars/events/appointments') { const a = { id: `ev${++seq}`, ...body, ...(body.meetingLocationType === 'gmeet' && body.assignedUserId ? { address: `https://meet.google.com/abc-${seq}-xyz` } : {}) }; S.appointments[a.id] = a; return send(res, 201, { id: a.id, ...a }); }
   if (req.method === 'PUT' && (m = url.pathname.match(/^\/calendars\/events\/appointments\/([^/]+)$/))) { const a = S.appointments[m[1]]; if (!a) return send(res, 404, { message: 'Event not found' }); Object.assign(a, body); return send(res, 200, a); }
   if (req.method === 'POST' && url.pathname === '/conversations/messages') { S.messages.push(body); return send(res, 201, { messageId: `m${++seq}` }); }
   if (req.method === 'PUT' && (m = url.pathname.match(/^\/contacts\/([^/]+)$/))) { const c = S.contacts[m[1]]; if (!c) return send(res, 404, { message: 'Contact not found' }); Object.assign(c, body); return send(res, 200, { contact: c }); }
+  // Polja kontakta i tagovi događaja (27.11.2026): GHL pravi fieldKey iz imena ("JL Page URL" -> contact.jl_page_url).
+  if (req.method === 'GET' && (m = url.pathname.match(/^\/locations\/([^/]+)\/customFields$/))) return send(res, 200, { customFields: S.fields });
+  if (req.method === 'POST' && (m = url.pathname.match(/^\/locations\/([^/]+)\/customFields$/))) { const f = { id: `cf${++seq}`, name: body.name, dataType: body.dataType, fieldKey: `contact.${body.name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}` }; S.fields.push(f); return send(res, 201, { customField: f }); }
+  if (req.method === 'DELETE' && (m = url.pathname.match(/^\/contacts\/([^/]+)\/tags$/))) { const c = S.contacts[m[1]]; if (!c) return send(res, 404, { message: 'Contact not found' }); c.tags = c.tags.filter((t) => !body.tags.includes(t)); S.tagLog.push({ contact: m[1], op: 'remove', tags: body.tags }); return send(res, 200, { tags: c.tags }); }
+  if (req.method === 'GET' && (m = url.pathname.match(/^\/calendars\/events\/appointments\/([^/]+)$/))) { const a = S.appointments[m[1]]; return a ? send(res, 200, { appointment: a }) : send(res, 404, { message: 'Event not found' }); }
+  if (req.method === 'POST' && url.pathname === '/_appt') { Object.assign(S.appointments[body.id] || {}, body.patch); return send(res, 200, S.appointments[body.id] || {}); }
   if (req.method === 'GET' && url.pathname === '/opportunities/pipelines') return send(res, 200, { pipelines: [{ id: 'pipe1', name: 'Custom Jewelry', stages: [{ id: 'st-new', name: 'New Lead' }, { id: 'st-con', name: 'Contacted' }, { id: 'st-quo', name: 'Quote Sent' }, { id: 'st-won', name: 'Won' }, { id: 'st-lost', name: 'Lost' }] },
     // Proizvodna tabla (25.11.2026)
     { id: 'prod1', name: 'Production', stages: [{ id: 'pr-placed', name: 'Order placed' }, { id: 'pr-cad', name: 'CAD approved' }, { id: 'pr-cast', name: 'Wax & cast' }, { id: 'pr-set', name: 'Stone setting' }, { id: 'pr-pol', name: 'Polish' }, { id: 'pr-ready', name: 'Ready for pick up' }] }] });
@@ -50,7 +57,7 @@ createServer(async (req, res) => {
     S.contacts[c.id] = c;
     return send(res, 200, { contact: { id: c.id }, new: !old });
   }
-  if (req.method === 'POST' && (m = url.pathname.match(/^\/contacts\/([^/]+)\/tags$/))) { const c = S.contacts[m[1]]; if (!c) return send(res, 404, { message: 'Contact not found' }); c.tags = [...new Set([...c.tags, ...body.tags])]; return send(res, 200, { tags: c.tags }); }
+  if (req.method === 'POST' && (m = url.pathname.match(/^\/contacts\/([^/]+)\/tags$/))) { const c = S.contacts[m[1]]; if (!c) return send(res, 404, { message: 'Contact not found' }); c.tags = [...new Set([...c.tags, ...body.tags])]; S.tagLog.push({ contact: m[1], op: 'add', tags: body.tags, fields: JSON.parse(JSON.stringify(c.customFields || [])) }); return send(res, 200, { tags: c.tags }); }
   if (req.method === 'POST' && (m = url.pathname.match(/^\/contacts\/([^/]+)\/notes$/))) { const c = S.contacts[m[1]]; if (!c) return send(res, 404, { message: 'Contact not found' }); c.notes.push(body.body); return send(res, 200, { note: { id: `n${++seq}` } }); }
   // Kao pravi GHL: jedna opportunity po kontaktu u pipeline-u (OPPORTUNITY_NO_DUPLICATE + meta.existingId).
   if (req.method === 'POST' && url.pathname === '/opportunities/' && body.contactId) { const dup = Object.values(S.opportunities).find((o) => o.contactId === body.contactId && o.pipelineId === body.pipelineId); if (dup) return send(res, 400, { statusCode: 400, message: 'Can not create duplicate opportunity for the contact.', code: 'OPPORTUNITY_NO_DUPLICATE', meta: { existingId: dup.id } }); }

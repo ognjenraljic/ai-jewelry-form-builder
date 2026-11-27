@@ -48,7 +48,8 @@ export function cleanBooking(input, cur = {}) {
   if (b.kinds && typeof b.kinds === 'object') {
     const k = b.kinds;
     out.kinds = {
-      online: { on: k.online?.on !== false, minutes: clampInt(k.online?.minutes, 5, 60, base.kinds.online.minutes), video: 'video' in (k.online || {}) ? httpsOrEmpty(k.online.video) : base.kinds.online.video },
+      online: { on: k.online?.on !== false, minutes: clampInt(k.online?.minutes, 5, 60, base.kinds.online.minutes), video: 'video' in (k.online || {}) ? httpsOrEmpty(k.online.video) : base.kinds.online.video,
+        meet: 'meet' in (k.online || {}) ? k.online.meet === true : base.kinds.online.meet },
       visit: { on: k.visit?.on !== false, minutes: clampInt(k.visit?.minutes, 10, 120, base.kinds.visit.minutes) },
     };
   }
@@ -75,7 +76,7 @@ export function bookingSettings(saved) {
     enabled: s.enabled === true,
     tz: TZ_SET.has(s.tz) ? s.tz : d.tz,
     kinds: {
-      online: { on: s.kinds?.online?.on !== false, minutes: clampInt(s.kinds?.online?.minutes, 5, 60, d.kinds.online.minutes), video: httpsOrEmpty(s.kinds?.online?.video) },
+      online: { on: s.kinds?.online?.on !== false, minutes: clampInt(s.kinds?.online?.minutes, 5, 60, d.kinds.online.minutes), video: httpsOrEmpty(s.kinds?.online?.video), meet: s.kinds?.online?.meet === true },
       visit: { on: s.kinds?.visit?.on !== false, minutes: clampInt(s.kinds?.visit?.minutes, 10, 120, d.kinds.visit.minutes) },
     },
     hours: s.hours && typeof s.hours === 'object' ? Object.fromEntries(DAY_KEYS.map((k) => [k, Array.isArray(s.hours[k]) ? s.hours[k] : null])) : { ...d.hours },

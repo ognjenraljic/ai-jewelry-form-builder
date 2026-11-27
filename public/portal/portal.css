@@ -1404,3 +1404,27 @@ button.dbar.future { opacity: .35; cursor: default; }
 .otl b { color: var(--ink); font-size: 12.5px; } .otl span { color: var(--ink-faint); font-size: 11.5px; }
 .otl-gold { --c: #d8b46a; } .otl-yellow { --c: #f2c94c; } .otl-red { --c: #ff5d5d; } .otl-grey { --c: #6f7c7a; } .otl-green { --c: #3ccf91; }
 @media (max-width: 760px) { .otl { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* Narudžba: preuzimanje, poklon, prepravka (27.11.2026) */
+.ord-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.ord-pick .faint { font-size: 12px; }
+.ord-picked { margin: 0; font-size: 13px; color: var(--ink-soft); }
+.ord-picked b { color: #9be38a; margin-right: 4px; }
+.linkbtn { background: none; border: 0; padding: 0 4px; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
+.ord-flags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-top: 12px; font-size: 12.5px; color: var(--ink-soft); }
+.ord-flags label { display: inline-flex; align-items: center; gap: 6px; }
+.ord-occ .in { width: auto; padding: 4px 8px; font-size: 12.5px; }
+/* GoHighLevel Automations (27.11.2026) */
+.ghl-auto code { font-size: 11.5px; padding: 1px 6px; border-radius: 6px; background: var(--surface-2, color-mix(in srgb, var(--ink) 6%, transparent)); color: var(--ink); }
+.ghl-ref { margin: 10px 0 0; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; }
+.ghl-ref summary { cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
+.ghl-ref ul { list-style: none; margin: 8px 0 4px; padding: 0; display: grid; gap: 6px; font-size: 12.5px; }
+.ghl-ref li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ghl-refh { margin: 10px 0 0; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); }
+.ev-st { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-soft); }
+.ev-sent { color: #9be38a; border-color: color-mix(in srgb, #9be38a 45%, transparent); }
+.ev-failed { color: #ef6a6a; border-color: color-mix(in srgb, #ef6a6a 45%, transparent); }
+.ev-holdout { color: var(--ink-faint); }
+.ev-list li span:not(.faint):not(.ev-st):not(.ghl-bad) { color: var(--ink); }
+.bks-kind .pcheck em { display: block; margin-top: 3px; font-style: normal; font-size: 12px; line-height: 1.45; color: var(--ink-faint); }
+.bks-kind .pcheck { align-items: flex-start; }

@@ -230,7 +230,7 @@ function lockPanel(tl, store, bk) {
   if (tl.stage === 'moved') return `<div class="lockpanel lp-moved"><span class="lp-ic" aria-hidden="true"></span><p class="mini">Metal prices moved</p><h3>We are updating your price</h3>
     <p>Gold and platinum prices changed since your quote, so ${esc(store)} will send you a new price shortly.</p><div class="cta-row">${book}</div></div>`;
   return `<div class="lockpanel"><span class="lp-ic" aria-hidden="true"></span><p class="mini">Offer locked</p><h3>Your offer has expired</h3>
-    <p>Prices follow the metal markets. Ask for a refreshed quote and we will hold a new price for you for ${s.refreshhours} hours${Number(s.discount) > 0 ? ', with a little extra off' : ''}.</p>
+    <p>Your price hold has ended. Prices follow the metal markets, so a refreshed quote uses today's metal price, which can be higher or lower than before. Ask for one and we will hold it for you for ${s.refreshhours} hours${Number(s.discount) > 0 ? ', with a little extra off' : ''}.</p>
     <div class="cta-row"><button type="button" class="btn primary" data-refresh="1">Request a refreshed quote</button>${book}</div>
     <p class="lp-note">Ready in about ${s.refreshwait} hours if metal prices stay steady.</p></div>`;
 }

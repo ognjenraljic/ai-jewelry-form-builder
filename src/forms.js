@@ -126,7 +126,7 @@ const visionStep = ({ inscriptionLabel = 'Name or text on the piece (optional)',
 // Privacy Policy i Terms: link radnje, inače stranice /legal/<forma>/privacy|terms koje pravi JewelryLead.
 export const consentTexts = (brand) => ({
   consent: `I agree to be contacted about my design by ${brand} by email and phone, and I accept the Privacy Policy and Terms.`,
-  smsConsent: `I consent to receive non-marketing text messages from ${brand} about my design request, quote and appointments. Message frequency varies. Message and data rates may apply. Reply HELP for help or STOP to opt out.`,
+  smsConsent: `I consent to receive non-marketing text messages from ${brand} about my design request, quote, appointments, order updates and a follow-up about my experience. Message frequency varies. Message and data rates may apply. Reply HELP for help or STOP to opt out.`,
   smsMarketing: `I consent to receive marketing text messages from ${brand}, such as offers and new pieces, at the phone number provided. Message frequency varies. Message and data rates may apply. Reply HELP for help or STOP to opt out.`,
 });
 // Stari podrazumijevani tekst je jednim obaveznim checkboxom tražio i SMS, što A2P ne dozvoljava; takve forme dobijaju nove tekstove.

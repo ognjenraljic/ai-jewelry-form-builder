@@ -12,6 +12,8 @@
 // contacts.write, contacts.readonly, opportunities.write, opportunities.readonly, locations.readonly.
 // Prije prvog pravog leada provjeriti na njihovom nalogu (vidi docs/ghl-integracija.md): ovo nije probano sa pravim GHL-om.
 
+import { autoSettings } from './automations.js';
+
 export const GHL_BASE = 'https://services.leadconnectorhq.com';
 export const GHL_VERSION = '2021-07-28';
 export const GHL_STATUSES = ['new', 'contacted', 'quoted', 'won', 'lost'];
@@ -49,6 +51,8 @@ export function ghlPublic(g) {
     // Kalendar i depozit (25.11.2026): GHL kalendar po vrsti termina, webhook za uplatu depozita, SMS sa sljedećim korakom.
     calendars: g.calendars && typeof g.calendars === 'object' ? { online: g.calendars.online || '', visit: g.calendars.visit || '' } : { online: '', visit: '' },
     hook: !!g.hookKey, smsNext: g.smsNext === true, lastHook: g.lastHook || null,
+    // Automations (27.11.2026): podešavanja i ključevi JL polja (bez id-jeva) za uputstvo u portalu.
+    auto: autoSettings(g.auto), fields: Object.fromEntries(Object.entries(g.fields && typeof g.fields === 'object' ? g.fields : {}).map(([k, v]) => [k, v?.fieldKey || `contact.${k}`])),
   };
 }
 // Proizvodna tabla za radnike (25.11.2026): poseban pipeline sa fazama izrade, kartice bez podataka kupca.
@@ -307,10 +311,13 @@ export async function ghlCalendarHost(token, calendarId, fetchFn = fetch) {
 }
 export async function ghlBookAppointment(token, cfg, a, fetchFn = fetch) {
   const tz = a.tz || 'UTC';
+  // Google Meet (27.11.2026, marketplace docs create-appointment): meetingLocationType gmeet + overrideLocationConfig, BEZ
+  // address (sa address GHL pada na "custom"); Meet traži člana tima sa povezanim Google kalendarom, pa domaćin odmah.
+  const host = a.meet ? await ghlCalendarHost(token, a.calendarId, fetchFn).catch(() => '') : '';
   const body = {
     calendarId: a.calendarId, locationId: cfg.locationId, contactId: a.contactId, startTime: isoInZone(a.start, tz), endTime: isoInZone(a.end, tz),
     title: a.title.slice(0, 120), appointmentStatus: 'confirmed', ignoreFreeSlotValidation: true, toNotify: true,
-    ...(a.address ? { address: a.address.slice(0, 300) } : {}),
+    ...(a.meet ? { meetingLocationType: 'gmeet', overrideLocationConfig: true, ...(host ? { assignedUserId: host } : {}) } : a.address ? { address: a.address.slice(0, 300) } : {}),
   };
   let d;
   try {
@@ -361,4 +368,50 @@ export function hookPayload(b) {
     amount: num(cd.amount, b.amount, b.payment?.total_amount, b.payment?.amount, b.order?.amount, b.invoice?.total, b.transaction?.amount),
     ref: str(cd.reference, cd.ref, b.payment?.transaction_id, b.transaction?.id, b.order?.id).slice(0, 80),
   };
+}
+
+// ---------- Workflowi: polja kontakta i tagovi događaja (27.11.2026, vidi src/automations.js) ----------
+// Dozvole tokena: View Custom Fields + Edit Custom Fields (locations/customFields.readonly i .write), Edit Contacts.
+export async function ghlListFields(token, locationId, fetchFn = fetch) {
+  const d = await ghlCall(token, 'GET', `/locations/${encodeURIComponent(locationId)}/customFields?model=contact`, null, fetchFn);
+  return (d.customFields || []).map((f) => ({ id: f.id, name: f.name || '', fieldKey: f.fieldKey || '' }));
+}
+// Pravi polja koja fale (TEXT); postojeća (isti ključ ili isto ime) se koriste kakva jesu. Vraća { ključ: { id, fieldKey } }.
+export async function ghlEnsureFields(token, locationId, defs, fetchFn = fetch) {
+  const have = await ghlListFields(token, locationId, fetchFn);
+  const out = {};
+  for (const [key, name] of defs) {
+    let f = have.find((x) => x.fieldKey === `contact.${key}` || x.name.toLowerCase() === name.toLowerCase());
+    if (!f) {
+      const d = await ghlCall(token, 'POST', `/locations/${encodeURIComponent(locationId)}/customFields`, { name, dataType: 'TEXT', model: 'contact' }, fetchFn);
+      const c = d.customField || d;
+      f = { id: c.id, fieldKey: c.fieldKey || `contact.${key}` };
+    }
+    if (f?.id) out[key] = { id: f.id, fieldKey: f.fieldKey || `contact.${key}` };
+  }
+  return out;
+}
+// Polja (samo ona koja postoje u GHL-u) i vremenska zona kupca na kontakt, jednim pozivom.
+export async function ghlSetFields(token, contactId, fields, values, extra = {}, fetchFn = fetch) {
+  const customFields = Object.entries(values).filter(([k]) => fields?.[k]?.id).map(([k, v]) => ({ id: fields[k].id, field_value: v == null ? '' : String(v).slice(0, 500) }));
+  const body = { ...(customFields.length ? { customFields } : {}), ...extra };
+  if (!Object.keys(body).length) return false;
+  await ghlCall(token, 'PUT', `/contacts/${encodeURIComponent(contactId)}`, body, fetchFn);
+  return true;
+}
+export async function ghlRemoveTags(token, contactId, tags, fetchFn = fetch) {
+  await ghlCall(token, 'DELETE', `/contacts/${encodeURIComponent(contactId)}/tags`, { tags }, fetchFn);
+}
+// Tag događaja: prvo skinemo (tag koji kontakt već ima ne pali "Contact Tag Added" ponovo), pa dodamo.
+export async function ghlFireTag(token, contactId, tag, fetchFn = fetch) {
+  await ghlRemoveTags(token, contactId, [tag], fetchFn).catch(() => null);
+  await ghlCall(token, 'POST', `/contacts/${encodeURIComponent(contactId)}/tags`, { tags: [tag] }, fetchFn);
+}
+// Done / No-show iz portala -> status termina u GHL kalendaru (showed / noshow).
+export async function ghlSetApptStatus(token, eventId, status, fetchFn = fetch) {
+  await ghlCall(token, 'PUT', `/calendars/events/appointments/${encodeURIComponent(eventId)}`, { appointmentStatus: status }, fetchFn, GHL_CAL_VERSION);
+}
+export async function ghlGetAppointment(token, eventId, fetchFn = fetch) {
+  const d = await ghlCall(token, 'GET', `/calendars/events/appointments/${encodeURIComponent(eventId)}`, null, fetchFn, GHL_CAL_VERSION);
+  return d.appointment || d.event || d;
 }

@@ -29,9 +29,9 @@ export function offerStage(left, hours) {
   return 'fresh';
 }
 export const STAGE_TEXT = {
-  fresh: (h) => [`Reserved for you for ${h} hours`, 'Your price and design are held until the timer ends.'],
+  fresh: (h) => [`Reserved for you for ${h} hours`, 'Your price and design are held until the timer ends. After that we re-quote at that day\'s metal price, which can go up or down.'],
   yellow: (h) => [h > 24 ? 'Less than 24 hours left' : 'Less than half of your time left', 'Reserve now to keep this price.'],
-  red: (h) => [h > 24 ? 'Final 12 hours on your price' : 'Final hours on your price', 'When the timer ends, your offer is locked.'],
+  red: (h) => [h > 24 ? 'Final 12 hours on your price' : 'Final hours on your price', 'When the timer ends, we re-quote at that day\'s metal price.'],
   last: () => ['Last hour to keep this price', 'Reserve now, before the timer runs out.'],
   expired: () => ['This offer has expired', 'Request a refreshed quote below.'],
 };

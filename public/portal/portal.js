@@ -706,7 +706,8 @@ function bookingSettingsView() {
       <div class="bks-kind"><label class="pcheck"><input type="checkbox" data-bk="online.on" ${c.kinds.online.on ? 'checked' : ''} /><span><b>Online consultation</b></span></label>
         <label><span>Length</span><select class="in" data-bk="online.minutes">${opt([5, 10, 15, 20, 30], c.kinds.online.minutes)}</select></label>
         <label><span>Video call link (optional)</span><input class="in" type="url" data-bk="online.video" value="${esc(c.kinds.online.video || '')}" placeholder="https://meet.google.com/… or Zoom" /></label>
-        <p class="hint">Without a link it is a phone call: you call the customer at the time they picked. With a link they can choose phone or video.</p></div>
+        <label class="pcheck"><input type="checkbox" data-bk="online.meet" ${c.kinds.online.meet ? 'checked' : ''} ${g.online ? '' : 'disabled'} /><span>Google Meet link for each video call<em>${g.online ? 'Made by your GoHighLevel calendar. Needs Google connected and Google Meet as the meeting location (see the GoHighLevel setup guide).' : 'Pick the online consultation calendar in Forms → GoHighLevel first.'}</em></span></label>
+        <p class="hint">Without a link or Google Meet it is a phone call: you call the customer at the time they picked. With either, they can choose phone or video.</p></div>
       <div class="bks-kind"><label class="pcheck"><input type="checkbox" data-bk="visit.on" ${c.kinds.visit.on ? 'checked' : ''} /><span><b>Studio visit</b></span></label>
         <label><span>Length</span><select class="in" data-bk="visit.minutes">${opt([15, 20, 30, 45, 60, 90], c.kinds.visit.minutes)}</select></label>
         <p class="hint">Also used for the mold or pick up visit after a deposit.</p></div>
@@ -736,7 +737,7 @@ function readBooking() {
   return {
     enabled: v('enabled').checked, tz: v('tz').value, step: Number(v('step').value), buffer: Number(v('buffer').value), notice: Number(v('notice').value), days: Number(v('days').value),
     closed: v('closed').value.split(/[\s,]+/).filter(Boolean), region: v('region').value, moldKit: v('moldKit').checked, hours,
-    kinds: { online: { on: v('online.on').checked, minutes: Number(v('online.minutes').value), video: v('online.video').value.trim() }, visit: { on: v('visit.on').checked, minutes: Number(v('visit.minutes').value) } },
+    kinds: { online: { on: v('online.on').checked, minutes: Number(v('online.minutes').value), video: v('online.video').value.trim(), meet: !!v('online.meet')?.checked }, visit: { on: v('visit.on').checked, minutes: Number(v('visit.minutes').value) } },
   };
 }
 async function saveBooking() {
@@ -1401,6 +1402,15 @@ function orderBox(l) {
   return `<div class="ord" data-order-box="${esc(l.id)}">
     <div class="ord-top"><p class="ord-t">Order <b>${esc(o.no)}</b>${copyBtn(o.no, 'order ID')}</p><span class="ord-saved" role="status" aria-live="polite"></span></div>
     <ol class="ord-steps">${steps}</ol>
+    ${o.stage === o.stages.length - 1 ? `<div class="ord-pick">${o.pickedAt
+      ? `<p class="ord-picked"><b>Picked up</b> ${esc(new Date(o.pickedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }))}${ro ? '' : ` <button type="button" class="linkbtn" data-order-pick="0" data-order-lead="${esc(l.id)}">Undo</button>`}</p>`
+      : `<button type="button" class="btn small primary" data-order-pick="1" data-order-lead="${esc(l.id)}" ${ro ? 'disabled' : ''}>Mark picked up</button><span class="faint">When the customer has the piece. This starts the thank-you and review request.</span>`}</div>` : ''}
+    <div class="ord-flags">
+      <label><input type="checkbox" data-order-flag="gift" data-order-lead="${esc(l.id)}" ${o.gift ? 'checked' : ''} ${ro ? 'disabled' : ''} /> Gift or surprise</label>
+      ${o.gift ? `<label class="ord-occ">Occasion date <input class="in" type="date" data-order-occ="${esc(l.id)}" value="${esc(o.occasion || '')}" ${ro ? 'disabled' : ''} /></label>` : ''}
+      <label><input type="checkbox" data-order-flag="remake" data-order-lead="${esc(l.id)}" ${o.remake ? 'checked' : ''} ${ro ? 'disabled' : ''} /> Remake or fix open</label>
+    </div>
+    <p class="ord-help">${o.gift ? (o.occasion ? 'The review request waits until 2 days after the occasion, and goes only to the buyer.' : 'Add the occasion date: the review request waits until 2 days after it (so a photo never spoils the surprise).') : o.remake ? 'The review request waits until you untick this.' : 'Review request: the day after pick up (grillz 3 days), if Automations are on in Forms → GoHighLevel.'}</p>
     <label class="ord-note"><span>Message on the tracking page <small>optional</small></span><input class="in" type="text" maxlength="500" data-order-note="${esc(l.id)}" value="${esc(o.note)}" placeholder="e.g. Stones arrived, setting starts Monday" ${ro ? 'disabled' : ''} /></label>
     <p class="ord-help">Send the customer this order ID. They track the piece on your website with it and their email (${esc(l.email)}).${l.prodBoard?.on ? ' On the GoHighLevel production board (order ID and specs only); stages your workers set there show here.' : ''}</p>
   </div>`;
@@ -1412,7 +1422,7 @@ async function saveOrder(id, body) {
     const r = await api(`/api/portal/leads/${encodeURIComponent(id)}/order`, { method: 'PATCH', body: JSON.stringify(body), json: true });
     const l = P.leads.find((x) => x.id === id);
     if (l && r.order) { l.order = r.order; leadStore.update(id, { order: r.order }, P.counts); }
-    if (box && l && 'stage' in body) box.outerHTML = orderBox(l);
+    if (box && l && ['stage', 'picked', 'gift', 'occasion', 'remake'].some((k) => k in body)) box.outerHTML = orderBox(l);
     const n = app.querySelector(`[data-order-box="${CSS.escape(id)}"] .ord-saved`);
     if (n) { n.textContent = 'Saved'; setTimeout(() => { n.textContent = ''; }, 1600); }
   } catch (err) { JLUI.alert(err.message); }
@@ -1506,6 +1516,7 @@ function ghlCard() {
     <label class="ghl-on"><input type="checkbox" data-ghl-f="backfill" ${g.backfill ? 'checked' : ''} ${g.connected || P.ghlTokenTyped ? '' : 'disabled'} /><span><b>Also send the leads you already have</b><em>${g.counts ? `${g.counts.waiting} not in GoHighLevel yet. ` : ''}They go in oldest first, about 12 every 5 minutes, each into the stage of its status here. Archived leads are never sent. If your GoHighLevel has automations on new contacts, they will run for these too.</em></span></label>
     ${ghlProdView(g, pipes, pipe)}
     ${ghlBookingView(g)}
+    ${ghlAutoView(g)}
     ${g.counts && (g.counts.sent || g.counts.failed) ? `<p class="ghl-count">In GoHighLevel: <b>${g.counts.sent}</b> sent${g.counts.waiting ? ` · ${g.counts.waiting} waiting` : ''}${g.counts.failed ? ` · <button type="button" class="ghl-bad ghl-failbtn" data-act="ghl-failed">${g.counts.failed} failed</button>` : ''}${g.counts.renaming ? ` · lead ID being added to ${g.counts.renaming}` : ''}</p>` : ''}
     ${P.ghlFailed ? ghlFailedView(P.ghlFailed) : ''}
     <div class="ghl-acts"><button type="button" class="btn primary small" data-act="ghl-save">Save</button>${g.connected ? '<button type="button" class="btn small warn" data-act="ghl-disconnect">Disconnect</button>' : ''}</div>
@@ -1563,6 +1574,33 @@ function ghlBookingView(g) {
     <div class="ghl-checks"><label><input type="checkbox" data-ghl-f="smsNext" ${g.smsNext ? 'checked' : ''} /> Text the customer the link to the next-step questions right after the deposit, from your GoHighLevel number (needs the "Edit Conversation Messages" scope)</label></div>
   </div>`;
 }
+// Automations (27.11.2026): JewelryLead javlja GHL workflowima kad ide koja poruka (tag + polja kontakta).
+const EV_GROUPS = [['offer', 'Quote follow-ups (abandoned quote)'], ['appts', 'Appointment reminders'], ['reviews', 'Pick up and review request']];
+function ghlAutoView(g) {
+  if (!g.connected) return '';
+  const a = g.auto || {};
+  const defs = g.eventDefs || {};
+  const fields = g.fields || {};
+  const nFields = Object.keys(fields).length;
+  const total = (g.fieldDefs || []).length;
+  const evs = g.events || [];
+  const badge = (st) => `<span class="ev-st ev-${esc(st)}">${esc({ sent: 'Sent', failed: 'Failed', holdout: 'Control group', sending: 'Sending' }[st] || st)}</span>`;
+  return `<div class="ghl-prod ghl-auto" data-ghl-auto>
+    <h3 class="ghl-sub">Automations for your GoHighLevel workflows</h3>
+    <p class="faint ghl-how">JewelryLead knows when a quote is about to expire, when an appointment is coming up and when a piece is picked up. At the right moment it fills the customer's JL fields on the contact and adds a tag (for example <code>jl offer 24h left</code>). Each GoHighLevel workflow starts on its tag, sends the text or email, and removes the tag. Nothing is sent until you build and publish those workflows.</p>
+    <div class="ghl-acts"><button type="button" class="btn small" data-act="ghl-fields">${nFields ? 'Check the JL fields again' : 'Create the JL fields in GoHighLevel'}</button><span class="faint">${nFields ? `${nFields} of ${total} fields ready` : 'Needs the "View Custom Fields" and "Edit Custom Fields" scopes on the token.'}</span></div>
+    ${nFields ? `<details class="ghl-ref"><summary>Fields to use in your messages</summary><ul>${(g.fieldDefs || []).map(([k, name]) => `<li><code>{{${esc(fields[k] || `contact.${k}`)}}}</code> <span class="faint">${esc(name.replace(/^JL /, ''))}</span>${copyBtn(`{{${fields[k] || `contact.${k}`}}}`, name)}</li>`).join('')}</ul></details>` : ''}
+    <details class="ghl-ref"><summary>Tags and when they are added</summary>${EV_GROUPS.map(([gk, gl]) => `<p class="ghl-refh">${esc(gl)}</p><ul>${Object.entries(defs).filter(([, d]) => d[1] === gk).map(([, d]) => `<li><code>${esc(d[0])}</code>${copyBtn(d[0], 'tag')} <span class="faint">${esc(d[2])}</span></li>`).join('')}</ul>`).join('')}</details>
+    <div class="ghl-checks">${EV_GROUPS.map(([k, t]) => `<label><input type="checkbox" data-ghl-a="${k}" ${a[k] !== false ? 'checked' : ''} /> ${esc(t)}</label>`).join('')}</div>
+    <div class="ghl-grid">
+      <label><span>Control group (no quote follow-ups)</span><select class="in" data-ghl-a="holdout">${[[0, 'None'], [10, '10% of leads (recommended, to measure)'], [20, '20% of leads']].map(([v, t]) => `<option value="${v}" ${Number(a.holdout ?? 10) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      <label><span>Review request after pick up</span><select class="in" data-ghl-a="reviewDays">${[0, 1, 2, 3].map((d) => `<option value="${d}" ${Number(a.reviewDays ?? 1) === d ? 'selected' : ''}>${d ? `${d} day${d > 1 ? 's' : ''} later` : 'Same day'}</option>`).join('')}</select></label>
+      <label><span>Grillz review request</span><select class="in" data-ghl-a="grillzReviewDays">${[1, 2, 3, 5, 7].map((d) => `<option value="${d}" ${Number(a.grillzReviewDays ?? 3) === d ? 'selected' : ''}>${d} day${d > 1 ? 's' : ''} after pick up</option>`).join('')}</select></label>
+    </div>
+    <label class="ghl-on"><input type="checkbox" data-ghl-a="on" ${a.on ? 'checked' : ''} ${g.enabled ? '' : 'disabled'} /><span><b>Send automation tags to GoHighLevel</b><em>${g.enabled ? `Counts from the moment you turn it on: older leads do not get messages they missed.${nFields ? '' : ' Create the JL fields first, or your messages will have empty links.'}` : 'Turn on "Send new leads to GoHighLevel" first.'}</em></span></label>
+    ${evs.length ? `<details class="ghl-ref" ${evs.some((e) => e.status === 'failed') ? 'open' : ''}><summary>Last automation tags (${evs.length})</summary><ul class="ev-list">${evs.map((e) => `<li>${badge(e.status)} <code>${esc(e.tag || e.ev)}</code> <span>${esc(e.ref ? `${e.ref} · ` : '')}${esc(e.name)}</span> <span class="faint">${esc(when(e.at))}</span>${e.error ? `<br /><span class="ghl-bad">${esc(e.error)}</span>` : ''}</li>`).join('')}</ul></details>` : ''}
+  </div>`;
+}
 function ghlRead() {
   const box = app.querySelector('[data-ghl]');
   const v = (f) => box?.querySelector(`[data-ghl-f="${f}"]`);
@@ -1570,6 +1608,8 @@ function ghlRead() {
   const tok = v('token')?.value.trim();
   if (tok) body.token = tok;
   if (v('smsNext')) body.smsNext = !!v('smsNext').checked;
+  const av = (f) => box?.querySelector(`[data-ghl-a="${f}"]`);
+  if (av('on')) body.auto = { on: !!av('on').checked, offer: !!av('offer')?.checked, appts: !!av('appts')?.checked, reviews: !!av('reviews')?.checked, holdout: Number(av('holdout')?.value), reviewDays: Number(av('reviewDays')?.value), grillzReviewDays: Number(av('grillzReviewDays')?.value) };
   const cals = box?.querySelectorAll('select[data-ghl-cal]');
   if (cals?.length) body.calendars = Object.fromEntries([...cals].map((el) => [el.dataset.ghlCal, el.value]));
   const pipe = box?.querySelector('[data-ghl-pipe]');
@@ -1593,6 +1633,10 @@ async function ghlAction(act) {
       P.ghlMsg = 'Loading calendars…'; render();
       const r = await api('/api/portal/ghl/calendars', { method: 'POST', body: JSON.stringify({ token: body.token, locationId: body.locationId }), json: true });
       P.ghlCals = r.calendars; P.ghlMsg = r.calendars.length ? `${r.calendars.length} calendar${r.calendars.length === 1 ? '' : 's'} found. Pick them, then Save.` : 'No calendars in this sub-account yet.';
+    } else if (act === 'fields') {
+      P.ghlMsg = 'Creating the JL fields…'; render();
+      P.me.ghl = await api('/api/portal/ghl/fields', { method: 'POST', body: JSON.stringify({}), json: true });
+      P.ghlMsg = `${Object.keys(P.me.ghl.fields || {}).length} JL fields ready in GoHighLevel.`;
     } else if (act === 'hook') {
       P.me.ghl = await api('/api/portal/ghl', { method: 'PUT', body: JSON.stringify({ hook: 'create' }), json: true });
       P.ghlMsg = 'Webhook address created. Paste it into your GoHighLevel workflow.';
@@ -1711,6 +1755,8 @@ app.addEventListener('change', async (e) => {
     } catch (err) { JLUI.alert(err.message); el.value = prev; }
   }
   if (el.dataset.orderNote) { saveOrder(el.dataset.orderNote, { note: el.value }); return; }
+  if (el.dataset.orderFlag) { saveOrder(el.dataset.orderLead, { [el.dataset.orderFlag]: el.checked }); return; }
+  if (el.dataset.orderOcc) { saveOrder(el.dataset.orderOcc, { occasion: el.value }); return; }
   if (el.dataset.leadNote) {
     try { await api(`/api/portal/leads/${el.dataset.leadNote}`, { method: 'PATCH', body: JSON.stringify({ note: el.value }), json: true }); const l = P.leads.find((x) => x.id === el.dataset.leadNote); if (l) l.note = el.value; leadStore.update(el.dataset.leadNote, { note: el.value }, P.counts); el.classList.add('saved'); setTimeout(() => el.classList.remove('saved'), 1200); }
     catch (err) { JLUI.alert(err.message); }
@@ -1731,6 +1777,7 @@ app.addEventListener('click', async (e) => {
   const t = e.target.closest('button, img[data-zoom]') || e.target;
   if (t.dataset?.film) { zoomVideo(t.dataset.film, t.dataset.poster); return; }
   if (t.dataset?.orderStage != null) { saveOrder(t.dataset.orderLead, { stage: Number(t.dataset.orderStage) }); return; }
+  if (t.dataset?.orderPick != null) { saveOrder(t.dataset.orderLead, { picked: t.dataset.orderPick === '1' }); return; }
   if (t.dataset?.copy != null) { if ((await copyText(t, t.dataset.copy)) && t.dataset.copyLead) track(t.dataset.copyLead, { type: 'contact_copied', what: t.dataset.copyWhat }); return; }
   // Quote radni sto (Fits the budget): izbori, reset, poruka.
   if (t.tagName === 'BUTTON' && t.dataset.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
@@ -1780,7 +1827,7 @@ app.addEventListener('click', async (e) => {
     api('/api/portal/ghl/retry', { method: 'POST', body: '{}', json: true }).then(async (r) => { P.ghlFailed = null; P.ghlMsg = `${r.queued} lead${r.queued === 1 ? '' : 's'} sent again: the first 12 now, the rest about 12 every 5 minutes.`; P.me.ghl = await api('/api/portal/ghl'); render(); }).catch((err) => { P.ghlMsg = err.message; render(); });
     return;
   }
-  if (['ghl-load', 'ghl-save', 'ghl-disconnect', 'ghl-users', 'ghl-calendars', 'ghl-hook'].includes(t.dataset.act)) { ghlAction(t.dataset.act.slice(4)); return; }
+  if (['ghl-load', 'ghl-save', 'ghl-disconnect', 'ghl-users', 'ghl-calendars', 'ghl-hook', 'ghl-fields'].includes(t.dataset.act)) { ghlAction(t.dataset.act.slice(4)); return; }
   if (t.dataset.ntGroup) { P.notifGroup = t.dataset.ntGroup; render(); return; }
   if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if (t.dataset.tab) { if (P.tab === 'chatbot' && t.dataset.tab !== 'chatbot' && !(await confirmLeaveChatbot())) return; P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); if (P.tab === 'chatbot') openChatbot(); if (P.tab === 'metals') openMetals(); }
@@ -2083,11 +2130,17 @@ const NT = {
   order_created: ['order', (x) => `<b>${esc(x.name)}</b> is now an order`],
   auto_send_failed: ['warn', (x) => `Could not email <b>${esc(x.name)}</b> automatically. Reply to them yourself.`],
   alert_failed: ['warn', (x) => `The new lead email for <b>${esc(x.name)}</b> did not go out`],
+  deposit_unpaid: ['hot', (x) => `<b>${esc(x.name)}</b> opened the deposit payment 20 minutes ago and has not paid. A quick personal message now works best.`],
+  refresh_ready: ['order', (x) => `Refreshed price unlocked for <b>${esc(x.name)}</b> (metal prices stayed steady). It is held 24 hours on their page.`],
+  refresh_moved: ['warn', (x) => `Metal prices moved for <b>${esc(x.name)}</b>'s refreshed quote. Send them the new price.`],
+  appointment_unmarked: ['warn', (x) => `The ${x.meta.kind === 'online' ? 'online consultation' : 'studio visit'} with <b>${esc(x.name)}</b>${x.meta.start ? ` (${esc(apptWhen(x.meta.start))})` : ''} is over. Mark it Done or No-show in Bookings.`],
+  order_picked: ['order', (x) => `<b>${esc(x.name)}</b> picked up their piece`],
+  appointment_status: ['order', (x) => `<b>${esc(x.name)}</b> marked ${x.meta.status === 'noshow' ? 'No-show' : 'Done'} in GoHighLevel`],
 };
 // Grupe notifikacija (26.11.2026): čipovi iznad liste filtriraju po vrsti, sa brojem i brojem novih.
 const NT_GROUPS = [
   ['leads', 'New leads', ['created']],
-  ['bookings', 'Bookings & deposits', ['page_action', 'refresh_requested', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment', 'order_created']],
+  ['bookings', 'Bookings & deposits', ['page_action', 'refresh_requested', 'deposit_unpaid', 'refresh_ready', 'refresh_moved', 'appointment_booked', 'appointment_cancelled', 'appointment_unmarked', 'appointment_status', 'deposit_paid', 'deposit_returned', 'fulfillment', 'order_created', 'order_picked']],
   ['pages', 'Page visits', ['page_view']],
   ['chatbot', 'AI chatbot', ['chat_question']],
   ['metals', 'Metal prices', ['metal_move']],
