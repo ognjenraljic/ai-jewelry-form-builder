@@ -2,7 +2,8 @@
 // Njegov dizajn (sve verzije i video), ponude (kako je izabrao + "Fits the budget" kad je zlatar napravi), dugmad
 // Deposit i Book appointment, stilovi i završne obrade radnje, adresa i radno vrijeme. Izgled: luksuzni juvelir,
 // mirno i tipografski (vidi feedback_jewelrylead_premium_restraint): bez varnica i efekata, samo svjetlo i slova.
-import { estimate, specDiff, coverLabel, iceKey, isGold, rowsOf, money } from '../public/pricing.js';
+import { estimate, specDiff, coverLabel, iceKey, isGold, rowsOf, money, middleGround } from '../public/pricing.js';
+import { offerTimeline, offerStage, farOverBudget, revealAt, STAGE_TEXT } from './offer.js';
 import { withArt, styleImage, metalFamily, artCategory } from '../public/option-art.js';
 
 export const PAGE_ACTIONS = ['deposit', 'appointment'];
@@ -36,7 +37,8 @@ function specRows(spec, ls) {
 const moldingIncluded = (est) => (est?.lines || []).some((l) => /molding/i.test(l.label));
 
 // Ponude: kako je kupac izabrao, i "Fits the budget" samo ako ju je zlatar napravio, jeftinija je i stvarno se razlikuje.
-function offersOf({ ls, pricing, quotes }) {
+function offersOf(d, tl = offerTimeline(d, d.now || Date.now())) {
+  const { ls, pricing, quotes } = d;
   if (!ls || !pricing) return [];
   const out = [];
   // Zlatar može podesiti obje ponude u portalu (22.11.2026): izbore (quotes.<slot>.spec) i konačnu cijenu
@@ -49,16 +51,27 @@ function offersOf({ ls, pricing, quotes }) {
   if (aTotal == null) return [];
   const adjusted = specDiff(ls, pickedSpec).length > 0;
   out.push({ slot: 'picked', tag: 'Option 1', title: 'Your design', sub: adjusted ? 'Your design, as we would make it' : 'Exactly as you created it', total: aTotal, rows: specRows(pickedSpec, ls), molding: moldingIncluded(a) });
-  // Option 2 samo kad je zlatar uključio "Show on sales page" (22.11.2026).
-  const fitSpec = quotes?.fit?.show === true ? specOf('fit') : null;
+  // Option 2 kad je zlatar uključio "Show on sales page" (22.11.2026), ili sama (27.11.2026, 1a) kad je cijena daleko
+  // iznad budžeta: prvih N sati zamućena kartica, pa otkrivena opcija (zlatareva iz "Fits the budget" ili izračunata).
+  let fitSpec = quotes?.fit?.show === true ? specOf('fit') : null;
+  let revealed = false;
+  if (!fitSpec && Number(tl.settings.autoreveal) !== 0 && farOverBudget(aTotal, ls.budget?.high, tl.settings)) {
+    const auto = specOf('fit') || middleGround(pricing, pickedSpec, ls.budget.high, ls.choices || {})?.spec || null;
+    if (auto && (tl.now < revealAt(tl))) { out.push({ slot: 'teaser', tag: 'Option 2', revealAt: revealAt(tl) }); fitSpec = null; }
+    else if (auto) { fitSpec = auto; revealed = true; }
+  }
   if (fitSpec) {
     const b = estimate(pricing, fitSpec);
     const bTotal = finalOf('fit', b);
     const changes = specDiff({ ...ls, spec: pickedSpec }, fitSpec).filter((c) => !(['Karat', 'Clarity'].includes(c.what) && /^(none|)$/i.test(c.to)));
     if (bTotal != null && bTotal < aTotal && changes.length) {
       const inBudget = !Number.isFinite(ls.budget?.high) || bTotal <= ls.budget.high;
-      out.push({ slot: 'fit', tag: 'Option 2', title: inBudget ? 'Fits your budget' : 'Closer to your budget', sub: 'Same look, smarter materials', total: bTotal, rows: specRows(fitSpec, ls), changes, save: aTotal - bTotal, from: aTotal, molding: moldingIncluded(b), best: inBudget });
+      out.push({ slot: 'fit', tag: 'Option 2', title: inBudget ? 'Fits your budget' : 'Closer to your budget', sub: revealed ? 'We found a way to bring it closer to your budget' : 'Same look, smarter materials', total: bTotal, rows: specRows(fitSpec, ls), changes, save: aTotal - bTotal, from: aTotal, molding: moldingIncluded(b), best: inBudget, revealed });
     }
+  }
+  // Osvježena ponuda (poslije isteka): iste opcije po današnjoj cijeni metala, uz popust ako ga radnja daje.
+  if (tl.refresh?.status === 'ready' && tl.refresh.discount > 0) {
+    for (const o of out) if (o.total) { const was = o.total; o.total = Math.round(was * (1 - tl.refresh.discount / 100)); o.from = was; o.save = was - o.total; o.refreshed = true; }
   }
   return out;
 }
@@ -148,12 +161,23 @@ function nextSection(bk, { grillz, store, first }) {
   </div></section>`;
 }
 
+// Zamućena kartica (1a): obris ponude bez brojeva i odbrojavanje do otkrivanja.
+function teaserCard(o) {
+  return `<article class="offer fit teaser" aria-label="Option 2, coming soon">
+    <div class="teaser-ghost" aria-hidden="true"><header><span class="tag">Option 2</span></header><h3>Fits your budget</h3><p class="sub">Same look, smarter materials</p>
+      <div class="price"><span class="amount">$0,000</span></div><dl class="specs"><div><dt>Metal</dt><dd>14K Gold</dd></div><div><dt>Ice</dt><dd>Iced</dd></div><div><dt>Stones</dt><dd>Stones</dd></div></dl></div>
+    <div class="teaser-veil"><span class="teaser-spark" aria-hidden="true"></span><p class="mini">Option 2</p><h3>We might have something cooking for you</h3>
+      <p>A version closer to your budget is being prepared.</p>
+      <p class="teaser-clock" data-deadline="${o.revealAt}" data-reveal="1">Revealed in <b>--:--:--</b></p></div>
+  </article>`;
+}
 function offerCard(o, single, bk) {
+  if (o.slot === 'teaser') return teaserCard(o);
   const changes = o.changes?.length
     ? `<div class="changes"><p class="mini">What changes</p><ul>${o.changes.map((c) => `<li><span class="was">${esc(c.from === 'none' ? (c.what === 'Ice' ? 'Not iced' : 'None') : c.from)}</span><i aria-hidden="true">→</i><b>${esc(c.to === 'none' ? (c.what === 'Stones' ? 'No stones' : 'None') : c.to)}</b></li>`).join('')}</ul></div>`
     : '';
   return `<article class="offer${o.slot === 'fit' ? ' fit' : ''}${single ? ' single' : ''}" aria-label="${esc(o.tag)}: ${esc(o.title)}">
-    <header><span class="tag">${esc(o.tag)}</span>${o.best ? '<span class="badge">Recommended</span>' : ''}</header>
+    <header><span class="tag">${esc(o.tag)}</span>${o.revealed ? '<span class="badge reveal">Unlocked for you</span>' : o.best ? '<span class="badge">Recommended</span>' : ''}${o.refreshed ? '<span class="badge fresh">Refreshed price</span>' : ''}</header>
     <h3>${esc(o.title)}</h3><p class="sub">${esc(o.sub)}</p>
     <div class="price"><span class="amount">${money(o.total)}</span>${o.from ? `<span class="from">${money(o.from)}</span>` : ''}</div>
     <p class="price-note">Estimated total${o.molding ? ', molding included' : ''}${o.save ? ` · <b>You save ${money(o.save)}</b>` : ''}</p>
@@ -173,51 +197,56 @@ function clock(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${two(Math.floor(s / 3600))}:${two(Math.floor((s % 3600) / 60))}:${two(s % 60)}`;
 }
-function remainingText(deadline) {
-  const left = deadline - Date.now();
+function remainingText(deadline, now = Date.now()) {
+  const left = deadline - now;
   return left > 0 ? `Your price is held for ${clock(left)}` : 'This offer has expired. Reply to your quote and we will refresh it.';
 }
-// Faza roka (22.11.2026, Ognjen: "dinamično u zavisnosti koliko je vremena prošlo"): tekst i boja prate koliko je ostalo.
-// Ista pravila su u /lead-page.js (VSTAGE) da se faza mijenja uživo.
-function validityStage(left, total, hours) {
-  if (left <= 0) return { k: 'expired', label: 'This offer has expired', sub: 'Reply to your quote and we will refresh your price.' };
-  if (left <= 3600_000) return { k: 'last', label: 'Last hour to keep this price', sub: 'Reserve now, before the timer runs out.' };
-  if (left <= Math.max(total * 0.25, 3600_000)) return { k: 'urgent', label: 'Final hours on your price', sub: 'When the timer ends, your price has to be refreshed.' };
-  if (left <= total * 0.75) return { k: 'steady', label: 'Your price is still on hold', sub: 'Reserve while your price and design are held.' };
-  return { k: 'fresh', label: `Reserved for you for ${hours} hours`, sub: 'Your price and design are held until the timer ends.' };
-}
-function validityHtml(deadline, hours) {
+function validityHtml(deadline, hours, now = Date.now(), refreshed = false) {
   const total = hours * 3600_000;
-  const left = deadline - Date.now();
-  const st = validityStage(left, total, hours);
+  const left = deadline - now;
+  const k = offerStage(left, hours);
+  const [label, sub] = STAGE_TEXT[k](hours);
+  const st = { k, label: refreshed && k !== 'expired' ? `Refreshed price · ${label}` : label, sub };
   const s = Math.max(0, Math.floor(left / 1000));
   const unit = (u, v, l) => `<span class="v-unit"><b data-u="${u}">${two(v)}</b><small>${l}</small></span>`;
   const pct = Math.max(0, Math.min(100, (left / total) * 100));
-  return `<div class="validity v-${st.k}" data-deadline="${deadline}" data-total="${total}" data-hours="${hours}">
+  return `<div class="validity v-${st.k}" data-deadline="${deadline}" data-total="${total}" data-hours="${hours}"${refreshed ? ' data-refreshed="1"' : ''}>
     <span class="v-label">${st.label}</span>
     <div class="v-clock" role="timer" aria-label="Time left on this offer"><time datetime="${new Date(deadline).toISOString()}">${unit('h', Math.floor(s / 3600), 'Hours')}<i class="v-colon" aria-hidden="true">:</i>${unit('m', Math.floor((s % 3600) / 60), 'Minutes')}<i class="v-colon" aria-hidden="true">:</i>${unit('s', s % 60, 'Seconds')}</time></div>
     <div class="v-bar" aria-hidden="true"><span style="width:${pct.toFixed(2)}%"></span></div>
     <span class="v-sub">${st.sub}</span></div>`;
 }
 
-// Rok ponude (22.11.2026): od zadnje poslate ponude (poruka Estimated price ili uključen Option 2), podrazumijevano 48 h.
-function offerDeadline(d, offers) {
-  const hours = Number.isFinite(Number(d.pricing?.offerHours)) && d.pricing?.offerHours !== '' && d.pricing?.offerHours != null ? Number(d.pricing.offerHours) : 48;
-  const from = Math.max(Number(d.quotes?.picked?.at) || 0, d.quotes?.fit?.show ? Number(d.quotes.fit.showAt || d.quotes.fit.at) || 0 : 0) || Number(d.lead?.createdAt) || Date.now();
-  return { hours, deadline: offers.length && hours > 0 ? from + hours * 3600_000 : 0 };
+// Dugmad kad je ponuda zaključana: nema depozita; istekla = osvježena ponuda + termin, inače samo termin.
+const lockedCTA = (tl, bk, compact = false, short = false) => `<div class="cta-row${compact ? ' compact' : ''}">${tl.stage === 'expired' ? `<button type="button" class="btn primary" data-refresh="1">${short ? 'Refresh my quote' : 'Request a refreshed quote'}</button>` : ''}<button type="button" class="btn ghost" data-action="${bk?.kinds?.length ? 'book' : 'appointment'}" data-option="picked">${bookLabel(bk, short)}</button></div>`;
+// Zaključana ponuda (27.11.2026): istekla (dugme za osvježenu ponudu), zahtjev poslat (odbrojavanje do otključavanja)
+// ili se metal pomjerio (radnja šalje novu cijenu). Book an appointment ostaje uvijek dostupno.
+function lockPanel(tl, store, bk) {
+  const s = tl.settings;
+  const book = `<button type="button" class="btn ghost" data-action="${bk?.kinds?.length ? 'book' : 'appointment'}" data-option="picked">${bookLabel(bk, false)}</button>`;
+  if (tl.stage === 'requested') return `<div class="lockpanel lp-wait"><span class="lp-ic" aria-hidden="true"></span><p class="mini">Refreshed quote requested</p><h3>Your new price is on its way</h3>
+    <p>If metal prices stay steady, your refreshed price unlocks here automatically and is held for ${s.refreshhours} hours.</p>
+    <p class="lp-clock" data-deadline="${tl.refresh.unlockAt}" data-unlock="1">Unlocks in <b>--:--:--</b></p><div class="cta-row">${book}</div></div>`;
+  if (tl.stage === 'moved') return `<div class="lockpanel lp-moved"><span class="lp-ic" aria-hidden="true"></span><p class="mini">Metal prices moved</p><h3>We are updating your price</h3>
+    <p>Gold and platinum prices changed since your quote, so ${esc(store)} will send you a new price shortly.</p><div class="cta-row">${book}</div></div>`;
+  return `<div class="lockpanel"><span class="lp-ic" aria-hidden="true"></span><p class="mini">Offer locked</p><h3>Your offer has expired</h3>
+    <p>Prices follow the metal markets. Ask for a refreshed quote and we will hold a new price for you for ${s.refreshhours} hours${Number(s.discount) > 0 ? ', with a little extra off' : ''}.</p>
+    <div class="cta-row"><button type="button" class="btn primary" data-refresh="1">Request a refreshed quote</button>${book}</div>
+    <p class="lp-note">Ready in about ${s.refreshwait} hours if metal prices stay steady.</p></div>`;
 }
-
 // Asistent na stranici (26.11.2026): iste činjenice koje stranica pokazuje, kao podaci za model (src/assistant.js).
 export function pageFacts(d) {
   const bk = d.booking || {};
-  const offers = offersOf(d);
-  const { deadline } = offerDeadline(d, offers);
-  const left = deadline - Date.now();
+  const tl = offerTimeline(d, d.now || Date.now());
+  const offers = offersOf(d, tl).filter((o) => o.slot !== 'teaser');
+  const deadline = offers.length ? tl.deadline : 0;
+  const left = deadline - tl.now;
+  const lockText = tl.stage === 'requested' ? 'The offer expired and the customer asked for a refreshed quote; it unlocks on the page automatically if metal prices stay steady.' : tl.stage === 'moved' ? 'The offer expired; metal prices moved, so the store will send a new price.' : '';
   return {
     store: d.store.name, storeInfo: d.store.info || '', first: firstName(d.lead.name), piece: pieceLabel(d.form, d.answers.type).toLowerCase(),
     details: heroDetails(d.details), budget: d.ls?.budgetLabel || '', renders: d.renders.length, film: !!d.film,
     offers: offers.map((o) => ({ ...o, money: money(o.total), saveMoney: o.save ? money(o.save) : '' })),
-    deadlineText: deadline ? (left > 0 ? `The price on the page is held for about ${Math.max(1, Math.round(left / 3600_000))} more hour(s) (countdown on the page). After that the store refreshes the price.` : 'The price hold on the page has expired; the store can refresh the price if they reply.') : '',
+    deadlineText: lockText || (deadline ? (left > 0 ? `The price on the page is held for about ${Math.max(1, Math.round(left / 3600_000))} more hour(s) (countdown on the page). After that the store refreshes the price.` : 'The price hold on the page has expired; the customer can press "Request a refreshed quote" on the page.') : ''),
     depositOn: !!bk.deposit?.on, depositPaid: !!bk.deposit?.paid, depositAmount: bk.deposit?.amount ? money(bk.deposit.amount) : '',
     kinds: bk.kinds || [], bookOn: true, video: !!bk.video, tzLabel: bk.tzLabel || '', hours: d.hoursText || '',
     upcoming: bk.upcoming || [], fulfillment: bk.fulfillment?.text || '', region: bk.region || '', moldKit: !!bk.moldKit,
@@ -245,7 +274,8 @@ export function leadPageHtml(d) {
   const vars = Object.entries(theme).map(([k, v]) => `--${k}:${v}`).join(';');
   const first = firstName(lead.name);
   const piece = pieceLabel(form, answers.type);
-  const offers = offersOf(d);
+  const tl = offerTimeline(d, d.now || Date.now());
+  const offers = offersOf(d, tl);
   const details = heroDetails(d.details);
   const show = showcase(form, answers);
   const main = renders[renders.length - 1];
@@ -261,10 +291,14 @@ export function leadPageHtml(d) {
     ? `<div class="thumbs" role="list">${media.map((m, k) => `<button type="button" role="listitem" class="thumb${m.kind === 'video' ? ' is-video' : ''}${k === renders.length - 1 ? ' on' : ''}" data-${m.kind === 'video' ? 'video' : 'src'}="${esc(m.src)}"${m.poster ? ` data-poster="${esc(m.poster)}"` : ''} aria-label="${esc(m.label)}">${m.kind === 'video' ? `<img src="${esc(m.poster)}" alt="" loading="lazy" width="96" height="96" /><span class="play" aria-hidden="true"></span>` : `<img src="${esc(m.src)}" alt="" loading="lazy" width="96" height="96" />`}<span class="thumb-l">${esc(m.label)}</span></button>`).join('')}</div>`
     : '';
 
-  const { hours, deadline } = offerDeadline(d, offers);
-  const validity = deadline ? validityHtml(deadline, hours) : '';
+  const hours = tl.hours;
+  const deadline = offers.length ? tl.deadline : 0;
+  const refreshed = tl.refresh?.status === 'ready';
+  const validity = deadline && !['requested', 'moved'].includes(tl.stage) && !(tl.stage === 'expired') ? validityHtml(deadline, hours, tl.now, refreshed) : '';
+  const lock = offers.length && tl.locked ? lockPanel(tl, store.name, bk) : '';
+  const refreshNote = refreshed && tl.refresh.discount > 0 ? `<p class="refresh-note">Your refreshed price includes an extra <b>${tl.refresh.discount}% off</b>, held for ${hours} hours.</p>` : '';
   const offerSection = offers.length
-    ? `<div class="offers${offers.length === 1 ? ' one' : ''}">${offers.map((o) => offerCard(o, offers.length === 1, bk)).join('')}</div>`
+    ? `${lock}<div class="offers${offers.length === 1 ? ' one' : ''}${tl.locked ? ' locked' : ''}"${tl.locked ? ' aria-hidden="true" inert' : ''}>${offers.map((o) => offerCard(o, offers.length === 1, bk)).join('')}</div>`
     : `<div class="offers one"><article class="offer single"><header><span class="tag">Your quote</span></header><h3>Your price is being prepared</h3><p class="sub">${esc(store.name)} is finalizing the price for your design and will send it to you shortly.</p>${CTA('picked', false, false, bk)}</article></div>`;
 
   const filmSection = film
@@ -296,7 +330,7 @@ ${main ? `<meta property="og:image" content="${esc((d.origin || '') + main.url)}
 <link rel="stylesheet" href="/lead-page.css" />
 <script type="module" src="/lead-page.js"></script>
 </head>
-<body style="${esc(vars)}" data-key="${esc(key)}" data-store="${esc(store.name)}">
+<body style="${esc(vars)}" data-key="${esc(key)}" data-store="${esc(store.name)}"${d.now ? ` data-now-offset="${d.now - Date.now()}" data-sim="1"` : ''}>
 <header class="top"><div class="wrap">
   <div class="brand">${store.logo ? `<img src="${esc(store.logo)}" alt="${esc(store.name)}" />` : `<span class="brand-name">${esc(store.name)}</span>`}</div>
   <p class="private">Private design${first ? ` for <b>${esc(first)}</b>` : ''}</p>
@@ -310,14 +344,14 @@ ${main ? `<meta property="og:image" content="${esc((d.origin || '') + main.url)}
     <p class="lead-text">Designed with you at ${esc(store.name)}. Below are your design, the options we prepared for you and how to reserve your piece.</p>
     ${details.length ? `<dl class="details">${details.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : ''}
     <a class="btn primary to-offers" href="#options">${offers.length > 1 ? 'See your two options' : 'See your quote'}</a>
-    ${deadline ? `<p class="valid-mini" data-deadline="${deadline}" data-mini="1">${esc(remainingText(deadline))}</p>` : ''}
+    ${deadline && !tl.locked ? `<p class="valid-mini" data-deadline="${deadline}" data-mini="1">${esc(remainingText(deadline, tl.now))}</p>` : tl.locked && offers.length ? `<p class="valid-mini locked">${tl.stage === 'requested' ? 'Your refreshed quote is on its way' : tl.stage === 'moved' ? 'Your new price is on its way' : 'Your offer has expired. Request a refreshed quote below.'}</p>` : ''}
   </div>
 </section>
 ${nextSection(bk, { grillz: answers.type === 'grillz', store: store.name, first })}
 <div class="appts wrap" id="appts">${apptCards(bk?.upcoming, bk)}</div>
 ${filmSection}
 <section class="options rv" id="options" aria-labelledby="op-h">
-  <div class="sec-head"><p class="eyebrow">${offers.length > 1 ? 'Two ways to make it yours' : 'Your quote'}</p><h2 id="op-h">${offers.length > 1 ? 'Choose your option' : 'Reserve your piece'}</h2>${budget}${validity}</div>
+  <div class="sec-head"><p class="eyebrow">${offers.length > 1 ? 'Two ways to make it yours' : 'Your quote'}</p><h2 id="op-h">${offers.length > 1 ? 'Choose your option' : 'Reserve your piece'}</h2>${budget}${validity}${refreshNote}</div>
   ${offerSection}
   <p class="fine">Prices are estimates for your design and are confirmed by ${esc(store.name)} before your piece is made.</p>
 </section>
@@ -325,12 +359,12 @@ ${showSection}
 <section class="visit rv" aria-labelledby="vi-h">
   <div class="visit-card">
     <div class="visit-info"><p class="eyebrow">Visit the studio</p><h2 id="vi-h">${esc(store.name)}</h2>${infoLines.length ? `<div class="info">${infoLines.map((l) => (l.trim() ? `<p>${esc(l)}</p>` : '<p class="gap"></p>')).join('')}</div>` : ''}</div>
-    <div class="visit-cta"><h3>Ready when you are</h3><p>${bk?.kinds?.length ? (bk.kinds.length === 2 ? 'Reserve your piece with a deposit, book a short call to go over your design, or come in to see metals and stones in person.' : bk.kinds[0].kind === 'online' ? 'Reserve your piece with a deposit, or book a short call to go over your design and price together.' : 'Reserve your piece with a deposit, or come in to see metals and stones in person.') : 'Reserve your piece with a deposit, or come in to see metals and stones in person.'}</p>${CTA(offers.length > 1 ? '' : 'picked', true, false, bk)}</div>
+    <div class="visit-cta"><h3>Ready when you are</h3><p>${bk?.kinds?.length ? (bk.kinds.length === 2 ? 'Reserve your piece with a deposit, book a short call to go over your design, or come in to see metals and stones in person.' : bk.kinds[0].kind === 'online' ? 'Reserve your piece with a deposit, or book a short call to go over your design and price together.' : 'Reserve your piece with a deposit, or come in to see metals and stones in person.') : 'Reserve your piece with a deposit, or come in to see metals and stones in person.'}</p>${offers.length && tl.locked ? lockedCTA(tl, bk, true) : CTA(offers.length > 1 ? '' : 'picked', true, false, bk)}</div>
   </div>
 </section>
 </main>
 <footer class="foot wrap"><p>AI concept preview. Your final piece is handcrafted and may differ in detail.</p><p>© ${year} ${esc(store.name)} · Powered by JewelryLead</p></footer>
-<div class="dock" aria-hidden="true">${CTA(offers.length > 1 ? '' : 'picked', true, true, bk)}</div>
+<div class="dock" aria-hidden="true">${offers.length && tl.locked ? lockedCTA(tl, bk, true, true) : CTA(offers.length > 1 ? '' : 'picked', true, true, bk)}</div>
 <dialog class="sheet" id="sheet" aria-labelledby="sheet-h">
   <form method="dialog"><h2 id="sheet-h">Request received</h2><p id="sheet-p"></p><button class="btn primary" value="close">Done</button></form>
 </dialog>

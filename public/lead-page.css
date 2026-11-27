@@ -266,3 +266,42 @@ html.js .rv.in { opacity: 1; transform: none; }
 .sched [data-confirm] { width: 100%; }
 .sched .cta-row { margin-top: 18px; }
 @media (max-width: 520px) { .addr { grid-template-columns: 1fr 1fr; } .addr label:nth-child(3) { grid-column: 1 / -1; } .appt h3 { font-size: 24px; } }
+
+/* Tok ponude (27.11.2026): faze boja, zamućena opcija u budžetu, zaključane ponude i osvježena cijena. */
+.validity.v-fresh { --v-c: var(--accent, #c9a46a); }
+.validity.v-yellow { --v-c: #f2c94c; }
+.validity.v-red { --v-c: #ff5d5d; }
+.validity.v-last { --v-c: #ff4d4d; }
+.refresh-note { margin: 12px auto 0; font-size: 13px; color: var(--ink-soft, #b9b2a6); }
+.refresh-note b { color: #6fdc9b; }
+.offer .badge.reveal { background: color-mix(in srgb, #6fdc9b 18%, transparent); color: #8fe6b2; border-color: color-mix(in srgb, #6fdc9b 40%, transparent); }
+.offer .badge.fresh { background: color-mix(in srgb, var(--accent, #c9a46a) 16%, transparent); color: var(--accent, #c9a46a); }
+.offer.teaser { position: relative; overflow: hidden; min-height: 360px; }
+.teaser-ghost { filter: blur(9px) saturate(.6); opacity: .55; pointer-events: none; user-select: none; }
+.teaser-veil { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 28px; text-align: center;
+  background: radial-gradient(120% 90% at 50% 40%, color-mix(in srgb, var(--accent, #c9a46a) 10%, transparent), transparent 65%); }
+.teaser-veil h3 { margin: 0; font-family: var(--serif, "Cormorant Garamond", Georgia, serif); font-weight: 500; font-size: 30px; line-height: 1.12; max-width: 320px; }
+.teaser-veil p { margin: 0; color: var(--ink-soft, #b9b2a6); font-size: 14px; max-width: 300px; }
+.teaser-veil .mini { color: var(--accent, #c9a46a); }
+.teaser-clock { margin-top: 6px !important; padding: 8px 14px; border: 1px solid color-mix(in srgb, var(--accent, #c9a46a) 40%, transparent); border-radius: 999px; font-size: 13px !important; }
+.teaser-clock b { font-variant-numeric: tabular-nums; color: var(--ink, #f4efe6); letter-spacing: .04em; }
+.teaser-spark { width: 44px; height: 44px; border-radius: 50%; border: 1px solid color-mix(in srgb, var(--accent, #c9a46a) 55%, transparent); position: relative; animation: t-breathe 2.8s ease-in-out infinite; }
+.teaser-spark::after { content: ''; position: absolute; inset: 13px; border-radius: 50%; background: var(--accent, #c9a46a); opacity: .85; }
+@keyframes t-breathe { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent, #c9a46a) 10%, transparent); } }
+.offers.locked { position: relative; }
+.offers.locked .offer { filter: blur(6px) grayscale(.5); opacity: .45; pointer-events: none; user-select: none; }
+.lockpanel { position: relative; z-index: 2; max-width: 560px; margin: 0 auto -150px; padding: 26px 26px 22px; display: grid; justify-items: center; gap: 8px; text-align: center;
+  border: 1px solid var(--line-strong, #3a352e); border-radius: 22px; background: color-mix(in srgb, var(--surface, #14120f) 94%, transparent); backdrop-filter: blur(10px); box-shadow: 0 24px 60px rgba(0,0,0,.45); }
+.lockpanel h3 { margin: 0; font-family: var(--serif, "Cormorant Garamond", Georgia, serif); font-weight: 500; font-size: 30px; }
+.lockpanel p { margin: 0; color: var(--ink-soft, #b9b2a6); font-size: 14px; line-height: 1.55; max-width: 440px; }
+.lockpanel .mini { color: var(--ink-faint, #8f887d); }
+.lockpanel .cta-row { margin-top: 8px; justify-content: center; }
+.lp-ic { width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--line-strong, #3a352e); position: relative; }
+.lp-ic::before { content: ''; position: absolute; left: 12px; right: 12px; top: 8px; height: 12px; border: 2px solid var(--ink-soft, #b9b2a6); border-bottom: 0; border-radius: 8px 8px 0 0; }
+.lp-ic::after { content: ''; position: absolute; left: 10px; right: 10px; bottom: 8px; height: 13px; border-radius: 4px; background: var(--ink-soft, #b9b2a6); }
+.lp-wait .lp-ic::after { background: #f2c94c; } .lp-wait .lp-ic::before { border-color: #f2c94c; }
+.lp-moved .lp-ic::after { background: var(--accent, #c9a46a); } .lp-moved .lp-ic::before { border-color: var(--accent, #c9a46a); }
+.lp-clock { margin-top: 4px !important; font-size: 14px !important; } .lp-clock b { font-family: var(--serif, Georgia, serif); font-size: 26px; font-weight: 500; color: var(--ink, #f4efe6); font-variant-numeric: tabular-nums; margin-left: 6px; }
+.lp-note { font-size: 12.5px !important; color: var(--ink-faint, #8f887d) !important; }
+.valid-mini.locked { color: var(--ink-faint, #8f887d); }
+@media (max-width: 600px) { .lockpanel { margin-bottom: -110px; padding: 20px 16px 18px; } .lockpanel h3, .teaser-veil h3 { font-size: 25px; } .offer.teaser { min-height: 320px; } }

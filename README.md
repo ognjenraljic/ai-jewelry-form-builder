@@ -304,6 +304,10 @@ Ognjen: "checkbox da bude po A2P". Ranije je jedan OBAVEZAN checkbox tražio pri
 - Portal: dugme "Ask" na svakom tabu, pomoć za korištenje (vodič `PORTAL_GUIDE`) i brojevi koje server sam izračuna.
 - Workers AI (binding `AI`, `CHAT_MODEL` mijenja model), razgovori u D1 `chats` (migracija 0041). Detalji `docs/assistants.md`, pitanja za radnju `docs/assistant-store-questions.md`, provjera `scripts/assistant-check.mjs`.
 
+## Offer timeline on customer pages (27.11.2026)
+
+- 48 h offer with yellow (24 h left), red (12 h), last hour; a blurred budget option revealed after 8 h when the price is far over budget; expired offers lock, the customer requests a refreshed quote that unlocks after 12 h if gold moved under 3% and is held 24 h (optional discount). Settings in Pricing → Quote & alerts. Details `docs/offer-timeline.md`, check `scripts/offer-stages-check.mjs`.
+
 ## Diamond chart, watch price list, Pricing tab sections (27.11.2026)
 
 - District's diamond chart (retail price per stone and setting labor by size, 1.0 to 10.0 mm), chart rules and the moissanite watch price list are in the calculator; natural and lab diamonds use the chart, natural or lab watches take stones from the chart and setting and labor from the watch list. The Pricing tab is split into sections with a sticky Save bar. The portal assistant answers price questions from these tables. Details `docs/diamond-pricing.md`, checks `scripts/diamond-pricing-check.mjs` and `scripts/pricing-tab-check.mjs`, migration 0043.

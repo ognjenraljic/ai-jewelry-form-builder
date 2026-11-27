@@ -21,6 +21,7 @@ import { areaOf } from '../public/area-codes.js';
 import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE, oppName, ghlRenameOpp, guessOrderStages, ghlUsers, ghlPushOrder, ghlPushOrderStage, ghlReadOrderStage, prodReady, ORDER_KEYS,
   ghlCalendars, ghlFreeSlots, ghlBookAppointment, ghlCancelAppointment, ghlAddNote, ghlEnsureContact, ghlSetAddress, ghlSendSms, hookPayload } from './ghl.js';
 import { KINDS, KIND_LABEL, TIMEZONES, bookingSettings, cleanBooking, kindsOn, nativeSlots, ghlSlotsToDays, zonedToUtc, zonedYmd, addDays, whenText, icsFor, cleanFulfillment, fulfillmentText, depositLink } from './booking.js';
+import { offerTimeline, offerSettings, metalMoved } from './offer.js';
 import { ORDER_STAGES, LAST_STAGE, orderPrefix, newOrderNo, normalizeOrderNo, orderView, nextOrder, parseOrder, leadRef, parseLeadRef } from './orders.js';
 import {
   cookies, setCookie, clearCookie, safeEqual, ADMIN_SESSION_S, adminSessionValue, isAdminRequest, signMedia, mediaSigned, ipNet,
@@ -156,6 +157,7 @@ async function route(request, env, ctx, url) {
   // Stranica kupca (19.11.2026): njegov dizajn, ponude i dugmad Deposit / Book appointment.
   if ((m = p.match(/^\/p\/([a-z0-9]{16,32})$/)) && read) return leadPage(request, env, ctx, m[1], url);
   if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/action$/)) && request.method === 'POST') return pageAction(request, env, m[1], secure);
+  if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/refresh$/)) && request.method === 'POST') return pageRefresh(env, m[1]);
   // Kalendar, depozit i sljedeći korak (25.11.2026).
   if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/slots$/)) && read) return pageSlots(request, env, m[1], url);
   if ((m = p.match(/^\/api\/page\/([a-z0-9]{16,32})\/book$/)) && request.method === 'POST') return pageBook(request, env, ctx, m[1]);
@@ -2149,7 +2151,7 @@ async function portalStats(env, client) {
   };
 }
 // Automatske quote poruke nisu ovdje: stižu uz svaki lead (dvije po leadu) i samo bi zatrpale listu.
-const NOTIFY_TYPES = ['created', 'page_view', 'page_action', 'chat_question', 'auto_sent', 'auto_send_failed', 'alert_failed', 'order_created', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment'];
+const NOTIFY_TYPES = ['created', 'page_view', 'page_action', 'refresh_requested', 'chat_question', 'auto_sent', 'auto_send_failed', 'alert_failed', 'order_created', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment'];
 async function portalNotifications(env, client) {
   const since = Date.now() - 30 * 864e5;
   const rows = (await env.DB.prepare(`SELECT e.id, e.lead_id, e.type, e.at, e.meta, l.name, l.email, json_extract(l.answers, '$.type') AS piece
@@ -2896,6 +2898,8 @@ function cleanPricing(p) {
     alertEmails: emailList(p?.alertEmails), replyTo: validEmail(p?.replyTo) || undefined, autoSend: p?.autoSend === true,
     // Težine lanaca iz kataloga (25.11.2026): uključeno + koji red kataloga ide uz koji stil forme ('' = grami po komadu).
     // Districtova tabela dijamanata (27.11.2026): red po veličini (m10 = 1.0 mm ... m100 = 10.0 mm), karat na 4 decimale.
+    // Tok ponude na stranici kupca (27.11.2026): otkrivanje opcije u budžetu, osvježena ponuda, prag metala, popust.
+    offer: map(p?.offer),
     diamonds: cleanDiamonds(p?.diamonds),
     diamondRules: Object.fromEntries(Object.entries(p?.diamondRules && typeof p.diamondRules === 'object' ? p.diamondRules : {}).filter(([k]) => /^[a-zA-Z][a-zA-Z0-9]{0,29}$/.test(k)).slice(0, 30).map(([k, v]) => [k, n(v)]).filter(([, v]) => v !== undefined)), settingExtra: map(p?.settingExtra), watch: map(p?.watch, 2),
     chainWeights: p?.chainWeights && typeof p.chainWeights === 'object' ? {
@@ -3311,6 +3315,32 @@ async function pageData(env, row, key, url) {
   let quotes = {};
   try { quotes = JSON.parse(row.quotes || '{}') || {}; } catch {}
   const pricing = await marketPricing(env, client.pricing || null);
+  // Osvježena ponuda (27.11.2026): poslije čekanja odluči jednom da li se zlato pomjerilo više od praga, i zapamti.
+  const rq = quotes.refresh;
+  if (rq?.status === 'pending' && rq.moved == null) {
+    const st = offerSettings(pricing);
+    const unlockAt = Number(rq.at) + st.refreshwait * 3600_000;
+    if (Date.now() >= unlockAt) {
+      const spot = (await getMarket(env).catch(() => ({})))?.gold;
+      const moved = metalMoved(Number(rq.spot), Number(spot), st);
+      quotes.refresh = { ...rq, moved, status: moved ? 'moved' : 'ready', readyAt: unlockAt, spotAtUnlock: spot || null };
+      await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.refresh', json(?)) WHERE id = ?`).bind(JSON.stringify(quotes.refresh), row.id).run();
+    }
+  }
+  // Samo lokalno (DEV_MODE): ?sim_elapsed=30 (sati od ponude), ?sim_refresh=pending|ready|moved, ?sim_discount=5 za slike scenarija.
+  let simNow = 0;
+  if (env.DEV_MODE === '1' && url.searchParams.has('sim_elapsed')) {
+    const H = 3600_000;
+    const tl0 = offerTimeline({ pricing, quotes, lead: { createdAt: row.created_at } }, Date.now());
+    simNow = tl0.from + Number(url.searchParams.get('sim_elapsed')) * H;
+    const sr = url.searchParams.get('sim_refresh');
+    const wait = offerSettings(pricing).refreshwait;
+    if (!sr) delete quotes.refresh;
+    if (sr === 'pending') quotes.refresh = { at: simNow - 1 * H, status: 'pending' };
+    if (sr === 'ready') quotes.refresh = { at: simNow - (wait + 2) * H, status: 'ready', moved: false, readyAt: simNow - 2 * H };
+    if (sr === 'moved') quotes.refresh = { at: simNow - (wait + 1) * H, status: 'moved', moved: true };
+    if (url.searchParams.has('sim_discount') && pricing) pricing.offer = { ...(pricing.offer || {}), discount: Number(url.searchParams.get('sim_discount')) };
+  }
   const renders = (await env.DB.prepare(`SELECT image_key, tweak, n FROM renders WHERE lead_id = ? AND status = 'ok' AND image_key IS NOT NULL AND kind IS NULL ORDER BY created_at`).bind(row.id).all()).results;
   // Stranica kupca: duži video (sales, 24.11.2026) kad postoji za najnoviji dizajn sa videom, inače kupčev kratki.
   const okFilms = (await env.DB.prepare(`SELECT f.video_key, f.model, r.created_at AS rat FROM films f JOIN renders r ON r.id = f.render_id WHERE f.lead_id = ? AND f.status = 'ok' AND f.video_key IS NOT NULL ORDER BY r.created_at DESC, f.created_at DESC`).bind(row.id).all()).results;
@@ -3341,6 +3371,7 @@ async function pageData(env, row, key, url) {
     film: film ? `/media/${film.video_key}` : '',
     assistant: { on: pageAssistantOn(env) && !!row.client_id && assistantSettings(client).page },
     hoursText: bcfg.enabled ? hoursText(bcfg) : '',
+    ...(simNow ? { now: simNow } : {}),
   };
 }
 // Radno vrijeme za asistenta: "Mon 10:00-18:00, Tue ..., Sun closed".
@@ -3383,6 +3414,23 @@ async function pageChat(request, env, ctx, key, url) {
   return json({ reply: out.text, tags: out.tags.filter((t) => t !== 'team'), handoff });
 }
 // Deposit / Book appointment: zabilježi klik uz lead (zlatar ga vidi u portalu) i vrati link radnje ako ga je upisala.
+// Kupac traži osvježenu ponudu (27.11.2026): samo kad je ponuda istekla; zlatar dobija obavještenje.
+async function pageRefresh(env, key) {
+  const row = await env.DB.prepare('SELECT l.id, l.quotes, l.created_at, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id LEFT JOIN clients c ON c.id = f.client_id WHERE l.page_key = ?').bind(key).first();
+  if (!row) return json({ error: 'Not found' }, 404);
+  const quotes = parseJson(row.quotes);
+  let pricing = {};
+  try { pricing = JSON.parse(row.client_data || '{}').pricing || {}; } catch {}
+  const tl = offerTimeline({ pricing, quotes, lead: { createdAt: row.created_at } }, Date.now());
+  if (tl.stage === 'requested') return json({ ok: true, already: true });
+  if (tl.stage !== 'expired') return json({ error: 'Your offer is still active.' }, 409);
+  const spot = (await getMarket(env).catch(() => ({})))?.gold || null;
+  const refresh = { at: Date.now(), spot, status: 'pending' };
+  await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.refresh', json(?)) WHERE id = ?`).bind(JSON.stringify(refresh), row.id).run();
+  await logEvent(env, row.id, 'refresh_requested', null);
+  return json({ ok: true });
+}
+
 async function pageAction(request, env, key, secure = true) {
   const b = await request.json().catch(() => ({}));
   const action = PAGE_ACTIONS.includes(b.action) ? b.action : null;
