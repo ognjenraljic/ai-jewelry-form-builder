@@ -3313,6 +3313,7 @@ async function pageData(env, row, key, url) {
     simNow = tl0.from + Number(url.searchParams.get('sim_elapsed')) * H;
     const sr = url.searchParams.get('sim_refresh');
     const wait = offerSettings(pricing).refreshwait;
+    if (!sr) delete quotes.refresh;
     if (sr === 'pending') quotes.refresh = { at: simNow - 1 * H, status: 'pending' };
     if (sr === 'ready') quotes.refresh = { at: simNow - (wait + 2) * H, status: 'ready', moved: false, readyAt: simNow - 2 * H };
     if (sr === 'moved') quotes.refresh = { at: simNow - (wait + 1) * H, status: 'moved', moved: true };
