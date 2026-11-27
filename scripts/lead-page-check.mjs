@@ -42,7 +42,7 @@ const html = await page.text();
 ok(page.status === 200 && /noindex/.test(page.headers.get('x-robots-tag') || ''), 'stranica se otvara, noindex');
 ok(/content-security-policy/i.test([...page.headers.keys()].join(' ')) && /frame-ancestors 'none'/.test(page.headers.get('content-security-policy')), 'stranica ima CSP i ne ugrađuje se');
 ok(!html.includes('<script>alert(1)</script>') && html.includes('Myla'), 'ime kupca je bezbjedno ispisano');
-ok(html.includes('$7,900') && html.includes('Your design') && !html.includes('Option 2'), 'jedna ponuda dok zlatar ne napravi Fits the budget');
+ok(html.includes('$7,900') && html.includes('Your design') && !html.includes('Fits your budget</h3><p class="sub">We found') && (!html.includes('Option 2') || html.includes('something cooking')), 'jedna ponuda dok zlatar ne napravi Fits the budget (daleko iznad budžeta: samo zamućena Option 2, 27.11.2026)');
 ok(html.includes('data-action="deposit"') && html.includes('data-action="appointment"'), 'dugmad Deposit i Book appointment');
 ok(html.includes('Styles and finishes we make') && html.includes('1 Main St'), 'stilovi radnje i store info');
 

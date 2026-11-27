@@ -1053,7 +1053,17 @@ function pricingView() {
       <label class="prow"><span>Deposit link</span><input class="in" type="url" data-link="depositUrl" placeholder="https://" value="${esc(pr.depositUrl || '')}" /></label>
       <label class="prow"><span>Booking link</span><input class="in" type="url" data-link="bookingUrl" placeholder="https://" value="${esc(pr.bookingUrl || '')}" /></label>
       <label class="prow"><span>Offer valid for, hours</span>${inp('offerHours', pr.offerHours, '48')}</label>
-      <p class="hint">The customer's page shows a countdown from your latest quote (and again when you turn on Fits the budget). Empty = 48 hours, 0 = no countdown.</p></div>
+      <p class="hint">The customer's page shows a countdown from your latest quote (and again when you turn on Fits the budget). Empty = 48 hours, 0 = no countdown.</p>
+      <h3 class="plinks-h">Offer timeline on customer pages</h3>
+      <ol class="otl" aria-label="How the offer moves"><li class="otl-gold"><b>Start</b><span>held ${esc(String(pr.offerHours ?? 48))} h</span></li><li class="otl-yellow"><b>24 h left</b><span>turns yellow</span></li><li class="otl-red"><b>12 h left</b><span>turns red</span></li><li class="otl-red"><b>Last hour</b><span>final call</span></li><li class="otl-grey"><b>Expired</b><span>offers locked</span></li><li class="otl-green"><b>Refreshed</b><span>new price, held again</span></li></ol>
+      <label class="pcheck"><input type="checkbox" data-offer-auto ${Number(pr.offer?.autoreveal ?? 1) !== 0 ? 'checked' : ''} /><span>When the price is far over the customer's budget, show a blurred "we might have something cooking for you" card and reveal the option closer to their budget after the hours below (your Fits the budget choices, or worked out from your prices).</span></label>
+      <label class="prow"><span>Reveal the budget option after, hours</span>${inp('offer.reveal', pr.offer?.reveal, '8')}</label>
+      <label class="prow"><span>"Far over budget" = price above the budget × <small>for example 1.5 = 50% over the top of the budget</small></span>${inp('offer.far', pr.offer?.far, '1.5')}</label>
+      <label class="prow"><span>Refreshed quote unlocks after, hours</span>${inp('offer.refreshwait', pr.offer?.refreshwait, '12')}</label>
+      <label class="prow"><span>Refreshed quote is held for, hours</span>${inp('offer.refreshhours', pr.offer?.refreshhours, '24')}</label>
+      <label class="prow"><span>Gold may move by, % <small>more than this and you send the new price yourself</small></span>${inp('offer.metalmove', pr.offer?.metalmove, '3')}</label>
+      <label class="prow"><span>Discount on the refreshed quote, %</span>${inp('offer.discount', pr.offer?.discount, '0')}</label>
+      <p class="hint">When the offer expires the customer's options are locked and they can press "Request a refreshed quote". You get a notification. After the hours above the new price unlocks on its own if gold moved less than the % above; otherwise send them a new quote.</p></div>
     <div class="pcard2 pwide pinfo palerts"><h3>New lead alerts and first message</h3>
       ${P.me.mail ? '' : '<p class="hint pwarn">Email sending is not switched on yet. Your JewelryLead team turns it on; what you save here starts working then.</p>'}
       <label class="prow"><span>Email me about every new lead</span><input class="in" type="text" data-notify="alertEmails" placeholder="you@store.com, sales@store.com" value="${esc((pr.alertEmails || []).join(', '))}" /></label>
@@ -1086,6 +1096,9 @@ function readPricing() {
     o[parts[parts.length - 1]] = Number(el.disabled && el.dataset.mkt ? el.dataset.custom : el.value);
   }
   out.live = Object.fromEntries(MARKET_METALS.map((m) => [m.key, isLive(P.me.pricing, m.key)]));
+  const oa = app.querySelector('[data-offer-auto]');
+  if (oa) out.offer = { ...(out.offer || {}), autoreveal: oa.checked ? 1 : 0 };
+  else if (P.me.pricing?.offer) out.offer = { ...P.me.pricing.offer, ...(out.offer || {}) };
   // Tabela dijamanata (27.11.2026): prekidač; redovi stižu iz data-price polja (diamonds.chart.m30.natural...).
   const dOn = app.querySelector('[data-dia-on]');
   if (dOn) out.diamonds = { ...(out.diamonds || {}), on: dOn.checked };
@@ -2050,6 +2063,7 @@ async function openNotif() {
 const NT = {
   created: ['new', (x) => `New lead: <b>${esc(x.name)}</b>${x.piece ? ` · ${esc(pieceName(x.piece))}` : ''}`],
   page_view: ['view', (x) => `<b>${esc(x.name)}</b> opened their page`],
+  refresh_requested: ['hot', (x) => `<b>${esc(x.name)}</b> asked for a refreshed quote (their offer expired)`],
   metal_move: ['hot', (x) => `<b>${esc(({ gold: 'Gold', silver: 'Silver', platinum: 'Platinum' })[x.meta.metal] || x.meta.metal)}</b> moved <b style="color:${x.meta.pct >= 0 ? '#3ccf91' : '#ef6a6a'}">${x.meta.pct > 0 ? '+' : ''}${x.meta.pct}%</b> · $${(x.meta.from / 31.1035).toFixed(2)} to $${(x.meta.to / 31.1035).toFixed(2)} per gram`],
   chat_question: ['hot', (x) => `<b>${esc(x.name)}</b> asked the page assistant something only you can answer${x.meta?.q ? `: "${esc(x.meta.q)}"` : ''}`],
   page_action: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.action === 'appointment' ? 'asked for an appointment' : 'wants to reserve with a deposit'}${x.meta.option === 'fit' ? ' · Option 2' : x.meta.option === 'picked' ? ' · Option 1' : ''}`],
@@ -2066,7 +2080,7 @@ const NT = {
 // Grupe notifikacija (26.11.2026): čipovi iznad liste filtriraju po vrsti, sa brojem i brojem novih.
 const NT_GROUPS = [
   ['leads', 'New leads', ['created']],
-  ['bookings', 'Bookings & deposits', ['page_action', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment', 'order_created']],
+  ['bookings', 'Bookings & deposits', ['page_action', 'refresh_requested', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment', 'order_created']],
   ['pages', 'Page visits', ['page_view']],
   ['chatbot', 'AI chatbot', ['chat_question']],
   ['metals', 'Metal prices', ['metal_move']],

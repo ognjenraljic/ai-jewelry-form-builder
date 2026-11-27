@@ -84,23 +84,35 @@ document.addEventListener('click', async (e) => {
   if (sheet?.showModal) sheet.showModal(); else alert(TEXT[b.dataset.action]);
 });
 
-// Rok ponude (22.11.2026): odbrojavanje do kraja, pa poruka da je istekla.
+// Rok ponude (22.11.2026, faze 27.11.2026): odbrojavanje i boja po fazi (zlatno, 24 h žuto, 12 h crveno, zadnji sat),
+// pa zaključavanje. Isti pragovi kao offerStage u src/offer.js. Lokalna simulacija (data-now-offset) pomjera sat.
 const two = (n) => String(n).padStart(2, '0');
 const clock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return `${two(Math.floor(s / 3600))}:${two(Math.floor((s % 3600) / 60))}:${two(s % 60)}`; };
+const OFFSET = Number(document.body.dataset.nowOffset) || 0;
+const SIM = document.body.dataset.sim === '1';
+const NOW = () => Date.now() + OFFSET;
 const timers = [...document.querySelectorAll('[data-deadline]')];
-// Faze roka, iste kao validityStage u src/leadpage.js.
-function vstage(left, total, hours) {
-  if (left <= 0) return ['expired', 'This offer has expired', 'Reply to your quote and we will refresh your price.'];
-  if (left <= 3600000) return ['last', 'Last hour to keep this price', 'Reserve now, before the timer runs out.'];
-  if (left <= Math.max(total * 0.25, 3600000)) return ['urgent', 'Final hours on your price', 'When the timer ends, your price has to be refreshed.'];
-  if (left <= total * 0.75) return ['steady', 'Your price is still on hold', 'Reserve while your price and design are held.'];
-  return ['fresh', `Reserved for you for ${hours} hours`, 'Your price and design are held until the timer ends.'];
+function stageOf(left, hours) {
+  const H = 3600000; const h = Number(hours) || 48;
+  const y = Math.min(24, h / 2) * H; const r = Math.min(12, h / 4) * H; const l = Math.min(1, h / 8) * H;
+  return left <= 0 ? 'expired' : left <= l ? 'last' : left <= r ? 'red' : left <= y ? 'yellow' : 'fresh';
 }
+const STAGE = {
+  fresh: (h) => [`Reserved for you for ${h} hours`, 'Your price and design are held until the timer ends.'],
+  yellow: (h) => [h > 24 ? 'Less than 24 hours left' : 'Less than half of your time left', 'Reserve now to keep this price.'],
+  red: (h) => [h > 24 ? 'Final 12 hours on your price' : 'Final hours on your price', 'When the timer ends, your offer is locked.'],
+  last: () => ['Last hour to keep this price', 'Reserve now, before the timer runs out.'],
+  expired: () => ['This offer has expired', 'Request a refreshed quote below.'],
+};
+let reloading = false;
+const reloadSoon = () => { if (SIM || reloading) return; reloading = true; setTimeout(() => location.reload(), 1200); };
 function tickOffers() {
-  const now = Date.now();
+  const now = NOW();
   for (const el of timers) {
     const left = Number(el.dataset.deadline) - now;
-    if (el.dataset.mini) { el.textContent = left > 0 ? `Your price is held for ${clock(left)}` : 'This offer has expired. Reply to your quote and we will refresh it.'; continue; }
+    // Zamućena opcija i otključavanje osvježene ponude: kratko odbrojavanje, pa stranica pokaže novo stanje.
+    if (el.dataset.reveal || el.dataset.unlock) { const b = el.querySelector('b'); if (b) b.textContent = clock(left); if (left <= 0) reloadSoon(); continue; }
+    if (el.dataset.mini) { el.textContent = left > 0 ? `Your price is held for ${clock(left)}` : 'Your offer has expired. Request a refreshed quote below.'; continue; }
     const s = Math.max(0, Math.floor(left / 1000));
     const vals = { h: Math.floor(s / 3600), m: Math.floor((s % 3600) / 60), s: s % 60 };
     for (const b of el.querySelectorAll('[data-u]')) {
@@ -110,15 +122,28 @@ function tickOffers() {
     const total = Number(el.dataset.total) || 1;
     const bar = el.querySelector('.v-bar span');
     if (bar) bar.style.width = `${Math.max(0, Math.min(100, (left / total) * 100)).toFixed(2)}%`;
-    const [k, label, sub] = vstage(left, total, el.dataset.hours);
+    const k = stageOf(left, el.dataset.hours);
     if (!el.classList.contains(`v-${k}`)) {
-      el.className = el.className.replace(/\bv-(fresh|steady|urgent|last|expired)\b/g, '').trim() + ` v-${k}`;
-      el.querySelector('.v-label').textContent = label;
+      const [label, sub] = STAGE[k](Number(el.dataset.hours) || 48);
+      el.className = el.className.replace(/\bv-(fresh|yellow|red|last|expired)\b/g, '').trim() + ` v-${k}`;
+      el.querySelector('.v-label').textContent = el.dataset.refreshed && k !== 'expired' ? `Refreshed price · ${label}` : label;
       el.querySelector('.v-sub').textContent = sub;
+      if (k === 'expired') reloadSoon();
     }
   }
 }
 if (timers.length) { tickOffers(); setInterval(tickOffers, 1000); }
+// Istekla ponuda: kupac traži osvježenu ponudu.
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-refresh]');
+  if (!b || SIM) return;
+  b.disabled = true; b.textContent = 'Sending…';
+  try {
+    const r = await fetch(`/api/page/${encodeURIComponent(document.body.dataset.key)}/refresh`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Please try again.');
+    location.reload();
+  } catch (err) { b.disabled = false; b.textContent = err.message || 'Please try again.'; }
+});
 
 // ---------- Kalendar na stranici (25.11.2026) ----------
 // "Book an appointment": vrsta termina (online konsultacija / posjeta), dan, slobodno vrijeme, potvrda. Vremena su u
