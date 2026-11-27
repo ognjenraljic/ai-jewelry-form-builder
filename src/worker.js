@@ -14,7 +14,7 @@ import { METALS, THRESHOLDS, rangeParams, metalSeries, metalSettings, cleanMetal
 import { cleanAssistant, assistantSettings, assistantSize, bannedHit, RULE_FIELDS, DEFAULT_ASSIST, sampleFacts, pageAnswer, MAX_TOTAL, ASSIST_FIELDS, loadChat, saveChat, overLimit, publicMessages, runChat, tidy, pageSystemPrompt, pageFactsText, pricesOk, PAGE_FALLBACK, pageGreeting, pageSuggestions, portalSystemPrompt, PORTAL_SUGGESTIONS, statsText, pricingText, pricingLookup, MAX_MESSAGE } from './assistant.js';
 import { stripAudio } from './mp4.js';
 import { mailOn, sendMail, validEmail, emailList } from './mail.js';
-import { pikaOn, pikaImages, pikaImage, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
+import { pikaOn, pikaImages, pikaImage, pikaBalance, pikaJob, jobFile, jobCharge, startFilm, VIDEO_MODELS, filmModels as filmModelsOn, primaryFilm, extraFilms, modelKeyOf } from './pika.js';
 import { sealPortalToken, openPortalToken, activePortalSession } from './portal-links.js';
 import { areaOf } from '../public/area-codes.js';
 import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE, oppName, ghlRenameOpp, guessOrderStages, ghlUsers, ghlPushOrder, ghlPushOrderStage, ghlReadOrderStage, prodReady, ORDER_KEYS,
@@ -170,6 +170,7 @@ async function route(request, env, ctx, url) {
   if (p === '/api/demo-requests' && request.method === 'POST') return createDemoRequest(request, env);
   if (p === '/api/admin/leads' && request.method === 'GET') return adminLeads(request, env, url);
   if (p === '/api/admin/render-stats' && request.method === 'GET') return renderStats(request, env, url);
+  if (p === '/api/admin/pika-balance' && request.method === 'GET') return pikaBalanceRoute(request, env);
   if ((m = p.match(/^\/api\/admin\/demo-requests\/([a-z0-9]+)\/handled$/)) && request.method === 'POST') return demoHandled(request, env, m[1]);
   if (p.startsWith('/media/') && read) return media(request, env, p.slice(7));
   if (p.startsWith('/api/')) return json({ error: 'Not found' }, 404);
@@ -3055,6 +3056,17 @@ async function portalOnboarding(request, env, p, client, sess) {
     return json({ ok: true, status: 'submitted', rev: rev + 1 });
   }
   return json({ error: 'Not found' }, 404);
+}
+
+// Balans Pika naloga na kojem rade renderi i videi (Workerov PIKA_API_KEY). Samo admin; prazan balans = renderi padaju.
+async function pikaBalanceRoute(request, env) {
+  if (!(await isAdmin(request, env))) return json({ error: 'Not allowed.' }, 403);
+  if (!pikaOn(env)) return json({ on: false });
+  try {
+    return json({ on: true, images: pikaImages(env), ...(await pikaBalance(env)) });
+  } catch (err) {
+    return json({ on: true, error: String(err.message || err).slice(0, 160) }, 502);
+  }
 }
 
 // Koliko stvarno traju renderi (cilj Ognjena 16.11: skoro uvijek ispod 9 s). Samo admin: /api/admin/render-stats?days=7

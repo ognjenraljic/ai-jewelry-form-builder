@@ -305,6 +305,7 @@ function renderHub() {
           <div><span>Leads</span><b>${sum('leads')}</b></div>
           <div><span>AI renders</span><b>${sum('renders')}</b></div>
           <div><span>AI cost</span><b>${usd(sum('cost'))}</b></div>
+          <div class="pika-bal" data-pika-bal hidden><span>Pika balance</span><b>…</b><small></small></div>
         </div>
         <div class="hub-actions"><button class="btn primary" data-act="new-client">${nav('plus')}New project</button></div>
         <div id="hub-list"></div>
@@ -312,6 +313,25 @@ function renderHub() {
       </main>
     </div>`;
   renderHubList();
+  loadPikaBalance();
+}
+
+// Balans Pika naloga Workera (renderi i videi kupaca): žuto ispod $10, crveno ispod $3 (prazan balans = renderi padaju).
+async function loadPikaBalance() {
+  const box = app.querySelector('[data-pika-bal]');
+  if (!box) return;
+  const paint = (r) => {
+    if (!box.isConnected) return;
+    if (!r || r.on === false) { box.hidden = true; return; }
+    box.hidden = false;
+    box.classList.toggle('near', !r.error && r.usd < 10);
+    box.classList.toggle('over', !!r.error || r.usd < 3);
+    box.querySelector('b').textContent = r.error ? 'Unavailable' : usd(r.usd);
+    box.querySelector('small').textContent = r.error ? r.error : r.usd < 3 ? 'Renders will fail at $0, top up Pika' : r.usd < 10 ? 'Getting low, top up soon' : r.images ? 'Images and videos' : 'Videos only';
+  };
+  if (B.pika && Date.now() - B.pika.at < 60_000) return paint(B.pika.r);
+  try { const r = await api('/api/admin/pika-balance'); B.pika = { at: Date.now(), r }; paint(r); }
+  catch (err) { paint({ on: true, error: err.data?.error || err.message }); }
 }
 
 function renderHubList() {

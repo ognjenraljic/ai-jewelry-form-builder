@@ -72,6 +72,14 @@ async function upload(env, bytes, mime) {
 }
 
 const submit = (env, api, body, key = crypto.randomUUID()) => call(env, `/v1/media/${api}`, { method: 'POST', body, key });
+// Balans Pika naloga Workerovog ključa (besplatan upit, 27.11.2026): vrijedi i za prepaid (balance) i za postpaid ciklus.
+// Samo za admin hub; zlatar ga ne vidi, jer je to novac platforme, ne radnje.
+export async function pikaBalance(env) {
+  const b = await call(env, '/billing/balance');
+  const pp = b.postpaid || {};
+  const usd = pp.active ? (pp.cycle?.remaining_micro_usd ?? 0) / 1e6 : (b.balance_micro_usd ?? 0) / 1e6;
+  return { usd: Math.round(usd * 100) / 100, postpaid: !!pp.active };
+}
 export const pikaJob = (env, id) => call(env, `/v1/media/jobs/${encodeURIComponent(id)}`);
 
 export function jobFile(job) {

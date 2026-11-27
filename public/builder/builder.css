@@ -291,9 +291,15 @@ dialog { width: min(480px, 92vw); }
 .hub .top .spacer { flex: 1; }
 @media (max-width: 720px) { .hub .top .hub-q { order: 10; flex-basis: 100%; max-width: none; } .hub .top .nav-btn { padding: 0 9px; font-size: 12px; } }
 .hub-main { max-width: 1120px; margin: 0 auto; padding: 28px 20px 80px; }
-.hub-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 22px; }
+.hub-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 22px; }
 .hub-stats div { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
 .hub-stats span { display: block; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+.hub-stats .pika-bal[hidden] { display: none; }
+.hub-stats .pika-bal small { display: block; margin-top: 2px; font-size: 11.5px; color: var(--ink-faint); line-height: 1.35; }
+.hub-stats .pika-bal.near { border-color: color-mix(in srgb, var(--warn, #f0c27a) 55%, var(--line)); }
+.hub-stats .pika-bal.near b, .hub-stats .pika-bal.near small { color: var(--warn, #f0c27a); }
+.hub-stats .pika-bal.over { border-color: color-mix(in srgb, #ef6a6a 60%, var(--line)); }
+.hub-stats .pika-bal.over b, .hub-stats .pika-bal.over small { color: #ef6a6a; }
 .hub-stats b { display: block; font-family: var(--serif); font-size: 30px; font-weight: 500; margin-top: 2px; }
 .hub-client { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-bottom: 14px; }
 .hub-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
