@@ -785,39 +785,33 @@ function pexPrice(path) {
   return Number.isFinite(v) && v > 0 ? v : null;
 }
 const pexStones = () => [...new Map(Object.values(P.me.formSpecs || {}).flatMap((s) => (s.stones || []).filter((o) => o.value !== 'none').map((o) => o.label)).filter(Boolean).map((x) => [pkey(x), x])).values()];
-function stoneExample(stones) {
+function stoneExample(stones, pr = PR()) {
   const list = stones.length ? stones : ['Lab-grown diamonds'];
   const stone = list.find((x) => x === PEX.stone) || list.find((x) => /lab/i.test(x)) || list[0];
   const piece = PEX_PIECES.find((x) => x.key === PEX.piece) || PEX_PIECES[0];
-  const sk = pkey(stone);
   const lay = stoneLayout(piece.spec);
-  const each = 0.0042 * lay.d ** 3;
-  const perCt = pexPrice(`stones.${sk}.ct`);
-  const center = pexPrice(`stones.${sk}.center`);
-  const setting = pexPrice('setting');
   const cover = { full: 'fully iced', half: 'half iced', accents: 'accents' }[piece.spec.coverage];
   const n = lay.count.toLocaleString('en-US');
+  const e = estimate(pr, { ...piece.spec, metal: piece.spec.type === 'watch' ? 'Stainless steel' : '', stones: stone });
+  const keep = e.lines.filter((l) => /^(Stones|Pavé|Setting|Center stone|Stud stones|Prong|Moissanite)/.test(l.label));
   const rows = [
     ['Surface to cover', `${piece.label}, ${cover}`, `${lay.area.toLocaleString('en-US')} mm²`],
     ['Stones that fit', `${lay.d} mm round stones, packed with room for the prongs`, `${n} stones`],
-    ['Carats', `${n} × ${each.toFixed(4)} ct`, `${lay.ct} ct`],
+    ...keep.map((l) => { const m = l.label.match(/^([^:]+):\s*(.*)$/); return [m ? m[1] : l.label, m ? m[2] : '', money(l.amount)]; }),
   ];
-  let total = 0;
-  const priced = (label, how, v) => { if (v == null) rows.push([label, how, '<i>add a price</i>']); else { total += Math.round(v); rows.push([label, how, money(v)]); } };
-  priced(stone, perCt ? `${lay.ct} ct × ${money(perCt)}/ct` : 'price per carat is empty', perCt ? lay.ct * perCt : null);
-  priced('Setting', setting ? `${n} stones × $${setting}` : 'setting price is empty', setting ? lay.count * setting : null);
-  if (piece.spec.centerCt) priced('Center stone', center ? `${piece.spec.centerCt} ct × ${money(center)}/ct` : 'center stone price is empty', center ? piece.spec.centerCt * center : null);
+  const total = keep.reduce((t, l) => t + l.amount, 0);
+  const chart = keep.some((l) => /chart/.test(l.label));
+  const watch = keep.some((l) => /watch price list/.test(l.label));
   return `<p class="pex-title">Example: how an estimate is worked out</p>
     <div class="qchips pex-chips" role="group" aria-label="Example piece">${PEX_PIECES.map((x) => `<button type="button" class="qchip ${x.key === piece.key ? 'on' : ''}" aria-pressed="${x.key === piece.key}" data-pex-piece="${x.key}">${esc(x.label)}</button>`).join('')}</div>
     <div class="qchips pex-chips" role="group" aria-label="Example stone">${list.map((x) => `<button type="button" class="qchip ${x === stone ? 'on' : ''}" aria-pressed="${x === stone}" data-pex-stone="${esc(x)}">${esc(x)}</button>`).join('')}</div>
     <ol class="pex-steps">${rows.map(([a, b, c]) => `<li><span class="pex-a">${esc(a)}</span><span class="pex-b">${esc(b)}</span><b>${c}</b></li>`).join('')}</ol>
-    <p class="pex-total"><span>Stones in this estimate</span><b>${money(total)}</b></p>
-    <p class="hint">Metal, labor and your markup come on top, from the other cards. Natural diamonds are SI here; VS, VVS and Flawless multiply the price per carat.</p>`;
+    <p class="pex-total"><span>${watch ? 'Stones, setting and labor' : 'Stones and setting'} in this estimate</span><b>${keep.length ? money(total) : '<i>add a price</i>'}</b></p>
+    <p class="hint">${chart ? 'From the diamond chart: retail price per stone × stones, plus setting labor per stone (no markup).' : watch ? 'From the watch price list (no markup).' : 'Per carat: carats × your price per carat, plus setting per stone.'} Metal, piece labor and your markup come on top.</p>`;
 }
-function renderStoneExample() {
-  const el = app.querySelector('[data-pex]');
-  if (el) el.innerHTML = stoneExample(pexStones());
-}
+function renderStoneExample() { renderPriceExamples(); }
+let pexTimer = 0;
+const schedulePriceExamples = () => { clearTimeout(pexTimer); pexTimer = setTimeout(renderPriceExamples, 150); };
 
 // ---------- Žive cijene metala u Pricing tabu (22.11.2026) ----------
 // Polje sa data-mkt je zaključano dok je Live (pokazuje današnju cijenu); zlatarev broj ostaje u data-custom.
@@ -901,6 +895,99 @@ function chainWeightsView(pr) {
       <div class="pcw-grid">${tiles}</div>
     </div>`;
 }
+// Pricing tab (27.11.2026, redizajn): podtabovi umjesto jedne duge strane. Svi podtabovi su u stranici (samo sakriveni),
+// pa Save čita svako polje kao i ranije, a prelazak između podtabova ne briše ništa što još nije sačuvano.
+const PR_TABS = [
+  ['metal', 'Metals & labor'], ['stones', 'Diamonds & stones'], ['watch', 'Watches'], ['grillz', 'Grillz'], ['chains', 'Chains'], ['quote', 'Quote & alerts'],
+];
+P.prTab = safe(() => localStorage.getItem('jl_pr_tab')) || 'metal';
+const DIA_RANGES = [['all', 'All sizes'], ['1-2', '1–2 mm'], ['2.1-3', '2.1–3 mm'], ['3.1-5', '3.1–5 mm'], ['5.1-7', '5.1–7 mm'], ['7.1-10', '7.1–10 mm']];
+P.diaRange = P.diaRange || 'all';
+const inRange = (mm, r) => { if (r === 'all') return true; const [a, b] = r.split('-').map(Number); return mm >= a - 1e-9 && mm <= b + 1e-9; };
+// Tabela dijamanata: maloprodajna cijena po kamenu (natural, lab, ušteda) i rad ugradnje po kamenu, grupisana zaglavlja.
+function diamondChartView(pr) {
+  const d = pr.diamonds || {};
+  const chart = d.chart || {};
+  const keys = Object.keys({ ...SUGGESTED_PRICING.diamonds.chart, ...chart }).sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+  const cell = (k, c, ph) => `<input class="dt-in" type="number" min="0" step="${c === 'ct' ? '0.001' : '1'}" inputmode="decimal" data-price="diamonds.chart.${k}.${c}" value="${chart[k]?.[c] ?? ''}" placeholder="${ph ?? ''}" aria-label="${c} at ${Number(k.slice(1)) / 10} mm" />`;
+  const rows = keys.map((k) => {
+    const mm = Number(k.slice(1)) / 10;
+    const r = chart[k] || {};
+    const save = r.natural > 0 && r.lab > 0 ? Math.round((1 - r.lab / r.natural) * 100) : null;
+    return `<tr data-dia-row data-mm="${mm}" ${inRange(mm, P.diaRange) ? '' : 'hidden'}><th scope="row">${mm.toFixed(1)}</th><td>${cell(k, 'ct')}</td><td>${cell(k, 'natural')}</td><td>${cell(k, 'lab')}</td><td class="dt-save" data-dia-save>${save != null ? `${save}%` : ''}</td><td>${cell(k, 'pave')}</td><td>${cell(k, 'prong')}</td><td>${cell(k, 'bezel')}</td></tr>`;
+  }).join('');
+  return `<div class="pcard2 pwide dchart">
+      <div class="dchart-head"><div><h3>Diamond chart</h3><p class="hint">Retail price for one stone and setting labor per stone, by size (round brilliant, G-H, VS2-SI1). A piece with many stones: price per stone × stones + labor × stones. Natural and lab diamonds in every estimate use this chart; moissanite stays per carat.</p></div>
+        <label class="pswitch"><input type="checkbox" data-dia-on ${d.on !== false && Object.keys(chart).length ? 'checked' : ''} /><span aria-hidden="true"></span><b>Use the chart</b></label></div>
+      <div class="dchips" role="group" aria-label="Sizes">${DIA_RANGES.map(([v, l]) => `<button type="button" class="dchip ${P.diaRange === v ? 'on' : ''}" aria-pressed="${P.diaRange === v}" data-dia-range="${v}">${l}</button>`).join('')}</div>
+      <div class="dt-wrap"><table class="dt">
+        <colgroup><col class="c-mm" /><col /><col /><col /><col class="c-save" /><col /><col /><col /></colgroup>
+        <thead><tr class="dt-groups"><th></th><th></th><th colspan="3">Stone price, retail, $ each</th><th colspan="3">Setting labor, $ per stone</th></tr>
+        <tr><th scope="col">Size, mm</th><th scope="col">Carat</th><th scope="col">Natural</th><th scope="col">Lab</th><th scope="col">Lab saves</th><th scope="col">Pavé</th><th scope="col">Prong</th><th scope="col">Bezel</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+    </div>`;
+}
+function diamondRulesView(pr) {
+  const r = { ...(pr.diamondRules || {}) };
+  const ex = pr.settingExtra || {};
+  const row = (k, label, unit, hint) => `<label class="prow"><span>${label}${hint ? `<small>${hint}</small>` : ''}</span><span class="punit">${unit === '$' ? '<i>$</i>' : ''}<input class="in pin" type="number" min="0" step="0.5" inputmode="decimal" data-price="diamondRules.${k}" value="${r[k] ?? ''}" />${unit === '%' ? '<i>%</i>' : ''}</span></label>`;
+  const extraKeys = [...new Set([...Object.keys(SUGGESTED_PRICING.settingExtra), ...Object.keys(ex)])];
+  return `<div class="pcard2"><h3>Chart rules</h3>
+      ${row('vvs', 'Better grade', '%', 'D-F color, VVS, IF, Flawless: added to the chart price')}
+      ${row('si2', 'Lower grade', '%', 'I-J color, SI2, I1: taken off the chart price')}
+      ${row('fancy', 'Fancy shapes', '%', 'oval, emerald, princess, pear, cushion vs round')}
+      ${row('complex', 'Complex work', '%', 'invisible, tension, halo, eternity: added to labor')}
+      ${row('platinum', 'Platinum labor', '%', 'added to setting labor on platinum pieces')}
+      ${row('customerStone', 'Customer stone fee', '$', 'per stone the customer brings')}</div>
+    <div class="pcard2"><h3>Minimum labor per piece</h3>
+      ${row('paveMin', 'Pavé, stones up to 4 mm', '$')}
+      ${row('paveMinLarge', 'Pavé, stones over 4 mm', '$')}
+      ${row('prongMin', 'Prong', '$')}
+      ${row('bezelMin', 'Bezel', '$')}
+      <h3 class="ph3-gap">Other setting work, $</h3>
+      ${extraKeys.map((k) => `<label class="prow"><span>${esc(k[0].toUpperCase() + k.slice(1))}</span><span class="punit"><i>$</i><input class="in pin" type="number" min="0" step="1" inputmode="decimal" data-price="settingExtra.${esc(k)}" value="${ex[k] ?? ''}" /></span></label>`).join('')}
+      <p class="hint">Used for quotes you build by hand and by the portal assistant; the automatic estimate uses pavé for iced surfaces and prong for center stones.</p></div>`;
+}
+// Sat: gotov cjenovnik za moissanite (nerđajući čelik) i živi primjeri za 40 mm sat.
+function watchView(pr) {
+  const w = pr.watch?.moissanite || {};
+  const inp2 = (k) => `<span class="punit"><i>$</i><input class="in pin" type="number" min="0" step="1" inputmode="decimal" data-price="watch.moissanite.${k}" value="${w[k] ?? ''}" /></span>`;
+  return `<div class="pgrid2">
+      <div class="pcard2"><h3>Moissanite watch price list</h3><p class="hint">Stainless steel watches, final price with stones, setting and labor (no markup).</p>
+        <div class="wgrid"><span class="wgrid-h">Whole watch</span>
+          <label class="prow"><span>Fully iced</span>${inp2('full')}</label>
+          <label class="prow"><span>Half iced</span>${inp2('half')}</label>
+          <span class="wgrid-h">By part</span>
+          <label class="prow"><span>Face (dial)</span>${inp2('face')}</label>
+          <label class="prow"><span>Bezel</span>${inp2('bezel')}</label>
+          <label class="prow"><span>Bracelet</span>${inp2('bracelet')}</label>
+          <label class="prow"><span>All 3 parts</span>${inp2('all')}</label></div>
+        <p class="hint">Two parts are added up (face + bezel = both prices); all three use the All 3 price.</p></div>
+      <div class="pcard2"><h3>Natural and lab diamond watches</h3>
+        <p class="hint">Stones come from the diamond chart (price per stone × the stones that cover the watch), setting and labor from this price list, the same work as a moissanite watch. The chart alone would add pavé labor for every one of about 1,600 stones.</p>
+        <div class="wex" data-wex aria-live="polite">${watchExamples(PR())}</div></div>
+    </div>`;
+}
+function watchExamples(pr) {
+  const base = { type: 'watch', metal: 'Stainless steel', caseMm: 40 };
+  const cols = [['Fully iced', { coverage: 'full' }], ['Half iced', { coverage: 'half' }], ['Bezel only', { coverage: 'half', iceParts: 'bezel' }]];
+  const stones = [['Moissanite', 'Moissanite'], ['Lab diamonds', 'Lab-grown diamonds'], ['Natural diamonds', 'Natural diamonds']];
+  const val = (st, o) => { const e = estimate(pr, { ...base, stones: st, ...o }); return e.total != null ? money(e.total) : '<i>add prices</i>'; };
+  return `<table class="wex-t"><caption>Example: 40 mm stainless steel watch</caption><thead><tr><th></th>${cols.map(([l]) => `<th scope="col">${l}</th>`).join('')}</tr></thead>
+    <tbody>${stones.map(([l, st]) => `<tr><th scope="row">${l}</th>${cols.map(([, o]) => `<td>${val(st, o)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+function renderPriceExamples() {
+  const pr = applyMarket(readPricing(), P.me.market);
+  const w = app.querySelector('[data-wex]');
+  if (w) w.innerHTML = watchExamples(pr);
+  const el = app.querySelector('[data-pex]');
+  if (el) el.innerHTML = stoneExample(pexStones(), pr);
+  for (const tr of app.querySelectorAll('[data-dia-row]')) {
+    const n = Number(tr.querySelector('[data-price$=".natural"]')?.value); const l = Number(tr.querySelector('[data-price$=".lab"]')?.value);
+    const c = tr.querySelector('[data-dia-save]'); if (c) c.textContent = n > 0 && l > 0 ? `${Math.round((1 - l / n) * 100)}%` : '';
+  }
+}
+
 function pricingView() {
   const pr = P.me.pricing || {};
   const specs = Object.values(P.me.formSpecs || {});
@@ -912,18 +999,22 @@ function pricingView() {
   const pieces = allPieces.filter((x) => x !== 'grillz');
   const ro = '';
   const inp = (path, v, ph = '') => `<input class="in pin" type="number" min="0" step="0.01" inputmode="decimal" data-price="${esc(path)}" value="${v ?? ''}" placeholder="${esc(ph)}" ${ro} />`;
-  const per = () => 'per piece';
   const g = pr.grillz || {};
   const colName = { '10k': '10K', '14k': '14K', '18k': '18K', silver: 'Silver', platinum: 'Platinum' };
-  const grid = (title, hint, rows, path, cols, rowName) => `<div class="pcard2 pwide"><h3>${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ''}<div class="ptable" style="grid-template-columns: minmax(0, 1.3fr) repeat(${cols.length}, minmax(0, 1fr))"><span></span>${cols.map((c) => `<span>${esc(colName[c] || c)}</span>`).join('')}
-      ${rows.map((r) => `<span>${esc(rowName(r))}</span>${cols.map((c) => inp(`${path}.${r}.${c}`, g[path.split('.')[1]]?.[r]?.[c])).join('')}`).join('')}</div></div>`;
+  const grid = (title, hint, rows, path, cols, rowName) => `<div class="pcard2 pwide"><h3>${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ''}<div class="ptable pt-modern" style="grid-template-columns: minmax(0, 1.3fr) repeat(${cols.length}, minmax(0, 1fr))"><span class="pt-h"></span>${cols.map((c) => `<span class="pt-h">${esc(colName[c] || c)}</span>`).join('')}
+      ${rows.map((r) => `<span class="pt-r">${esc(rowName(r))}</span>${cols.map((c) => inp(`${path}.${r}.${c}`, g[path.split('.')[1]]?.[r]?.[c])).join('')}`).join('')}</div></div>`;
   const list = (title, hint, keys, path, label) => `<div class="pcard2"><h3>${title}</h3>${hint ? `<p class="hint">${hint}</p>` : ''}${keys.map((k) => `<label class="prow"><span>${esc(label ? label(k) : k)}</span>${inp(`${path}.${pkey(k)}`, path.split('.').slice(1).reduce((o, x) => o?.[x], g)?.[pkey(k)])}</label>`).join('')}</div>`;
   const addKeys = uniq([...cuts.filter((c) => !/^(polished|solid)$/i.test(c)), ...Object.keys(g.additions || {}), ...Object.keys(SUGGESTED_PRICING.grillz.additions)]);
   // Svaki rez koji forma nudi ima red i za dental gold (District 19.11.2026: falili Pineapple Cut i Weed Cut); prazno = ne računa se.
   const dentalKeys = uniq([...Object.keys(g.designs || {}), ...Object.keys(SUGGESTED_PRICING.grillz.designs), 'pineapple cut', 'weed cut', ...cuts.filter((c) => !/^(polished|solid|open face)$/i.test(c))]);
   const cap = (k) => k.replace(/\b\w/g, (m) => m.toUpperCase()).replace(/\b3d\b/i, '3D');
-  const grillzCards = allPieces.includes('grillz') ? `
-    <h2 class="psec">Grillz price list</h2>
+  const hasGrillz = allPieces.includes('grillz');
+  const hasWatch = pieces.includes('watch') || !!pr.watch?.moissanite;
+  const hasChains = pieces.some((x) => x === 'chain' || x === 'bracelet') || !!pr.chainWeights?.on;
+  const tabs = PR_TABS.filter(([k]) => (k === 'grillz' ? hasGrillz : k === 'watch' ? hasWatch : k === 'chains' ? hasChains : true));
+  const cur = tabs.some(([k]) => k === P.prTab) ? P.prTab : tabs[0][0];
+  const pane = (k, html) => `<div class="ppane" data-ppane="${k}" role="tabpanel" aria-labelledby="prt-${k}" ${k === cur ? '' : 'hidden'}>${html}</div>`;
+  const grillzPane = hasGrillz ? `
     <p class="hint">Final prices, no markup. Sets are top and bottom with 6 or more teeth on each row; anything else is priced row by row from "Bottom or top only". A count that is not on the list is priced at the next size up. Leave a box empty where you do not offer it.</p>
     <div class="pgrid2">
       ${grid('Sets (top and bottom), $', '', ['6', '8', '10', '12'], 'grillz.sets', GRILLZ_COLS, (r) => `${r} x ${r}`)}
@@ -934,31 +1025,29 @@ function pricingView() {
       <div class="pcard2"><h3>Molding fee, $</h3><label class="prow"><span>Gold, silver, platinum</span>${inp('grillz.molding.metal', g.molding?.metal)}</label><label class="prow"><span>Dental gold</span>${inp('grillz.molding.dental', g.molding?.dental)}</label></div>
       ${list('Additions, $ per tooth', '', addKeys, 'grillz.additions', cap)}
       ${list('Dental gold designs, $ per tooth', '', dentalKeys, 'grillz.designs', cap)}
-    </div>
-    <h2 class="psec">Other pieces</h2>` : '';
-  return `<section class="pricing">
-    <p class="note">Your prices for the estimate next to every lead. Only you see them. Change any price at any time; metal prices move, so update the gold price when it does.</p>
-    <div class="pfill"><button type="button" class="btn small" data-act="fill-pricing">Fill suggested prices</button><span class="hint">Fills only empty fields with starting prices (grillz from the District price list of Nov 2026, other pieces from gold at $124/g on Nov 16, 2026). Then press Save.</span></div>
-    ${grillzCards}
-    <div class="pgrid2">
+    </div>` : '';
+  const metalPane = `<div class="pgrid2">
       <div class="pcard2 pmkt-card"><h3>Metal prices and markup</h3>
-        <p class="hint">Live = today's market price per gram (updates on its own); Custom = your own price. Grillz use your price list above, not these.</p>
+        <p class="hint">Live = today's market price per gram (updates on its own); Custom = your own price. Grillz use their own price list, not these.</p>
         ${MARKET_METALS.map((m) => mktRow(m, pr)).join('')}
         <p class="hint">Gold metals use the gold price × karat purity (10K, 14K, 18K) unless you set their own price in the next card.</p>
-        <label class="prow"><span>Markup, %</span>${inp('markup', pr.markup)}</label></div>
-      <div class="pcard2"><h3>Metal price per gram, $</h3>${metals.map((m) => { const mk = mktOf(m); return `<label class="prow"><span>${esc(m)}</span>${mk ? mktInp(mk, `metals.${pkey(m)}`, pr.metals?.[pkey(m)], /sterling|925/i.test(m) ? 0.925 : 1) : inp(`metals.${pkey(m)}`, pr.metals?.[pkey(m)], /gold|two.?tone/i.test(m) && !/dental/i.test(m) ? 'from gold' : '')}</label>`; }).join('') || '<p class="hint">No metals in your forms.</p>'}</div>
-      <div class="pcard2"><h3>Weight and labor</h3>${pieces.includes('watch') ? '<p class="hint">Watch: leave grams empty when you ice the customer\'s own watch (no metal in the price); labor covers opening, prep, polish and reassembly.</p>' : ''}${pieces.map((pc) => `<div class="prow2"><b>${esc(pc[0].toUpperCase() + pc.slice(1))}</b><label><span>Grams ${per(pc)}</span>${inp(`grams.${pc}`, pr.grams?.[pc], pc === 'watch' ? 'own watch' : '')}</label><label><span>Labor ${per(pc)}, $</span>${inp(`labor.${pc}`, pr.labor?.[pc])}</label></div>`).join('')}</div>
-      <div class="pcard2 pwide pstones"><h3>Stones${allPieces.includes('grillz') ? ' (not grillz)' : ''}, $ per carat</h3>
-        <p class="hint">The estimate works out how many stones cover the piece at its size (ring size, pendant size, chain length and width, watch case), how big they are and how many carats that makes, then uses your price per carat. Center stone = the ring's center stone and stud earrings.</p>
+        <label class="prow"><span>Markup, %<small>on metal and labor; the diamond chart and the watch price list are already retail</small></span>${inp('markup', pr.markup)}</label></div>
+      <div class="pcard2"><h3>Metal price per gram, $</h3>${metals.map((m) => { const mk = mktOf(m); return `<label class="prow"><span>${esc(m)}</span>${mk ? mktInp(mk, `metals.${pkey(m)}`, pr.metals?.[pkey(m)], /sterling|925/i.test(m) ? 0.925 : 1) : inp(`metals.${pkey(m)}`, pr.metals?.[pkey(m)], /gold|two.?tone/i.test(m) && !/dental/i.test(m) ? 'from gold price' : '')}</label>`; }).join('') || '<p class="hint">No metals in your forms yet.</p>'}</div>
+      <div class="pcard2"><h3>Weight and labor</h3>${pieces.includes('watch') ? '<p class="hint">Watch: leave grams empty when you ice the customer\'s own watch (no metal in the price). Watch labor is used only when the watch price list has no price for that choice.</p>' : ''}${pieces.map((pc) => `<div class="prow2"><b>${esc(pc[0].toUpperCase() + pc.slice(1))}</b><label><span>Grams</span>${inp(`grams.${pc}`, pr.grams?.[pc], pc === 'watch' ? 'own watch' : '')}</label><label><span>Labor, $</span>${inp(`labor.${pc}`, pr.labor?.[pc])}</label></div>`).join('') || '<p class="hint">No pieces in your forms yet.</p>'}</div>
+    </div>`;
+  const stonesPane = `${diamondChartView(pr)}
+    <div class="prules pgap">${diamondRulesView(pr)}</div>
+    <div class="pgrid2 pgap">
+      <div class="pcard2 pwide pstones"><h3>Moissanite and other stones, $ per carat</h3>
+        <p class="hint">Stones that are not natural or lab diamonds (and every stone when the chart is off) are priced per carat: the estimate works out how many stones cover the piece at its size, how big they are and how many carats that makes. Center stone = the ring's center stone and stud earrings.</p>
         <div class="pst-grid"><div class="pst-table">
-          <div class="ptable" style="grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr))"><span></span><span>Small stones</span><span>Center stone</span>
-          ${[...stones, 'Default (no stone type chosen)'].map((st) => { const k = /^default/i.test(st) ? 'default' : pkey(st); return `<span>${esc(st)}</span>${inp(`stones.${k}.ct`, pr.stones?.[k]?.ct)}${inp(`stones.${k}.center`, pr.stones?.[k]?.center)}`; }).join('')}
-          <span>Setting, $ per stone</span>${inp('setting', pr.setting)}<span></span></div>
-          <p class="hint">Natural diamonds: VS is × 1.25, VVS × 1.5 and Flawless × 2 of the price per carat.</p></div>
-          <div class="pex" data-pex aria-live="polite">${stoneExample(stones)}</div></div></div>
-    </div>
-    ${pieces.some((x) => x === 'chain' || x === 'bracelet') || pr.chainWeights?.on ? chainWeightsView(pr) : ''}
-    <div class="pcard2 pwide pinfo"><h3>Store info under every quote message</h3><p class="hint">Address, hours, turnaround, out of state terms. It is added word for word at the end of every quote message.</p>
+          <div class="ptable pt-modern" style="grid-template-columns: minmax(0, 1.3fr) repeat(2, minmax(0, 1fr))"><span class="pt-h"></span><span class="pt-h">Small stones</span><span class="pt-h">Center stone</span>
+          ${[...stones, 'Default (no stone type chosen)'].map((st) => { const k = /^default/i.test(st) ? 'default' : pkey(st); return `<span class="pt-r">${esc(st)}</span>${inp(`stones.${k}.ct`, pr.stones?.[k]?.ct)}${inp(`stones.${k}.center`, pr.stones?.[k]?.center)}`; }).join('')}
+          <span class="pt-r">Setting, $ per stone</span>${inp('setting', pr.setting)}<span></span></div>
+          <p class="hint">Per carat only (chart off): natural VS is × 1.25, VVS × 1.5 and Flawless × 2.</p></div>
+          <div class="pex" data-pex aria-live="polite">${stoneExample(stones, PR())}</div></div></div>
+    </div>`;
+  const quotePane = `<div class="pcard2 pwide pinfo"><h3>Store info under every quote message</h3><p class="hint">Address, hours, turnaround, out of state terms. It is added word for word at the end of every quote message.</p>
       <textarea class="in" rows="8" data-quote-info maxlength="1200" placeholder="Your store, address, hours, turnaround times…">${esc(pr.quoteInfo || '')}</textarea>
       <h3 class="plinks-h">Buttons on customer pages</h3><p class="hint">Where "Reserve with a deposit" and "Book an appointment" go (for example a payment link or your booking page). Leave empty and the customer's request shows on the lead, so you can contact them.</p>
       <label class="prow"><span>Deposit link</span><input class="in" type="url" data-link="depositUrl" placeholder="https://" value="${esc(pr.depositUrl || '')}" /></label>
@@ -970,10 +1059,21 @@ function pricingView() {
       <label class="prow"><span>Email me about every new lead</span><input class="in" type="text" data-notify="alertEmails" placeholder="you@store.com, sales@store.com" value="${esc((pr.alertEmails || []).join(', '))}" /></label>
       <p class="hint">Up to 5 addresses, separated by commas. Each alert has the customer's details, their design page and the ready quote message. Reply to the alert to answer the customer directly.</p>
       <label class="prow"><span>Customer replies go to</span><input class="in" type="email" data-notify="replyTo" placeholder="you@store.com" value="${esc(pr.replyTo || '')}" /></label>
-      <label class="pcheck"><input type="checkbox" data-notify="autoSend" ${pr.autoSend ? 'checked' : ''} /><span>Email the Estimated price message to every new customer automatically, a few minutes after they send the form, nights and weekends included. Only new leads nobody has answered yet. Needs the reply address above.</span></label></div>
-    <div class="pfoot"><button class="btn gold" data-act="save-pricing">Save changes</button><span class="psaved" role="status"></span></div>
+      <label class="pcheck"><input type="checkbox" data-notify="autoSend" ${pr.autoSend ? 'checked' : ''} /><span>Email the Estimated price message to every new customer automatically, a few minutes after they send the form, nights and weekends included. Only new leads nobody has answered yet. Needs the reply address above.</span></label></div>`;
+  return `<section class="pricing">
+    <div class="phead"><div><h2>Pricing</h2><p class="hint">Your prices for the estimate next to every lead. Only you see them; change any price at any time.</p></div>
+      <div class="pfill"><button type="button" class="btn small" data-act="fill-pricing">Fill suggested prices</button><span class="hint">Fills only empty fields (grillz and diamond chart from the District price lists of Nov 2026). Then Save.</span></div></div>
+    <div class="ptabs" role="tablist" aria-label="Pricing sections">${tabs.map(([k, l]) => `<button type="button" role="tab" id="prt-${k}" class="ptab ${k === cur ? 'on' : ''}" aria-selected="${k === cur}" data-prtab="${k}">${l}</button>`).join('')}</div>
+    ${pane('metal', metalPane)}
+    ${pane('stones', stonesPane)}
+    ${hasWatch ? pane('watch', watchView(pr)) : ''}
+    ${hasGrillz ? pane('grillz', grillzPane) : ''}
+    ${hasChains ? pane('chains', chainWeightsView(pr).replace(/^\s*<h2 class="psec">[^<]*<\/h2>/, '')) : ''}
+    ${pane('quote', quotePane)}
+    <div class="pfoot psticky"><button class="btn gold" data-act="save-pricing">Save changes</button><span class="psaved" role="status"></span><span class="pfoot-hint">Saves every section, not only the open one.</span></div>
   </section>`;
 }
+
 function readPricing() {
   const out = { metals: {}, grams: {}, labor: {}, stones: {}, cuts: { ...(P.me.pricing?.cuts || {}) }, grillz: {} };
   for (const el of app.querySelectorAll('[data-price]')) {
@@ -986,6 +1086,11 @@ function readPricing() {
     o[parts[parts.length - 1]] = Number(el.disabled && el.dataset.mkt ? el.dataset.custom : el.value);
   }
   out.live = Object.fromEntries(MARKET_METALS.map((m) => [m.key, isLive(P.me.pricing, m.key)]));
+  // Tabela dijamanata (27.11.2026): prekidač; redovi stižu iz data-price polja (diamonds.chart.m30.natural...).
+  const dOn = app.querySelector('[data-dia-on]');
+  if (dOn) out.diamonds = { ...(out.diamonds || {}), on: dOn.checked };
+  else if (P.me.pricing?.diamonds) out.diamonds = P.me.pricing.diamonds;
+  for (const k of ['diamondRules', 'settingExtra', 'watch']) if (!out[k] && P.me.pricing?.[k] && !app.querySelector(`[data-price^="${k}."]`)) out[k] = P.me.pricing[k];
   const info = app.querySelector('[data-quote-info]');
   out.quoteInfo = info ? info.value : P.me.pricing?.quoteInfo || '';
   for (const el of app.querySelectorAll('[data-link]')) out[el.dataset.link] = el.value.trim();
@@ -1557,7 +1662,7 @@ app.addEventListener('input', (e) => {
   const el = e.target;
   if (el.dataset.qmsg && Q[el.dataset.qmsg]) { Q[el.dataset.qmsg].msg = el.value; el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 2}px`; queueQuoteSave(el.dataset.qmsg); return; }
   if (el.dataset.qrange) { priceLive(el.dataset.qrange, el.value); return; }
-  if (el.dataset.price && /^(stones\.|setting$)/.test(el.dataset.price)) renderStoneExample();
+  if (el.dataset.price && P.tab === 'pricing') schedulePriceExamples();
   if (el.dataset.cwStyle) { const box = app.querySelector(`[data-cw-ex="${CSS.escape(el.dataset.cwStyle)}"]`); if (box) box.innerHTML = cwExample(el.dataset.cwStyle, el.value, el.dataset.cwType); }
   if (el.dataset.qprice) { if (Number(el.value) > 0) priceLive(el.dataset.qprice, el.value); return; }
   if (el.dataset.search !== undefined) {
@@ -1618,6 +1723,18 @@ app.addEventListener('click', async (e) => {
   if (t.tagName === 'BUTTON' && t.dataset.q && t.dataset.qf) { quoteEdit(t.dataset.q, t.dataset.qf, t.dataset.qv, t.dataset.qd); return; }
   if (t.dataset?.act === 'quote-reset') { quoteReset(t.dataset.q); return; }
   if (t.dataset?.live) { setLive(t.dataset.live, t.dataset.on === '1'); return; }
+  if (t.dataset?.prtab) {
+    P.prTab = t.dataset.prtab; safe(() => localStorage.setItem('jl_pr_tab', P.prTab));
+    for (const b of app.querySelectorAll('[data-prtab]')) { const on = b.dataset.prtab === P.prTab; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
+    for (const pn of app.querySelectorAll('[data-ppane]')) pn.hidden = pn.dataset.ppane !== P.prTab;
+    return;
+  }
+  if (t.dataset?.diaRange) {
+    P.diaRange = t.dataset.diaRange;
+    for (const b of app.querySelectorAll('[data-dia-range]')) { const on = b.dataset.diaRange === P.diaRange; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+    for (const tr of app.querySelectorAll('[data-dia-row]')) tr.hidden = !inRange(Number(tr.dataset.mm), P.diaRange);
+    return;
+  }
   if (t.dataset?.pexPiece) { PEX.piece = t.dataset.pexPiece; renderStoneExample(); return; }
   if (t.dataset?.pexStone) { PEX.stone = t.dataset.pexStone; renderStoneExample(); return; }
   if (t.dataset?.act === 'price-reset') { const key = t.closest('.qprice')?.dataset.qk; const q = Q[key]; if (q) { const e = estimate(PR(), q.spec); if (e.total != null) priceLive(key, Math.round(e.total)); priceCommit(key); } return; }
@@ -1680,6 +1797,8 @@ app.addEventListener('click', async (e) => {
       const v = el.dataset.price.split('.').reduce((o, k) => (o == null ? undefined : o[k]), SUGGESTED_PRICING);
       if (typeof v === 'number') el.value = v;
     }
+    const dOn = app.querySelector('[data-dia-on]'); if (dOn) dOn.checked = true;
+    renderPriceExamples();
     const note = app.querySelector('.psaved'); if (note) note.textContent = 'Suggested prices filled in, not saved yet.';
   }
   if (t.dataset.act === 'save-pricing') {

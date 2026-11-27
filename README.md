@@ -292,6 +292,10 @@ Try-on više nije samo za grillz: poslije rendera kupac ubaci fotografiju i vidi
 - Portal: dugme "Ask" na svakom tabu, pomoć za korištenje (vodič `PORTAL_GUIDE`) i brojevi koje server sam izračuna.
 - Workers AI (binding `AI`, `CHAT_MODEL` mijenja model), razgovori u D1 `chats` (migracija 0041). Detalji `docs/assistants.md`, pitanja za radnju `docs/assistant-store-questions.md`, provjera `scripts/assistant-check.mjs`.
 
+## Diamond chart, watch price list, Pricing tab sections (27.11.2026)
+
+- District's diamond chart (retail price per stone and setting labor by size, 1.0 to 10.0 mm), chart rules and the moissanite watch price list are in the calculator; natural and lab diamonds use the chart, natural or lab watches take stones from the chart and setting and labor from the watch list. The Pricing tab is split into sections with a sticky Save bar. The portal assistant answers price questions from these tables. Details `docs/diamond-pricing.md`, checks `scripts/diamond-pricing-check.mjs` and `scripts/pricing-tab-check.mjs`, migration 0043.
+
 ## Metal movement (26.11.2026)
 
 - Tab u portalu (redizajn 26.11.2026: kartice metala sa sparkline-om, grafik po tačkama bez praznih vikenda, hover sa cijenom i % od početka, Open/High/Low/Range/Change, upozorenja sa prekidačem, napretkom do sljedećeg i tabelom): grafik cijena zlata, srebra i platine (1D, 1W, 1M, 1Y, 5Y, Custom) i upozorenja u Notifications kad se cijena pomakne za izabran procenat (podrazumijevano 5%). Detalji `docs/metal-movement.md`, provjera `scripts/metals-check.mjs`, migracija 0042.
