@@ -42,6 +42,113 @@ export const DISTRICT_GRILLZ = {
   },
   designs: { 'diamond cut': 5, 'diamond dust': 5, 'diamond cut n dust': 10, 'perm cut': 5, 'princess cut': 5, 'nugget cut': 5, 'rose cut': 5 },
 };
+// ---------- Districtova tabela dijamanata (Enrique, 27.11.2026) ----------
+// Maloprodajna cijena po JEDNOM kamenu (round brilliant, G-H, VS2-SI1) za svaku veličinu od 1.0 do 10.0 mm, i rad
+// ugradnje po kamenu (pavé, prong, bezel). Komad sa više kamenova = cijena po kamenu × broj + rad × broj.
+// Kolone: [mm, karat, natural $/kamen, lab $/kamen, pavé rad, prong rad, bezel rad]. U pricing-u: diamonds.chart.m30 = 3.0 mm.
+export const DISTRICT_DIAMONDS = [
+  [1, 0.005, 18, 6, 15, 25, 35],
+  [1.1, 0.007, 22, 6, 15, 25, 35],
+  [1.2, 0.008, 26, 7, 15, 25, 35],
+  [1.3, 0.01, 30, 7, 15, 25, 35],
+  [1.4, 0.012, 35, 8, 15, 25, 35],
+  [1.5, 0.015, 42, 9, 15, 25, 35],
+  [1.6, 0.017, 48, 10, 15, 25, 35],
+  [1.7, 0.02, 55, 11, 15, 25, 35],
+  [1.8, 0.025, 65, 12, 15, 25, 35],
+  [1.9, 0.028, 75, 13, 15, 25, 35],
+  [2, 0.035, 90, 15, 15, 25, 35],
+  [2.1, 0.039, 100, 16, 18, 25, 35],
+  [2.2, 0.041, 110, 17, 18, 25, 35],
+  [2.3, 0.05, 130, 19, 18, 25, 35],
+  [2.4, 0.052, 140, 20, 18, 25, 35],
+  [2.5, 0.059, 160, 22, 18, 25, 35],
+  [2.6, 0.07, 185, 25, 18, 25, 35],
+  [2.7, 0.07, 195, 26, 18, 25, 35],
+  [2.8, 0.085, 225, 30, 18, 25, 35],
+  [2.9, 0.095, 250, 33, 18, 25, 35],
+  [3, 0.11, 290, 38, 18, 25, 35],
+  [3.1, 0.12, 320, 42, 25, 55, 65],
+  [3.2, 0.14, 360, 48, 25, 55, 65],
+  [3.3, 0.15, 400, 54, 25, 55, 65],
+  [3.4, 0.16, 440, 60, 25, 55, 65],
+  [3.5, 0.18, 500, 68, 25, 55, 65],
+  [3.6, 0.19, 550, 76, 25, 55, 65],
+  [3.7, 0.21, 620, 86, 25, 55, 65],
+  [3.8, 0.23, 700, 98, 25, 55, 65],
+  [3.9, 0.25, 780, 110, 25, 55, 65],
+  [4, 0.27, 880, 125, 25, 55, 65],
+  [4.1, 0.29, 970, 140, 35, 55, 65],
+  [4.2, 0.31, 1080, 158, 35, 55, 65],
+  [4.3, 0.33, 1200, 175, 35, 55, 65],
+  [4.4, 0.36, 1350, 195, 35, 55, 65],
+  [4.5, 0.4, 1550, 225, 35, 55, 65],
+  [4.6, 0.42, 1700, 250, 35, 55, 65],
+  [4.7, 0.45, 1900, 280, 35, 55, 65],
+  [4.8, 0.48, 2100, 310, 35, 55, 65],
+  [4.9, 0.5, 2300, 340, 35, 55, 65],
+  [5, 0.52, 2550, 375, 35, 55, 65],
+  [5.1, 0.55, 2800, 410, 65, 95, 125],
+  [5.2, 0.58, 3100, 450, 65, 95, 125],
+  [5.3, 0.62, 3400, 495, 65, 95, 125],
+  [5.4, 0.65, 3700, 540, 65, 95, 125],
+  [5.5, 0.7, 4100, 600, 65, 95, 125],
+  [5.6, 0.73, 4400, 640, 65, 95, 125],
+  [5.7, 0.77, 4800, 690, 65, 95, 125],
+  [5.8, 0.82, 5300, 750, 65, 95, 125],
+  [5.9, 0.86, 5800, 810, 65, 95, 125],
+  [6, 0.9, 6400, 880, 65, 95, 125],
+  [6.1, 0.95, 7000, 950, 65, 95, 125],
+  [6.2, 1, 7700, 1020, 65, 95, 125],
+  [6.3, 1.05, 8400, 1100, 65, 95, 125],
+  [6.4, 1.1, 9100, 1180, 65, 95, 125],
+  [6.5, 1.15, 9900, 1270, 65, 95, 125],
+  [6.6, 1.2, 10800, 1370, 125, 175, 225],
+  [6.7, 1.25, 11800, 1480, 125, 175, 225],
+  [6.8, 1.3, 12900, 1600, 125, 175, 225],
+  [6.9, 1.35, 14000, 1720, 125, 175, 225],
+  [7, 1.4, 15200, 1850, 125, 175, 225],
+  [7.1, 1.5, 16800, 2000, 125, 175, 225],
+  [7.2, 1.55, 18200, 2150, 125, 175, 225],
+  [7.3, 1.6, 19600, 2300, 125, 175, 225],
+  [7.4, 1.65, 21200, 2460, 125, 175, 225],
+  [7.5, 1.75, 23200, 2650, 125, 175, 225],
+  [7.6, 1.8, 25000, 2820, 125, 175, 225],
+  [7.7, 1.9, 27000, 3000, 125, 175, 225],
+  [7.8, 2, 29200, 3200, 125, 175, 225],
+  [7.9, 2.1, 31500, 3400, 125, 175, 225],
+  [8, 2.15, 33800, 3600, 125, 175, 225],
+  [8.1, 2.25, 36500, 3850, 175, 250, 325],
+  [8.2, 2.35, 39200, 4100, 175, 250, 325],
+  [8.3, 2.45, 42000, 4380, 175, 250, 325],
+  [8.4, 2.55, 45000, 4680, 175, 250, 325],
+  [8.5, 2.7, 49000, 5050, 175, 250, 325],
+  [8.6, 2.8, 52500, 5400, 175, 250, 325],
+  [8.7, 2.9, 56000, 5750, 175, 250, 325],
+  [8.8, 3, 60000, 6150, 175, 250, 325],
+  [8.9, 3.1, 64000, 6550, 175, 250, 325],
+  [9, 3.2, 68500, 7000, 175, 250, 325],
+  [9.1, 3.35, 73500, 7500, 175, 250, 325],
+  [9.2, 3.5, 79000, 8000, 175, 250, 325],
+  [9.3, 3.6, 84500, 8550, 175, 250, 325],
+  [9.4, 3.75, 90500, 9150, 175, 250, 325],
+  [9.5, 3.9, 97000, 9800, 175, 250, 325],
+  [9.6, 4.05, 103500, 10450, 175, 250, 325],
+  [9.7, 4.2, 110500, 11150, 175, 250, 325],
+  [9.8, 4.35, 118000, 11900, 175, 250, 325],
+  [9.9, 4.5, 126000, 12700, 175, 250, 325],
+  [10, 4.7, 135000, 13600, 175, 250, 325],
+];
+export const DIAMOND_COLS = ['ct', 'natural', 'lab', 'pave', 'prong', 'bezel'];
+const mmKey = (mm) => `m${Math.round(mm * 10)}`;
+export const DISTRICT_DIAMOND_CHART = Object.fromEntries(DISTRICT_DIAMONDS.map(([mm, ...v]) => [mmKey(mm), Object.fromEntries(DIAMOND_COLS.map((c, i) => [c, v[i]]))]));
+// Pravila uz tabelu (iz Districtovih napomena): ocjena kamena, oblik, složen rad, platina, kupčevo kamenje, minimumi.
+export const DISTRICT_DIAMOND_RULES = { vvs: 20, si2: 15, fancy: 10, complex: 35, platinum: 25, customerStone: 10, paveMin: 75, paveMinLarge: 100, prongMin: 50, bezelMin: 50 };
+// Ostali rad ugradnje (Setting Labor Guide), po kamenu osim gdje piše; asistent i zlatar ih koriste za ručne ponude.
+export const DISTRICT_SETTING_EXTRA = { 'channel, stones up to 3 mm': 30, 'channel, stones 3 to 5 mm': 50, 'channel, minimum per row': 100, 'invisible or tension (quote per job)': 250, 'flush or gypsy, up to 3 mm': 20, 'flush, minimum per piece': 75, 're-tipping, per prong': 25, 'stone removal, per stone': 10 };
+// Sat od nerđajućeg čelika okovan moissanitom: gotove cijene (District 27.11.2026), bez markupa.
+export const DISTRICT_WATCH = { moissanite: { full: 2500, half: 1400, face: 800, bezel: 500, bracelet: 1200, all: 2500 } };
+
 export const SUGGESTED_PRICING = {
   goldSpot: 124, markup: 30,
   metals: { platinum: 50, silver: 2, 'sterling silver': 2, 'dental gold': 45 },
@@ -57,7 +164,61 @@ export const SUGGESTED_PRICING = {
   },
   setting: 1.5,
   grillz: DISTRICT_GRILLZ,
+  diamonds: { on: true, chart: DISTRICT_DIAMOND_CHART },
+  diamondRules: DISTRICT_DIAMOND_RULES,
+  settingExtra: DISTRICT_SETTING_EXTRA,
+  watch: DISTRICT_WATCH,
 };
+
+// ---------- Računanje po tabeli dijamanata (27.11.2026) ----------
+// Prirodni i lab dijamanti (i na satu) idu po tabeli kad je uključena; moissanite i dalje po karatu.
+export const diamondKind = (stones) => (/natural/i.test(stones || '') ? 'natural' : /lab/i.test(stones || '') ? 'lab' : null);
+export function diamondRows(pricing) {
+  const d = pricing?.diamonds;
+  if (!d || d.on === false || !d.chart) return null;
+  const rows = Object.entries(d.chart).map(([k, v]) => ({ mm: Number(k.slice(1)) / 10, ...v })).filter((r) => r.mm > 0).sort((a, b) => a.mm - b.mm);
+  return rows.length ? rows : null;
+}
+export const rowByMm = (rows, mm) => rows.reduce((best, r) => (Math.abs(r.mm - mm) < Math.abs(best.mm - mm) ? r : best), rows[0]);
+export const rowByCt = (rows, ct) => rows.filter((r) => r.ct > 0).reduce((best, r) => (Math.abs(r.ct - ct) < Math.abs(best.ct - ct) ? r : best), rows[0]);
+const RULES = (pricing) => ({ ...DISTRICT_DIAMOND_RULES, ...(pricing?.diamondRules || {}) });
+// Ocjena kamena: tabela je G-H / VS2-SI1; D-F ili VVS/IF/Flawless više, SI2/I1 manje (Districtove napomene).
+function gradeFactor(pricing, spec) {
+  const c = key(spec.clarity);
+  const r = RULES(pricing);
+  if (/vvs|flawless|^if$|^fl$|d-f|d/.test(c)) return { k: 1 + r.vvs / 100, note: `${spec.clarity}: chart price +${r.vvs}% (chart is G-H, VS2-SI1)` };
+  if (/si2|i1|i2|i3|i-j/.test(c)) return { k: 1 - r.si2 / 100, note: `${spec.clarity}: chart price -${r.si2}% (chart is G-H, VS2-SI1)` };
+  return { k: 1 };
+}
+const isPlatinum = (spec) => /platinum/i.test(spec.metal || '');
+// Rad ugradnje po kamenu sa minimumom po komadu; platina +X% na rad.
+function settingLabor(pricing, row, count, kind = 'pave', spec = {}) {
+  const r = RULES(pricing);
+  const each = (Number(row[kind]) || 0) * (isPlatinum(spec) ? 1 + r.platinum / 100 : 1);
+  const min = kind === 'pave' ? (row.mm > 4 ? r.paveMinLarge : r.paveMin) : kind === 'prong' ? r.prongMin : r.bezelMin;
+  const raw = each * count;
+  return { each, total: Math.max(raw, min || 0), min: raw < (min || 0) ? min : 0 };
+}
+// Sat sa moissanitom: gotov cjenovnik po nivou ili po dijelu (face, bezel, bracelet); sva tri = cijena "All 3".
+export function watchFlat(pricing, spec) {
+  if (spec.type !== 'watch' || !/moissanite/i.test(spec.stones || '')) return null;
+  const w = pricing?.watch?.moissanite;
+  if (!w) return null;
+  const n = (v) => (Number(v) > 0 ? Number(v) : null);
+  const parts = String(spec.iceParts || '').split(',').filter(Boolean);
+  if (parts.length) {
+    const vals = parts.map((p) => n(w[p]));
+    if (vals.some((v) => v == null)) return null;
+    const sum = vals.reduce((a, b) => a + b, 0);
+    const all = parts.length === 3 && n(w.all) ? Math.min(sum, n(w.all)) : sum;
+    const what = `${parts.map((p) => (p === 'face' ? 'face (dial)' : p)).join(' + ')}${parts.length === 3 && n(w.all) ? ', all 3' : ''}`;
+    return { amount: all, what, label: `Moissanite on the ${what} (watch price list)` };
+  }
+  const lvl = spec.coverage === 'full' ? 'full' : spec.coverage === 'half' ? 'half' : null;
+  if (!lvl || !n(w[lvl])) return null;
+  const what = lvl === 'full' ? 'fully iced' : 'half iced';
+  return { amount: n(w[lvl]), what, label: `Moissanite ${what} (watch price list)` };
+}
 // ---------- Žive cijene metala (22.11.2026) ----------
 // Spot cijene po troy unci (api.gold-api.com, bez ključa) postaju cijene po gramu. Zlatar po metalu bira Live
 // (podrazumijevano) ili Custom (njegov broj iz Pricing taba); bez žive cijene ostaje njegov broj.
@@ -288,13 +449,35 @@ export function estimate(pricing, spec) {
   if (!grams && !ownWatch) missing.push(`grams${per} for ${spec.type}`);
   if (!ppg && !ownWatch) missing.push(`price per gram of ${spec.metal || 'the metal'}${spec.karat ? ` ${spec.karat}` : ''}`);
   if (grams && ppg) lines.push({ label: cw ? `Metal: ${cw.text}, ${grams} g × ${money(ppg)}/g` : `Metal: ${+(grams * units).toFixed(1)} g × ${money(ppg)}/g`, amount: grams * units * ppg });
-  const labor = num(pricing?.labor?.[spec.type]);
-  if (labor) lines.push({ label: `Labor${units > 1 ? `: ${units} × ${money(labor)}` : ''}`, amount: labor * units });
-  else missing.push(`labor${per} for ${spec.type}`);
   const notes = [];
+  // Sat sa moissanitom po gotovom cjenovniku: cijena već uključuje rad, kamenje i ugradnju.
+  const flat = spec.stones && spec.coverage ? watchFlat(pricing, spec) : null;
+  const labor = num(pricing?.labor?.[spec.type]);
+  // Sat sa prirodnim ili lab dijamantima (27.11.2026): kamenje po tabeli dijamanata, a ugradnja i rad po cjenovniku sata
+  // (isti posao kao moissanite). Tabela sama bi računala pavé $15 × ~1.600 kamenova, što nije cijena bust-downa.
+  const watchWork = !flat && spec.type === 'watch' && spec.coverage && diamondKind(spec.stones) && diamondRows(pricing) ? watchFlat(pricing, { ...spec, stones: 'Moissanite' }) : null;
+  if (flat) { lines.push({ label: flat.label, amount: flat.amount, retail: true }); notes.push('Watch price list (stainless steel): includes stones, setting and labor, no markup.'); }
+  else if (watchWork) { lines.push({ label: `Setting and labor, ${watchWork.what} (watch price list)`, amount: watchWork.amount, retail: true }); notes.push('Diamond watch: stones from the diamond chart, setting and labor from the watch price list (the same work as a moissanite watch).'); }
+  else if (labor) lines.push({ label: `Labor${units > 1 ? `: ${units} × ${money(labor)}` : ''}`, amount: labor * units });
+  else missing.push(`labor${per} for ${spec.type}`);
+  const dia = diamondKind(spec.stones) ? diamondRows(pricing) : null;
+  const kind = diamondKind(spec.stones);
   if (cwAll) notes.push(cw ? `Weight from the chain catalog: ${cw.note}` : cwAll.note);
   if (ownWatch) notes.push("Customer's own watch: no metal included. Add grams for watches in Weight and labor to price a new case or bracelet.");
-  if (spec.stones && spec.coverage) {
+  if (flat) { /* kamenje je u cijeni sata */ }
+  else if (spec.stones && spec.coverage && dia) {
+    // Po Districtovoj tabeli: cijena po kamenu za tu veličinu × broj kamenova, plus rad ugradnje po kamenu (maloprodaja, bez markupa).
+    const lay = stoneLayout(spec);
+    const row = rowByMm(dia, lay.d);
+    const g = gradeFactor(pricing, spec);
+    if (g.note) notes.push(g.note);
+    const per = (Number(row[kind]) || 0) * g.k;
+    const name = kind === 'natural' ? 'natural diamonds' : 'lab diamonds';
+    lines.push({ label: `Stones: about ${lay.count.toLocaleString('en-US')} × ${row.mm} mm ${name} × ${money(per)} each (diamond chart)`, amount: lay.count * per, retail: true });
+    const lab = settingLabor(pricing, row, lay.count, 'pave', spec);
+    if (!watchWork) lines.push({ label: lab.min ? `Pavé setting: minimum ${money(lab.min)} per piece` : `Pavé setting: ${lay.count.toLocaleString('en-US')} × ${money(lab.each)}${isPlatinum(spec) ? ' (platinum +' + RULES(pricing).platinum + '%)' : ''}`, amount: lab.total, retail: true });
+    notes.push(lay.note);
+  } else if (spec.stones && spec.coverage) {
     const row = pricing?.stones?.[key(spec.stones)];
     const perCt = num(row?.ct);
     if (perCt) {
@@ -314,7 +497,17 @@ export function estimate(pricing, spec) {
   }
   // Centralni kamen (prsten, minđuše na šraf): karati koje je kupac izabrao × $/ct za centralne kamenove.
   const center = centerStones(spec);
-  if (center) {
+  if (center && dia) {
+    // Centralni kamen po tabeli: red sa najbližim karatom, cijena po kamenu + prong ugradnja.
+    const count = spec.type === 'earrings' ? 2 : 1;
+    const each = round2(center.ct / count);
+    const row = rowByCt(dia, each);
+    const g = gradeFactor(pricing, spec);
+    const per = (Number(row[kind]) || 0) * g.k;
+    lines.push({ label: `${center.label}: ${count > 1 ? `2 × ` : ''}${row.ct} ct (${row.mm} mm) × ${money(per)} (diamond chart)`, amount: per * count, retail: true });
+    const lab = settingLabor(pricing, row, count, 'prong', spec);
+    lines.push({ label: `Prong setting: ${count} × ${money(lab.each)}${lab.min ? `, minimum ${money(lab.min)}` : ''}`, amount: lab.total, retail: true });
+  } else if (center) {
     const row = pricing?.stones?.[key(spec.stones)] || pricing?.stones?.default;
     const perCt = num(row?.center);
     const k = clarityFactor(spec).k;
@@ -327,9 +520,12 @@ export function estimate(pricing, spec) {
   }
   if (missing.length) return { total: null, lines, missing, notes };
   const sub = lines.reduce((n, l) => n + l.amount, 0);
+  // Tabela dijamanata i cjenovnik sata su već maloprodajne cijene: markup ide samo na metal i rad.
+  const base = lines.filter((l) => !l.retail).reduce((n, l) => n + l.amount, 0);
   const markup = Number(pricing?.markup) > 0 ? Number(pricing.markup) : 0;
-  if (markup) lines.push({ label: `Markup ${markup}%`, amount: (sub * markup) / 100 });
-  return { total: sub * (1 + markup / 100), lines, missing, notes };
+  const mk = (base * markup) / 100;
+  if (markup && mk > 0) lines.push({ label: base < sub ? `Markup ${markup}% (metal and labor)` : `Markup ${markup}%`, amount: mk });
+  return { total: sub + mk, lines, missing, notes };
 }
 
 // ---------- Težine lanaca iz 14K kataloga (District 25.11.2026) ----------

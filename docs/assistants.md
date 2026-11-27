@@ -42,3 +42,7 @@ Visible in every portal unless `PAGE_ASSISTANT=0` (then the tab, its routes and 
 - **Try it** (right side of the tab, below on narrow screens): answers with the rules exactly as written in the form, even unsaved, for a sample customer (Alex) or a real lead. Nothing is saved on a lead, no notification, no count (`chats t_<session>`, 30 per 10 min). It shows why an answer was blocked and offers "Save as example".
 - **Unsaved changes**: leaving the tab, Sign out, Exit view, closing or reloading the page asks first. Switching between Rules, Knowledge and Examples keeps the draft.
 - Checks: `scripts/assistant-check.mjs` (72, real Workers AI, no flag) and `scripts/assistant-off-check.mjs` (13, `PAGE_ASSISTANT=0`).
+
+## Prices in the portal assistant (27.11.2026)
+
+The portal assistant gets the store's whole Pricing tab as text (metals with today's market price, markup, grams and labor, stones per carat, the diamond chart, rules, other setting work, the watch price list, the grillz price list) plus example estimates from the same calculator as the lead cards (`pricingText`), and for each question the exact chart rows for the sizes, carats, stone counts, grade and platinum it names (`pricingLookup`). It answers price questions only from these numbers. See `docs/diamond-pricing.md`.
