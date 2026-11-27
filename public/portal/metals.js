@@ -10,7 +10,8 @@ const QUICK = [1, 2, 3, 5, 10];
 const UP = '#3ccf91';
 const DOWN = '#ef6a6a';
 const DAY = 86_400_000;
-const M = { w: 0, range: '1m', from: '', to: '', unit: 'g', sel: 'gold', data: null, loading: false, error: '', cfg: null, draft: null, dirty: false, msg: '', saving: false, geo: null };
+// Početni prikaz 1D i po unci (District 27.11.2026).
+const M = { w: 0, range: '1d', from: '', to: '', unit: 'oz', sel: 'gold', data: null, loading: false, error: '', cfg: null, draft: null, dirty: false, msg: '', saving: false, geo: null };
 
 export function initMetals(ctx) {
   C = ctx;

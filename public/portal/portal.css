@@ -1428,3 +1428,27 @@ button.dbar.future { opacity: .35; cursor: default; }
 .ev-list li span:not(.faint):not(.ev-st):not(.ghl-bad) { color: var(--ink); }
 .bks-kind .pcheck em { display: block; margin-top: 3px; font-style: normal; font-size: 12px; line-height: 1.45; color: var(--ink-faint); }
 .bks-kind .pcheck { align-items: flex-start; }
+
+.lpage-custom { font-style: normal; color: var(--ink-faint); font-size: 11.5px; }
+
+/* Kategorije i boje obavještenja + plutajuća obavještenja (27.11.2026) */
+.nt-g .nt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ntc); flex: none; margin-left: -3px; }
+.nt-g.on { border-color: var(--ntc); background: color-mix(in srgb, var(--ntc) 12%, transparent); }
+.nt { border-left: 0; box-shadow: inset 3px 0 0 var(--ntc, var(--line)); }
+.nt .nt-ic { background: var(--ntc) !important; }
+.nt.is-new { border-color: color-mix(in srgb, var(--ntc) 45%, var(--line)); background: color-mix(in srgb, var(--ntc) 7%, var(--panel)); }
+.nt-cat { display: block; margin-bottom: 2px; font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ntc); }
+.nt-float { position: fixed; z-index: 80; bottom: 84px; right: 18px; width: 340px; max-height: calc(100vh - 120px); overflow: auto; display: grid; gap: 8px; }
+.nt-float[hidden] { display: none; }
+.ntf { position: relative; display: flex; align-items: flex-start; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--ntc) 45%, var(--line)); background: color-mix(in srgb, var(--ntc) 9%, var(--panel)); box-shadow: 0 14px 36px rgba(0,0,0,.42), inset 3px 0 0 var(--ntc); animation: ntf-in .28s ease; }
+.ntf-body { flex: 1; min-width: 0; background: none; border: 0; padding: 11px 6px 11px 14px; color: var(--ink-soft); font: inherit; font-size: 13px; line-height: 1.4; text-align: left; cursor: pointer; }
+.ntf-body small { display: block; margin-bottom: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ntc); }
+.ntf-body b { color: var(--ink); }
+.ntf-x { flex: none; width: 34px; height: 34px; margin: 4px 4px 0 0; border: 0; border-radius: 10px; background: none; color: var(--ink-faint); font-size: 20px; line-height: 1; cursor: pointer; }
+.ntf-x:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.ntf-foot { display: flex; justify-content: space-between; gap: 8px; padding: 0 4px; }
+.ntf-foot button { background: none; border: 0; padding: 4px 2px; color: var(--ink-faint); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.ntf-foot button:hover { color: var(--ink); }
+@keyframes ntf-in { from { opacity: 0; transform: translateX(16px); } }
+@media (max-width: 1500px) { .nt-float { width: 300px; } }
+@media (max-width: 640px) { .nt-float { bottom: 78px; left: 12px; right: 12px; width: auto; } }

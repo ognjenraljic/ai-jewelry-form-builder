@@ -1238,6 +1238,7 @@ function portalTabs() {
 }
 
 function render() {
+  queueMicrotask(() => { if (P.notif) floatNotif(); });
   const { client, forms, stats, session } = P.me;
   if (!hasDraftOnboarding()) {
     P.onboardingFlow = false;
@@ -1432,7 +1433,7 @@ function pageBox(l) {
   const pg = l.page;
   if (!pg?.url) return '';
   const full = `${location.origin}${pg.url}`;
-  const acts = (pg.actions || []).slice(-3).reverse().map((a) => `<li><b>${esc(ACTION_LABEL[a.action] || a.action)}</b>${a.option === 'fit' ? ' · Option 2' : a.option === 'picked' ? ' · Option 1' : ''}<span>${esc(when(a.at))}</span></li>`).join('');
+  const acts = (pg.actions || []).slice(-3).reverse().map((a) => `<li><b>${esc(ACTION_LABEL[a.action] || a.action)}</b>${a.option === 'fit' ? ' · Option 2' : a.option === 'picked' ? ' · Option 1' : ''}${a.custom ? ` <em class="lpage-custom">(${esc(a.custom)})</em>` : ''}<span>${esc(when(a.at))}</span></li>`).join('');
   return `<div class="lpage"><p class="lpage-t">Customer page</p>
     <div class="lpage-row"><a class="lpage-link" href="${esc(pg.url)}?preview=1" target="_blank" rel="noopener" title="${esc(full)}">Open page ↗</a>${copyBtn(full, 'customer page link')}</div>
     <p class="lpage-v">${pg.views ? `Viewed ${pg.views}× · last ${esc(when(pg.lastView))}` : 'Not opened yet'}</p>
@@ -2096,7 +2097,53 @@ function statsView() {
 // Notifications: novi upiti, otvorena stranica, Deposit/Appointment, automatske poruke i greške slanja (30 dana).
 async function loadNotif() {
   try { P.notif = await api('/api/portal/notifications'); } catch { P.notif = P.notif || null; }
+  floatNotif();
 }
+// Plutajuća obavještenja desno (District 27.11.2026: "floating here until marked as read or X-ed out", dok ne dođu prave
+// push notifikacije). Nova (poslije zadnjeg "read") i neodbačena, najnovija gore, najviše 4 + broj ostalih.
+function floatNotif() {
+  let box = document.getElementById('nt-float');
+  if (!box) { box = document.createElement('aside'); box.id = 'nt-float'; box.className = 'nt-float'; box.setAttribute('aria-label', 'New notifications'); document.body.appendChild(box); }
+  const n = P.notif;
+  const gone = new Set([...(n?.dismissed || []), ...(P.ntGone || [])].map(String));
+  const list = (n?.items || []).filter((x) => x.at > (n.seenAt || 0) && !gone.has(String(x.id)));
+  if (!list.length || P.tab === 'notifications') { box.innerHTML = ''; box.hidden = true; return; }
+  box.hidden = false;
+  const max = window.matchMedia('(max-width: 640px)').matches ? 2 : 4;
+  box.innerHTML = list.slice(0, max).map((x) => {
+    const g = ntGroupOf(x.type, x);
+    const [, text] = NT[x.type] || ['view', (y) => esc(y.name)];
+    return `<div class="ntf" style="--ntc:${ntColor(g)}" role="status"><button type="button" class="ntf-body" ${x.type === 'metal_move' ? 'data-ntf-tab="metals"' : `data-ntf-lead="${esc(x.email)}"`} data-ntf-id="${esc(String(x.id))}"><small>${esc(ntLabel(g))} · ${esc(when(x.at))}</small><span>${text(x)}</span></button><button type="button" class="ntf-x" data-ntf-x="${esc(String(x.id))}" aria-label="Dismiss">&times;</button></div>`;
+  }).join('') + `<div class="ntf-foot">${list.length > max ? `<button type="button" data-ntf-all>+${list.length - max} more</button>` : '<span></span>'}<button type="button" data-ntf-read>Mark all as read</button></div>`;
+}
+async function ntDismiss(ids) {
+  P.ntGone = [...new Set([...(P.ntGone || []), ...ids.map(String)])];
+  floatNotif();
+  if (readOnly()) return;
+  try { const r = await api('/api/portal/notifications/dismiss', { method: 'POST', body: JSON.stringify({ ids }), json: true }); if (P.notif) P.notif.dismissed = r.dismissed || P.notif.dismissed; } catch {}
+}
+document.addEventListener('click', async (e) => {
+  const t = e.target.closest('[data-ntf-x], [data-ntf-id], [data-ntf-all], [data-ntf-read]');
+  if (!t || !t.closest('#nt-float')) return;
+  if (t.dataset.ntfX) { ntDismiss([t.dataset.ntfX]); return; }
+  if (t.dataset.ntfRead != null) {
+    if (P.notif) { P.notif.seenAt = Date.now(); P.notif.unseen = 0; }
+    floatNotif();
+    const nav = app.querySelector('nav.tabs');
+    if (nav) nav.outerHTML = portalTabs();
+    if (!readOnly()) api('/api/portal/notifications/seen', { method: 'POST' }).catch(() => {});
+    return;
+  }
+  if (t.dataset.ntfAll != null) { P.tab = 'notifications'; safe(() => localStorage.setItem('jl_tab', 'notifications')); openNotif(); return; }
+  ntDismiss([t.dataset.ntfId]);
+  if (t.dataset.ntfTab) { P.tab = t.dataset.ntfTab; render(); return; }
+  const tabBtn = document.createElement('button');
+  tabBtn.dataset.seeLead = t.dataset.ntfLead;
+  tabBtn.hidden = true;
+  app.appendChild(tabBtn);
+  tabBtn.click();
+  tabBtn.remove();
+});
 async function pollNotif() {
   const before = P.notif?.unseen || 0;
   const top = P.notif?.items?.[0]?.id || 0;
@@ -2118,7 +2165,7 @@ const NT = {
   created: ['new', (x) => `New lead: <b>${esc(x.name)}</b>${x.piece ? ` · ${esc(pieceName(x.piece))}` : ''}`],
   page_view: ['view', (x) => `<b>${esc(x.name)}</b> opened their page`],
   refresh_requested: ['hot', (x) => `<b>${esc(x.name)}</b> asked for a refreshed quote (their offer expired)`],
-  metal_move: ['hot', (x) => `<b>${esc(({ gold: 'Gold', silver: 'Silver', platinum: 'Platinum' })[x.meta.metal] || x.meta.metal)}</b> moved <b style="color:${x.meta.pct >= 0 ? '#3ccf91' : '#ef6a6a'}">${x.meta.pct > 0 ? '+' : ''}${x.meta.pct}%</b> · $${(x.meta.from / 31.1035).toFixed(2)} to $${(x.meta.to / 31.1035).toFixed(2)} per gram`],
+  metal_move: ['hot', (x) => `<b>${esc(({ gold: 'Gold', silver: 'Silver', platinum: 'Platinum' })[x.meta.metal] || x.meta.metal)}</b> moved <b style="color:${x.meta.pct >= 0 ? '#3ccf91' : '#ef6a6a'}">${x.meta.pct > 0 ? '+' : ''}${x.meta.pct}%</b> · $${Number(x.meta.from).toLocaleString('en-US', { maximumFractionDigits: 2 })} to $${Number(x.meta.to).toLocaleString('en-US', { maximumFractionDigits: 2 })} per oz`],
   chat_question: ['hot', (x) => `<b>${esc(x.name)}</b> asked the page assistant something only you can answer${x.meta?.q ? `: "${esc(x.meta.q)}"` : ''}`],
   page_action: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.action === 'appointment' ? 'asked for an appointment' : 'wants to reserve with a deposit'}${x.meta.option === 'fit' ? ' · Option 2' : x.meta.option === 'picked' ? ' · Option 1' : ''}`],
   auto_sent: ['mail', (x) => `First message emailed to <b>${esc(x.name)}</b> automatically`],
@@ -2137,16 +2184,24 @@ const NT = {
   order_picked: ['order', (x) => `<b>${esc(x.name)}</b> picked up their piece`],
   appointment_status: ['order', (x) => `<b>${esc(x.name)}</b> marked ${x.meta.status === 'noshow' ? 'No-show' : 'Done'} in GoHighLevel`],
 };
-// Grupe notifikacija (26.11.2026): čipovi iznad liste filtriraju po vrsti, sa brojem i brojem novih.
+// Kategorije obavještenja (District 27.11.2026): Leads, Metal movement, termini u radnji, online termini, depoziti,
+// svaka svojom bojom (narandžasto metal, plavo leadovi...), i ostala aktivnost (posjete, chatbot, mejlovi).
 const NT_GROUPS = [
-  ['leads', 'New leads', ['created']],
-  ['bookings', 'Bookings & deposits', ['page_action', 'refresh_requested', 'deposit_unpaid', 'refresh_ready', 'refresh_moved', 'appointment_booked', 'appointment_cancelled', 'appointment_unmarked', 'appointment_status', 'deposit_paid', 'deposit_returned', 'fulfillment', 'order_created', 'order_picked']],
-  ['pages', 'Page visits', ['page_view']],
-  ['chatbot', 'AI chatbot', ['chat_question']],
-  ['metals', 'Metal prices', ['metal_move']],
-  ['email', 'Emails', ['auto_sent', 'auto_send_failed', 'alert_failed']],
+  ['leads', 'Leads', ['created', 'refresh_requested', 'chat_question'], '#5aa9ff'],
+  ['metals', 'Metal movement', ['metal_move'], '#f0a23b'],
+  ['visit', 'Store appointments', ['appointment_booked', 'appointment_cancelled', 'appointment_unmarked', 'appointment_status'], '#b38cff'],
+  ['online', 'Online appointments', [], '#35d0c4'],
+  ['deposits', 'Deposits', ['deposit_unpaid', 'deposit_paid', 'deposit_returned', 'fulfillment', 'order_created', 'order_picked'], '#3ccf91'],
+  ['activity', 'Other activity', ['page_view', 'refresh_ready', 'refresh_moved', 'auto_sent', 'auto_send_failed', 'alert_failed'], '#9aa4a8'],
 ];
-const ntGroupOf = (type) => (NT_GROUPS.find((g) => g[2].includes(type)) || ['other'])[0];
+// Termin ide u svoju grupu po vrsti (u radnji / online); zahtjev sa dugmeta: depozit u Deposits, termin u Store appointments.
+function ntGroupOf(type, x) {
+  if (type === 'page_action') return x?.meta?.action === 'deposit' ? 'deposits' : 'visit';
+  if (/^appointment_/.test(type) && x?.meta?.kind === 'online') return 'online';
+  return (NT_GROUPS.find((g) => g[2].includes(type)) || ['activity'])[0];
+}
+const ntColor = (g) => (NT_GROUPS.find((x) => x[0] === g) || [])[3] || '#9aa4a8';
+const ntLabel = (g) => (NT_GROUPS.find((x) => x[0] === g) || [])[1] || 'Activity';
 function notifView() {
   const n = P.notif;
   if (!n) return '<p class="empty" role="status">Loading notifications…</p>';
@@ -2156,19 +2211,20 @@ function notifView() {
   if (!n.items.length) return `${settings}<p class="empty">Nothing yet. New leads, customers opening their page and booking requests show up here.</p>`;
   const seen = P.notifShownSeen ?? n.seenAt;
   const count = {}; const fresh = {};
-  for (const x of n.items) { const g = ntGroupOf(x.type); count[g] = (count[g] || 0) + 1; if (x.at > seen) fresh[g] = (fresh[g] || 0) + 1; }
+  for (const x of n.items) { const g = ntGroupOf(x.type, x); count[g] = (count[g] || 0) + 1; if (x.at > seen) fresh[g] = (fresh[g] || 0) + 1; }
   const group = P.notifGroup && count[P.notifGroup] ? P.notifGroup : 'all';
   const allNew = n.items.filter((x) => x.at > seen).length;
-  const chip = (k, label, c, f) => `<button type="button" class="nt-g ${group === k ? 'on' : ''}" data-nt-group="${k}" aria-pressed="${group === k}" ${c ? '' : 'disabled'}><span>${label}</span><b>${c || 0}</b>${f ? `<em aria-label="${f} new">${f} new</em>` : ''}</button>`;
+  const chip = (k, label, c, f) => `<button type="button" class="nt-g ${group === k ? 'on' : ''}" style="--ntc:${k === 'all' ? 'var(--accent)' : ntColor(k)}" data-nt-group="${k}" aria-pressed="${group === k}" ${c ? '' : 'disabled'}>${k === 'all' ? '' : '<i class="nt-dot" aria-hidden="true"></i>'}<span>${label}</span><b>${c || 0}</b>${f ? `<em aria-label="${f} new">${f} new</em>` : ''}</button>`;
   const groups = `<div class="nt-groups" role="group" aria-label="Notification groups">${chip('all', 'All', n.items.length, allNew)}${NT_GROUPS.map(([k, label]) => chip(k, label, count[k], fresh[k])).join('')}</div>`;
-  const items = group === 'all' ? n.items : n.items.filter((x) => ntGroupOf(x.type) === group);
+  const items = group === 'all' ? n.items : n.items.filter((x) => ntGroupOf(x.type, x) === group);
   let last = '';
   const list = items.map((x) => {
     const [kind, text] = NT[x.type] || ['view', (y) => esc(y.name)];
     const k = dayKey(x.at);
     const head = k !== last ? `<h3 class="day-head"><span>${esc(dayTitle(k))}</span></h3>` : '';
     last = k;
-    return `${head}<button type="button" class="nt nt-${kind} ${x.at > seen ? 'is-new' : ''}" ${x.type === 'metal_move' ? 'data-tab="metals"' : `data-see-lead="${esc(x.email)}"`}><i class="nt-ic" aria-hidden="true"></i><span class="nt-t">${text(x)}</span><time>${esc(new Date(x.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))}</time>${x.at > seen ? '<em>New</em>' : ''}</button>`;
+    const g = ntGroupOf(x.type, x);
+    return `${head}<button type="button" class="nt nt-${kind} ${x.at > seen ? 'is-new' : ''}" style="--ntc:${ntColor(g)}" ${x.type === 'metal_move' ? 'data-tab="metals"' : `data-see-lead="${esc(x.email)}"`}><i class="nt-ic" aria-hidden="true"></i><span class="nt-t"><small class="nt-cat">${esc(ntLabel(g))}</small>${text(x)}</span><time>${esc(new Date(x.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))}</time>${x.at > seen ? '<em>New</em>' : ''}</button>`;
   }).join('');
   return `${settings}${groups}<div class="nt-list">${list}</div><p class="note">Last 30 days. Tap a notification to open the lead${count.metals ? ' (metal alerts open Metal movement)' : ''}.</p>`;
 }

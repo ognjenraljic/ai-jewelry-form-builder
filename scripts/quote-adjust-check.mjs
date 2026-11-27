@@ -48,7 +48,8 @@ ok(r2.status === 200, 'Fits the budget podešen bez poruke');
 row = (await list()).find((x) => x.id === l1.leadId);
 ok(row.quotes.fit && row.quotes.fit.msg === null && row.quotes.fit.price === 2400 && row.quotes.fit.spec.stones === 'Moissanite', 'portal vraća podešen slot bez poruke');
 html = await (await fetch(url)).text();
-ok(!html.includes('Option 2'), 'Fits the budget je skriven sa stranice dok se ne uključi "Show on sales page"');
+// Prava kartica Option 2 (ne zamućena najava daleko iznad budžeta, 27.11.2026) se ne vidi dok zlatar ne uključi prikaz.
+ok(!/class="offer fit(?! teaser)[^"]*"/.test(html), 'Fits the budget je skriven sa stranice dok se ne uključi "Show on sales page"');
 const s1 = await put({ slot: 'fit', show: true });
 row = (await list()).find((x) => x.id === l1.leadId);
 ok(s1.status === 200 && row.quotes.fit.show === true, '"Show on sales page" sačuvan');

@@ -29,8 +29,9 @@ export const VIDEO_MODELS = {
     body: (img, prompt) => ({ image: img, prompt, duration_s: FILM_SECONDS, resolution: '480p' }) },
 };
 // Ognjen 23.11.2026: samo Pika H3 Flex (Wan 3.0 i Seedance 2.0 Mini ugašeni; vraćaju se sa FILM_MODELS=flex,wan3,seedmini).
-// 24.11.2026: uz kupčev kratki video ide i duži za stranicu kupca (sales).
-export const DEFAULT_FILM_MODELS = ['flex', 'sales'];
+// 24.11.2026: uz kupčev kratki video išao je i duži za stranicu kupca (sales). 27.11.2026 (District): samo prvi, kratki;
+// stranica kupca pokazuje njega. Duži se vraća sa FILM_MODELS=flex,sales na Workeru.
+export const DEFAULT_FILM_MODELS = ['flex'];
 export const filmModels = (env) => {
   const list = String(env.FILM_MODELS || '').split(',').map((x) => x.trim()).filter((x) => VIDEO_MODELS[x]);
   return [...new Set(list.length ? list : DEFAULT_FILM_MODELS)];

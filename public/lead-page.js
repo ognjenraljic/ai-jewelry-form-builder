@@ -66,9 +66,45 @@ const sheet = document.getElementById('sheet');
 // Dok zlatar nema link za depozit / zakazivanje: kupac zna da će ga kontaktirati za dalje detalje (Ognjen 19.11.2026),
 // a zlatar dobija obavještenje u portalu (tab Bookings).
 const TEXT = {
-  deposit: `Thank you. ${store} will contact you shortly with further details about your deposit and the next steps for your piece.`,
+  deposit: `Thank you. Our team at ${store} will reach out to you shortly to proceed with the deposit.`,
   appointment: `Thank you. ${store} will contact you shortly with further details to set up your appointment.`,
 };
+// Konfigurator opcije 2 (27.11.2026): prekidači promjena, cijena i tabela iz unaprijed izračunatih kombinacija.
+const cfgBox = document.querySelector('[data-cfg]');
+const cfgData = (() => { try { return JSON.parse(cfgBox?.querySelector('[data-cfg-data]')?.textContent || 'null'); } catch { return null; } })();
+const usd = (n) => `$${Math.round(n).toLocaleString('en-US')}`;
+const escT = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function cfgMask() { let m = 0; cfgBox?.querySelectorAll('[data-cfg-bit]').forEach((x) => { if (x.checked) m |= 1 << Number(x.dataset.cfgBit); }); return m; }
+function cfgChoice() {
+  if (!cfgData) return {};
+  const m = cfgMask();
+  if (m === cfgData.all) return {};
+  const kept = cfgData.labels.filter((_, i) => !(m & (1 << i)));
+  return { custom: `Kept original: ${kept.join('; ')}`.slice(0, 240) };
+}
+function cfgRender(changed) {
+  if (!cfgData) return;
+  let m = cfgMask();
+  // Kombinacija koja ne postoji (npr. dental gold sa ledom): uz prekidač koji je kupac dirao ide i najbliža važeća.
+  if (!cfgData.combos[m]) {
+    const bit = changed ? 1 << Number(changed.dataset.cfgBit) : 0;
+    const ok = Object.keys(cfgData.combos).map(Number).filter((x) => (x & bit) === (m & bit)).sort((a, b) => Math.abs(a - m) - Math.abs(b - m))[0];
+    m = ok ?? cfgData.all;
+    cfgBox.querySelectorAll('[data-cfg-bit]').forEach((x) => { x.checked = !!(m & (1 << Number(x.dataset.cfgBit))); });
+  }
+  const c = cfgData.combos[m];
+  const card = cfgBox.closest('.offer');
+  card.querySelector('[data-cfg-amount]').textContent = usd(c.total);
+  const save = cfgData.from - c.total;
+  card.querySelector('[data-cfg-save]').innerHTML = save > 0 ? ` · <b>You save ${usd(save)}</b>` : '';
+  card.querySelector('[data-cfg-specs]').innerHTML = c.rows.map(([k, v]) => `<div><dt>${escT(k)}</dt><dd>${escT(v)}</dd></div>`).join('');
+  const t = card.querySelector('[data-cfg-title]');
+  if (t) t.textContent = m === 0 ? 'Your original design' : cfgData.high == null || c.total <= cfgData.high ? 'Fits your budget' : 'Closer to your budget';
+  cfgBox.querySelector('.cfg-same').hidden = m !== 0;
+  card.querySelector('[data-cfg-amount]').classList.remove('bump'); void card.offsetWidth; card.querySelector('[data-cfg-amount]').classList.add('bump');
+}
+cfgBox?.addEventListener('change', (e) => { if (e.target.matches('[data-cfg-bit]')) cfgRender(e.target); });
+
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-action]');
   if (!b) return;
@@ -76,7 +112,7 @@ document.addEventListener('click', async (e) => {
   b.disabled = true;
   let redirect = null;
   try {
-    const res = await fetch(`/api/page/${encodeURIComponent(key)}/action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: b.dataset.action, option: b.dataset.option || '', tz: TZ }) });
+    const res = await fetch(`/api/page/${encodeURIComponent(key)}/action`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: b.dataset.action, option: b.dataset.option || '', tz: TZ, ...(b.dataset.option === 'fit' ? cfgChoice() : {}) }) });
     redirect = (await res.json().catch(() => ({}))).redirect || null;
   } catch {}
   b.disabled = false;

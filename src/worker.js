@@ -9,7 +9,7 @@ import { onboardingProblems } from '../public/onboarding-check.js';
 import { SUGGESTED } from '../public/option-suggestions.js';
 import { artList, styleList, metalFamily } from '../public/option-art.js';
 import { teethMapImage } from './teethmap.js';
-import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ, middleGround, specDiff, chainLine } from '../public/pricing.js';
+import { estimate, leadSpecFrom, quoteBody, dimKey, applyMarket, MARKET_METALS, OZ, middleGround, metalTone, specDiff, chainLine } from '../public/pricing.js';
 import { leadPageHtml, PAGE_ACTIONS, pageFacts } from './leadpage.js';
 import { METALS, THRESHOLDS, rangeParams, metalSeries, metalSettings, cleanMetalSettings, metalSweep, fetchSpot, recentAlerts } from './metals.js';
 import { cleanAssistant, assistantSettings, assistantSize, bannedHit, RULE_FIELDS, DEFAULT_ASSIST, sampleFacts, pageAnswer, MAX_TOTAL, ASSIST_FIELDS, loadChat, saveChat, overLimit, publicMessages, runChat, tidy, pageSystemPrompt, pageFactsText, pricesOk, PAGE_FALLBACK, pageGreeting, pageSuggestions, portalSystemPrompt, PORTAL_SUGGESTIONS, statsText, pricingText, pricingLookup, MAX_MESSAGE } from './assistant.js';
@@ -369,6 +369,7 @@ async function catchUp(env) {
   // Tok ponude, termini i preuzimanje (27.11.2026): odluke i obavještenja zlataru rade i bez GHL-a; događaji za GHL
   // workflowe samo kad radnja uključi Automations u Forms → GoHighLevel.
   await storeSweep(env).catch((e) => console.error('store sweep', e.message));
+  await refitSweep(env, ORIGIN.replace(/\/$/, '')).catch((e) => console.error('refit sweep', e.message));
   await ghlApptPoll(env).catch((e) => console.error('ghl appt poll', e.message));
   await ghlAutoSweep(env).catch((e) => console.error('ghl auto sweep', e.message));
   if (pikaOn(env)) {
@@ -2061,6 +2062,17 @@ async function portalApi(request, env, p, secure, ctx) {
   if (p.startsWith('/api/portal/ghl')) return portalGhl(request, env, p, client, ctx);
   // Obavještenja (24.11.2026): novi upiti, kupac otvorio stranicu, Deposit/Appointment, automatske poruke, greške slanja.
   if (p === '/api/portal/notifications' && request.method === 'GET') return json(await portalNotifications(env, client));
+  // Plutajuća obavještenja (27.11.2026): X na jednom skida ga sa ekrana (pamti se za radnju, na svim uređajima).
+  if (p === '/api/portal/notifications/dismiss' && request.method === 'POST') {
+    if (sess.kind === 'view-as') return json({ ok: true, readOnly: true });
+    const b = await request.json().catch(() => ({}));
+    const ids = (Array.isArray(b.ids) ? b.ids : [b.id]).map((x) => String(x ?? '').slice(0, 24)).filter((x) => /^m?\d+$/.test(x)).slice(0, 50);
+    if (!ids.length) return json({ error: 'Nothing to dismiss.' }, 400);
+    const cur = parseJson(client.data).notifDismissed;
+    const next = [...new Set([...(Array.isArray(cur) ? cur : []), ...ids])].slice(-400);
+    await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.notifDismissed', json(?)) WHERE id = ?`).bind(JSON.stringify(next), client.id).run();
+    return json({ ok: true, dismissed: next });
+  }
   if (p === '/api/portal/notifications/seen' && request.method === 'POST') {
     if (sess.kind === 'view-as') return json({ ok: true, readOnly: true });
     const at = Date.now();
@@ -2183,7 +2195,7 @@ async function portalNotifications(env, client) {
   for (const r of rows) {
     let meta = {};
     try { meta = JSON.parse(r.meta || '{}') || {}; } catch {}
-    items.push({ id: r.id, lead: r.lead_id, type: r.type, at: r.at, name: r.name, email: r.email, piece: r.piece || '', meta: { action: meta.action || null, option: meta.option || null, kind: meta.kind || null, start: meta.start || null, amount: meta.amount ?? null, method: meta.method || null, kit: meta.kit || null, by: meta.by || null, moved: meta.moved || null, status: meta.status || null } });
+    items.push({ id: r.id, lead: r.lead_id, type: r.type, at: r.at, name: r.name, email: r.email, piece: r.piece || '', meta: { action: meta.action || null, option: meta.option || null, kind: meta.kind || null, start: meta.start || null, amount: meta.amount ?? null, method: meta.method || null, kit: meta.kit || null, by: meta.by || null, moved: meta.moved || null, status: meta.status || null, custom: meta.custom || null } });
     if (items.length >= 150) break;
   }
   // Upozorenja o kretanju cijena metala (Metal movement) idu u isti spisak.
@@ -2191,7 +2203,8 @@ async function portalNotifications(env, client) {
   for (const m of metals) items.push({ id: `m${m.id}`, lead: null, type: 'metal_move', at: m.at, name: '', email: '', piece: '', meta: { metal: m.metal, from: m.from_price, to: m.to_price, pct: m.pct } });
   items.sort((a, b) => b.at - a.at);
   items.length = Math.min(items.length, 150);
-  return { seenAt, unseen: items.filter((x) => x.at > seenAt).length, items };
+  const dismissed = (() => { const d = parseJson(client.data).notifDismissed; return Array.isArray(d) ? d.map(String) : []; })();
+  return { seenAt, unseen: items.filter((x) => x.at > seenAt).length, items, dismissed };
 }
 
 // ---------- GoHighLevel (24.11.2026, priprema; isključeno dok radnja ne upiše token) ----------
@@ -2533,7 +2546,7 @@ async function writeQuote(env, client, lead, b, origin, { auto = false } = {}) {
     // poslije par dana razlikovala od poslate poruke.
     const price = quotePrice(b.price) ?? facts.total;
     const keep = slot === 'fit' && cur.show ? { show: true, showAt: cur.showAt || null } : {};
-    const saved = { ...keep, msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, ...(price ? { price } : {}), ...(msgForText(b.msgFor) ? { msgFor: msgForText(b.msgFor) } : {}), edited: false, at: Date.now() };
+    const saved = { ...keep, msg: out.message, source: out.source, spec: quoteSpecToSave(b.spec), total: facts.total, ...(price ? { price } : {}), ...(msgForText(b.msgFor) ? { msgFor: msgForText(b.msgFor) } : {}), edited: false, ...(auto ? { auto: true } : {}), at: Date.now() };
     await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.${slot}', json(?)) WHERE id = ?`).bind(JSON.stringify(saved), lead.id).run();
     out.saved = saved;
     await logEvent(env, lead.id, 'quote_generated', { slot, source: out.source, auto });
@@ -2591,6 +2604,33 @@ async function autoQuote(env, leadId, origin) {
     }
   } else if (doFit) await mark('autoFit');
   return out;
+}
+// Stari automatski prijedlozi (27.11.2026, District: "if someone wants gold it ruins it to recommend silver"; "keep the
+// ice, use lower diamonds or moissanite"): Fits the budget koji je napravio sistem, a zlatar ga nije dirao (bez svoje
+// cijene i bez izmjene poruke), i koji mijenja boju metala ili skida led, piše se ponovo po novim pravilima.
+// "Show on sales page" ostaje kako je zlatar ostavio. Svaki lead se provjerava jednom ($.fitRules = 2), 15 po krugu.
+async function refitSweep(env, origin) {
+  const rows = (await env.DB.prepare(`SELECT l.id, l.answers, l.quotes, f.data AS form_data, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id
+      WHERE l.archived_at IS NULL AND json_type(COALESCE(l.quotes, '{}'), '$.fit') = 'object' AND json_extract(l.quotes, '$.fitRules') IS NULL
+      ORDER BY l.created_at DESC LIMIT 15`).all()).results;
+  for (const r of rows) {
+    const q = parseJson(r.quotes);
+    const fit = q.fit || {};
+    let redo = false;
+    if (!fit.edited && !fit.adjAt && !(Number(fit.price) > 0) && fit.spec) {
+      const ls = leadSpecFrom(pricingSpec(parseJson(r.form_data)), pricingAnswers(parseJson(r.answers)));
+      if (ls && fit.spec.type === ls.spec.type) {
+        const toneOff = metalTone(fit.spec.metal) && metalTone(ls.spec.metal) && metalTone(fit.spec.metal) !== metalTone(ls.spec.metal);
+        const iceOff = !!ls.spec.coverage && (!fit.spec.coverage || !fit.spec.stones || /^none$/i.test(fit.spec.stones));
+        redo = toneOff || iceOff;
+      }
+    }
+    if (!redo) { await env.DB.prepare(`UPDATE leads SET quotes = json_set(quotes, '$.fitRules', 2) WHERE id = ?`).bind(r.id).run(); continue; }
+    await env.DB.prepare(`UPDATE leads SET quotes = json_set(json_remove(quotes, '$.fit'), '$.autoFit', 0, '$.fitRules', 2) WHERE id = ?`).bind(r.id).run();
+    await autoQuote(env, r.id, origin).catch((e) => console.error('refit', r.id, e.message));
+    if (fit.show === true) await env.DB.prepare(`UPDATE leads SET quotes = json_set(quotes, '$.fit.show', json('true'), '$.fit.showAt', ?) WHERE id = ? AND json_type(quotes, '$.fit') = 'object'`).bind(fit.showAt || fit.at || Date.now(), r.id).run();
+    await logEvent(env, r.id, 'fit_rewritten', { from: fit.spec?.metal || null });
+  }
 }
 // ---------- Dnevnik koraka, obavještenje radnji i prva poruka kupcu (21.11.2026) ----------
 // Dokaz za zlatara (vrijeme do prvog odgovora, kopirane ponude, statusi) i brzina: radnja dobija mejl čim lead stigne,
@@ -3489,11 +3529,13 @@ async function pageAction(request, env, key, secure = true) {
   let pg = {};
   try { pg = JSON.parse(row.page || '{}') || {}; } catch {}
   const now = Date.now();
-  const actions = [...(Array.isArray(pg.actions) ? pg.actions : []), { action, option, at: now }].slice(-30);
+  // Konfigurator opcije 2: šta je kupac vratio na original (kratak tekst za zlatara).
+  const custom = option === 'fit' && typeof b.custom === 'string' ? b.custom.replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 240) : '';
+  const actions = [...(Array.isArray(pg.actions) ? pg.actions : []), { action, option, at: now, ...(custom ? { custom } : {}) }].slice(-30);
   const tz = validTz(b.tz);
   await env.DB.prepare(`UPDATE leads SET page = json_set(COALESCE(page, '{}'), '$.actions', json(?)${action === 'deposit' ? ", '$.depositClickAt', " + now : ''}${tz ? ", '$.tz', ?" : ''}) WHERE id = ?`)
     .bind(JSON.stringify(actions), ...(tz ? [tz] : []), row.id).run();
-  await logEvent(env, row.id, 'page_action', { action, option });
+  await logEvent(env, row.id, 'page_action', { action, option, ...(custom ? { custom } : {}) });
   let pricing = {};
   try { pricing = JSON.parse(row.client_data || '{}').pricing || {}; } catch {}
   const link = httpsUrl(action === 'deposit' ? pricing.depositUrl : pricing.bookingUrl) || null;

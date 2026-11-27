@@ -406,3 +406,10 @@ button.filmtile:hover { border-color: color-mix(in srgb, var(--accent) 60%, var(
   .filmtile.pending .ft-thumb::after, .filmtile.ready .ft-play { animation: none; }
   .ft-ring, .ft-bar i { animation-duration: .01s; animation-delay: 0s; }
 }
+/* Telefon (27.11.2026): Back uzak, glavno dugme široko i u jednom redu ("Reveal my design" se lomio u dva reda); bez "drag" na dodir. */
+@media (max-width: 560px) {
+  .foot-row .btn { letter-spacing: 0.1em; font-size: 13px; white-space: nowrap; padding-left: 10px; padding-right: 10px; }
+  .foot-row .btn.ghost { flex: 0 0 96px; width: 96px; }
+  .foot-row .btn:not(.ghost) { max-width: none; }
+}
+@media (hover: none) { .drop-drag { display: none; } }

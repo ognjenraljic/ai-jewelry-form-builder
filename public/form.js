@@ -330,7 +330,7 @@ function tryOnView() {
     ? `<div class="tryon-wait"><span class="spin"></span>${esc(c.wait)}… about 20 to 40 seconds</div>`
     : S.tryLeft > 0
       ? `<label class="check tryon-ok"><input type="checkbox" data-tryok ${S.tryOk ? 'checked' : ''} /><span>I agree that my photo is used only to create this preview. It is deleted after 30 days.</span></label>
-         <label class="btn ghost tryon-btn ${S.tryOk ? '' : 'off'}">${icon('upload')}<span>${current.length ? 'Try another photo' : esc(c.button)}<small>or drag & drop here</small></span><input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-tryon ${S.tryOk ? '' : 'disabled'} /></label>`
+         <label class="btn ghost tryon-btn ${S.tryOk ? '' : 'off'}">${icon('upload')}<span>${current.length ? 'Try another photo' : esc(c.button)}<small class="drop-drag">or drag & drop here</small></span><input type="file" class="sr-only" accept="image/jpeg,image/png,image/webp" data-tryon ${S.tryOk ? '' : 'disabled'} /></label>`
       : '<p class="fine">You have used all your try-ons.</p>';
   return `
     <section class="tryon">
@@ -454,7 +454,7 @@ function uploadView(f, label) {
   if (file) {
     return `<div class="field">${label}<label class="drop thumb ${busy ? 'jl-uploading' : ''}" data-drop="${esc(f.id)}"><img src="${file.url}" alt="" /><span class="meta">${esc(file.name)}<br />Click or drop a photo to replace</span><input type="file" accept="image/jpeg,image/png,image/webp" data-file="${esc(f.id)}" ${busy ? 'disabled' : ''} />${progress}</label><button type="button" class="link" data-unfile="${esc(f.id)}">Remove</button></div>`;
   }
-  return `<div class="field">${label}<label class="drop ${busy ? 'jl-uploading' : ''}" data-drop="${esc(f.id)}">${icon('upload')}<p><strong>Upload a photo</strong> or drag it here<br />${esc(f.hint || '')}</p><input type="file" accept="image/jpeg,image/png,image/webp" data-file="${esc(f.id)}" ${busy ? 'disabled' : ''} />${progress}</label></div>`;
+  return `<div class="field">${label}<label class="drop ${busy ? 'jl-uploading' : ''}" data-drop="${esc(f.id)}">${icon('upload')}<p><strong>Upload a photo</strong><span class="drop-drag"> or drag it here</span><br />${esc(f.hint || '')}</p><input type="file" accept="image/jpeg,image/png,image/webp" data-file="${esc(f.id)}" ${busy ? 'disabled' : ''} />${progress}</label></div>`;
 }
 
 function choiceView(f, label, v) {

@@ -44,7 +44,7 @@ ok(/content-security-policy/i.test([...page.headers.keys()].join(' ')) && /frame
 ok(!html.includes('<script>alert(1)</script>') && html.includes('Myla'), 'ime kupca je bezbjedno ispisano');
 ok(html.includes('$7,900') && html.includes('Your design') && !html.includes('Fits your budget</h3><p class="sub">We found') && (!html.includes('Option 2') || html.includes('something cooking')), 'jedna ponuda dok zlatar ne napravi Fits the budget (daleko iznad budžeta: samo zamućena Option 2, 27.11.2026)');
 ok(html.includes('data-action="deposit"') && html.includes('data-action="appointment"'), 'dugmad Deposit i Book appointment');
-ok(html.includes('Styles and finishes we make') && html.includes('1 Main St'), 'stilovi radnje i store info');
+ok((html.includes('Your choices') || html.includes('Styles and finishes we make')) && html.includes('1 Main St'), 'izbori kupca / stilovi radnje i store info');
 
 // Zlatar napravi Fits the budget: stranica pokazuje dvije ponude sa uštedom.
 const fitSpec = { ...GRILLZ, type: 'grillz', metal: 'Yellow Gold', karat: '14K', stones: 'Moissanite', coverage: 'full', teeth: GRILLZ.teeth, units: 12, cut: '', clarity: '', style: 'set' };

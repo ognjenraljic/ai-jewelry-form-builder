@@ -2,7 +2,7 @@
 // Njegov dizajn (sve verzije i video), ponude (kako je izabrao + "Fits the budget" kad je zlatar napravi), dugmad
 // Deposit i Book appointment, stilovi i završne obrade radnje, adresa i radno vrijeme. Izgled: luksuzni juvelir,
 // mirno i tipografski (vidi feedback_jewelrylead_premium_restraint): bez varnica i efekata, samo svjetlo i slova.
-import { estimate, specDiff, coverLabel, iceKey, isGold, rowsOf, money, middleGround } from '../public/pricing.js';
+import { estimate, specDiff, coverLabel, iceKey, isGold, isDental, rowsOf, money, middleGround } from '../public/pricing.js';
 import { offerTimeline, offerStage, farOverBudget, revealAt, STAGE_TEXT } from './offer.js';
 import { withArt, styleImage, metalFamily, artCategory } from '../public/option-art.js';
 
@@ -36,6 +36,42 @@ function specRows(spec, ls) {
 }
 const moldingIncluded = (est) => (est?.lines || []).some((l) => /molding/i.test(l.label));
 
+// Konfigurator opcije 2 (27.11.2026, District: "let these be like a configurator so they can activate or deactivate
+// some options and see the difference in pricing"). Svaka promjena je prekidač; server unaprijed izračuna cijenu i tabelu
+// za svaku kombinaciju (najviše 6 prekidača = 64 kombinacije), pa stranica ne dobija cjenovnik radnje.
+// Dental gold ne može biti iced, pa je "dental gold, bez leda" jedan prekidač.
+const CFG_FIELDS = ['metal', 'karat', 'coverage', 'ice', 'iceParts', 'stones', 'clarity', 'cut', 'teeth', 'units'];
+function fitConfigurator(ls, pricing, pickedSpec, fitSpec, { aTotal, bTotal, discount = 0, filter }) {
+  const diff = CFG_FIELDS.filter((k) => String(pickedSpec[k] ?? '') !== String(fitSpec[k] ?? ''));
+  const has = (k) => diff.includes(k);
+  const groups = [];
+  const used = new Set();
+  const take = (id, keys) => { const ks = keys.filter((k) => has(k) && !used.has(k)); if (ks.length) { ks.forEach((k) => used.add(k)); groups.push({ id, keys: ks }); } };
+  if (has('metal') && isDental(fitSpec.metal) !== isDental(pickedSpec.metal)) take('metal', ['metal', 'karat', 'coverage', 'ice', 'iceParts', 'stones', 'clarity', 'cut']);
+  take('metal', ['metal']);
+  take('karat', ['karat']);
+  take('stones', has('stones') ? ['stones', 'clarity'] : []);
+  take('clarity', ['clarity']);
+  take('ice', ['coverage', 'ice', 'iceParts']);
+  take('teeth', ['teeth', 'units']);
+  take('cut', ['cut']);
+  if (!groups.length || groups.length > 6) return null;
+  const apply = (mask) => { const s = { ...pickedSpec }; groups.forEach((g, i) => { if (mask & (1 << i)) for (const k of g.keys) s[k] = fitSpec[k]; }); return s; };
+  const all = (1 << groups.length) - 1;
+  const off = (n) => (discount > 0 ? Math.round(n * (1 - discount / 100)) : n);
+  const combos = {};
+  for (let m = 0; m <= all; m++) {
+    const s = apply(m);
+    if (isDental(s.metal) && s.coverage) continue;
+    const t = m === all ? bTotal : m === 0 ? aTotal : estimate(pricing, s).total;
+    if (!(t > 0)) continue;
+    combos[m] = { total: off(t), rows: specRows(s, ls) };
+  }
+  if (!combos[all] || !combos[0]) return null;
+  const lines = groups.map((g, i) => specDiff({ ...ls, spec: pickedSpec }, apply(1 << i)).filter(filter));
+  return { groups: groups.map((g, i) => ({ id: g.id, lines: lines[i] })), combos, all, from: off(aTotal), high: Number.isFinite(ls.budget?.high) ? ls.budget.high : null };
+}
+
 // Ponude: kako je kupac izabrao, i "Fits the budget" samo ako ju je zlatar napravio, jeftinija je i stvarno se razlikuje.
 function offersOf(d, tl = offerTimeline(d, d.now || Date.now())) {
   const { ls, pricing, quotes } = d;
@@ -63,10 +99,13 @@ function offersOf(d, tl = offerTimeline(d, d.now || Date.now())) {
   if (fitSpec) {
     const b = estimate(pricing, fitSpec);
     const bTotal = finalOf('fit', b);
-    const changes = specDiff({ ...ls, spec: pickedSpec }, fitSpec).filter((c) => !(['Karat', 'Clarity'].includes(c.what) && /^(none|)$/i.test(c.to)));
+    const keep = (c) => !(['Karat', 'Clarity'].includes(c.what) && /^(none|)$/i.test(c.to));
+    const changes = specDiff({ ...ls, spec: pickedSpec }, fitSpec).filter(keep);
     if (bTotal != null && bTotal < aTotal && changes.length) {
       const inBudget = !Number.isFinite(ls.budget?.high) || bTotal <= ls.budget.high;
-      out.push({ slot: 'fit', tag: 'Option 2', title: inBudget ? 'Fits your budget' : 'Closer to your budget', sub: revealed ? 'We found a way to bring it closer to your budget' : 'Same look, smarter materials', total: bTotal, rows: specRows(fitSpec, ls), changes, save: aTotal - bTotal, from: aTotal, molding: moldingIncluded(b), best: inBudget, revealed });
+      const disc = tl.refresh?.status === 'ready' ? tl.refresh.discount : 0;
+      const config = fitConfigurator(ls, pricing, pickedSpec, fitSpec, { aTotal, bTotal, discount: disc, filter: keep });
+      out.push({ slot: 'fit', tag: 'Option 2', title: inBudget ? 'Fits your budget' : 'Closer to your budget', sub: revealed ? 'We found a way to bring it closer to your budget' : 'Same look, smarter materials', total: bTotal, rows: specRows(fitSpec, ls), changes, save: aTotal - bTotal, from: aTotal, molding: moldingIncluded(b), best: inBudget, revealed, config });
     }
   }
   // Osvježena ponuda (poslije isteka): iste opcije po današnjoj cijeni metala, uz popust ako ga radnja daje.
@@ -104,7 +143,15 @@ function showcase(form, answers) {
       if (image && !/^(none|other)$/i.test(o.value)) finishes.push({ image, label: o.label, mine: answers[f.id] === o.value });
     }
   }
-  return { styles, finishes: finishes.slice(0, 15) };
+  // District 27.11.2026: prvo SAMO ono što je kupac izabrao, pa ideje za drugu verziju, pa radovi iz radnje (Shop products).
+  const all = [...styles, ...finishes];
+  const picks = all.filter((x) => x.mine);
+  const ideas = [...finishes.filter((x) => !x.mine), ...styles.filter((x) => !x.mine)].slice(0, 6);
+  const products = (form.products || [])
+    .filter((x) => x?.name && x.image && (!Array.isArray(x.pieces) || !x.pieces.length || x.pieces.includes(type)))
+    .slice(0, 6)
+    .map((x) => ({ name: String(x.name).slice(0, 80), price: String(x.price || '').slice(0, 30), image: x.image, url: /^https:\/\//.test(x.url || '') ? x.url : '' }));
+  return { styles, finishes: finishes.slice(0, 15), picks, ideas, products, productsTitle: String(form.result?.productsTitle || '').slice(0, 80) };
 }
 
 // Dugmad: depozit (ili "Deposit received" kad je uplata stigla) i zakazivanje. Sa uključenim kalendarom (25.11.2026)
@@ -173,15 +220,23 @@ function teaserCard(o) {
 }
 function offerCard(o, single, bk) {
   if (o.slot === 'teaser') return teaserCard(o);
-  const changes = o.changes?.length
-    ? `<div class="changes"><p class="mini">What changes</p><ul>${o.changes.map((c) => `<li><span class="was">${esc(c.from === 'none' ? (c.what === 'Ice' ? 'Not iced' : 'None') : c.from)}</span><i aria-hidden="true">→</i><b>${esc(c.to === 'none' ? (c.what === 'Stones' ? 'No stones' : 'None') : c.to)}</b></li>`).join('')}</ul></div>`
-    : '';
+  const fromTxt = (c) => (c.from === 'none' ? (c.what === 'Ice' ? 'Not iced' : 'None') : c.from);
+  const toTxt = (c) => (c.to === 'none' ? (c.what === 'Stones' ? 'No stones' : 'None') : c.to);
+  const changeLine = (c) => `<span class="was">${esc(fromTxt(c))}</span><i aria-hidden="true">→</i><b>${esc(toTxt(c))}</b>`;
+  const cfg = o.config;
+  const changes = cfg
+    ? `<div class="changes cfg" data-cfg><p class="mini">Make it yours</p><p class="cfg-hint">Turn each change on or off to see your price.</p><ul>${cfg.groups.map((g, i) => `<li><label class="cfg-row"><input type="checkbox" role="switch" checked data-cfg-bit="${i}" /><span class="cfg-sw" aria-hidden="true"></span><span class="cfg-txt">${g.lines.map(changeLine).join('<em>·</em>')}</span></label></li>`).join('')}</ul>
+      <p class="cfg-same" hidden>All changes off: this is your original design (Option 1).</p>
+      <script type="application/json" data-cfg-data>${JSON.stringify({ combos: cfg.combos, all: cfg.all, from: cfg.from, high: cfg.high, labels: cfg.groups.map((g) => g.lines.map((c) => `${fromTxt(c)} → ${toTxt(c)}`).join(', ')) }).replace(/</g, '\\u003c')}</script></div>`
+    : o.changes?.length
+      ? `<div class="changes"><p class="mini">What changes</p><ul>${o.changes.map((c) => `<li>${changeLine(c)}</li>`).join('')}</ul></div>`
+      : '';
   return `<article class="offer${o.slot === 'fit' ? ' fit' : ''}${single ? ' single' : ''}" aria-label="${esc(o.tag)}: ${esc(o.title)}">
     <header><span class="tag">${esc(o.tag)}</span>${o.revealed ? '<span class="badge reveal">Unlocked for you</span>' : o.best ? '<span class="badge">Recommended</span>' : ''}${o.refreshed ? '<span class="badge fresh">Refreshed price</span>' : ''}</header>
-    <h3>${esc(o.title)}</h3><p class="sub">${esc(o.sub)}</p>
-    <div class="price"><span class="amount">${money(o.total)}</span>${o.from ? `<span class="from">${money(o.from)}</span>` : ''}</div>
-    <p class="price-note">Estimated total${o.molding ? ', molding included' : ''}${o.save ? ` · <b>You save ${money(o.save)}</b>` : ''}</p>
-    <dl class="specs">${o.rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+    <h3 data-cfg-title>${esc(o.title)}</h3><p class="sub">${esc(o.sub)}</p>
+    <div class="price"><span class="amount" data-cfg-amount>${money(o.total)}</span>${o.from ? `<span class="from">${money(o.from)}</span>` : ''}</div>
+    <p class="price-note">Estimated total${o.molding ? ', molding included' : ''}<span data-cfg-save>${o.save ? ` · <b>You save ${money(o.save)}</b>` : ''}</span></p>
+    <dl class="specs" data-cfg-specs>${o.rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
     ${changes}
     ${CTA(o.slot, false, false, bk)}
   </article>`;
@@ -306,10 +361,13 @@ export function leadPageHtml(d) {
         <div class="film-copy"><p class="eyebrow">In motion</p><h2>See the light move across your design</h2><p>A short preview of your ${esc(piece.toLowerCase())}, made from your choices. Your final piece is handcrafted by ${esc(store.name)}.</p></div></section>`
     : '';
 
-  const showSection = show.styles.length || show.finishes.length
-    ? `<section class="showcase rv" aria-labelledby="sc-h"><div class="sec-head"><p class="eyebrow">From the studio</p><h2 id="sc-h">Styles and finishes we make</h2><p>Every ${esc(piece.toLowerCase())} is made to order. These are the styles and finishes you can choose from.</p></div>
-        ${show.styles.length ? `<h3 class="row-title">Styles</h3><div class="tiles">${tiles(show.styles, 'Your pick')}</div>` : ''}
-        ${show.finishes.length ? `<h3 class="row-title">Finishes and settings</h3><div class="tiles">${tiles(show.finishes, 'Your pick')}</div>` : ''}</section>`
+  const hasFit = offers.some((o) => o.slot === 'fit' || o.slot === 'teaser');
+  const prodCards = show.products.map((x) => `<figure class="tile prod"><${x.url ? `a href="${esc(x.url)}" target="_blank" rel="noopener"` : 'div'} class="tile-img"><img src="${esc(x.image)}" alt="${esc(x.name)}" loading="lazy" width="400" height="400" /></${x.url ? 'a' : 'div'}><figcaption>${esc(x.name)}${x.price ? `<span class="prod-price">${esc(x.price)}</span>` : ''}</figcaption></figure>`).join('');
+  const showSection = show.picks.length || show.ideas.length || show.products.length
+    ? `<section class="showcase rv" aria-labelledby="sc-h"><div class="sec-head"><p class="eyebrow">From the studio</p><h2 id="sc-h">${show.picks.length ? 'Your choices' : 'Styles and finishes we make'}</h2><p>${show.picks.length ? `The style and finish you picked for your ${esc(piece.toLowerCase())}. Every piece is made to order.` : `Every ${esc(piece.toLowerCase())} is made to order.`}</p></div>
+        ${show.picks.length ? `<div class="tiles picks">${tiles(show.picks, 'Your pick')}</div>` : ''}
+        ${show.ideas.length ? `<h3 class="row-title">${hasFit ? 'Ideas for a second option' : 'Ideas for your piece'}</h3><p class="row-sub">${hasFit ? 'Other styles and finishes we make. Like one of them for Option 2? Ask us and we will price it for you.' : 'Other styles and finishes we make. Ask us about any of them.'}</p><div class="tiles ideas">${tiles(show.ideas, '')}</div>` : ''}
+        ${show.products.length ? `<h3 class="row-title">${esc(show.productsTitle || 'From our work')}</h3><div class="tiles prods">${prodCards}</div>` : ''}</section>`
     : '';
 
   return `<!doctype html>

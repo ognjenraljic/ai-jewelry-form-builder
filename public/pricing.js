@@ -749,6 +749,31 @@ function centerStones(spec) {
 // Middle ground: korak po korak najmanje vidljive izmjene dok cijena ne stane u gornju granicu budžeta.
 // Redoslijed: vrsta kamena (jeftinija), karat (niži), pokrivenost (manja), metal (jeftiniji, npr. dental gold, bez kamenja).
 // choices: izbori koje forma nudi { stones: [natpisi], karats: [...], coverages: ['accents','half','full'], metals: [...] }.
+// Boja metala (27.11.2026, District: "if someone wants gold it kinda ruins it to recommend silver, it's a different
+// color"). Opcija bliža budžetu nikad ne mijenja boju: žuto ostaje žuto (zlato -> niži karat ili dental gold), bijelo
+// ostaje bijelo (bijelo zlato -> srebro), rose ostaje rose.
+export function metalTone(m) {
+  const t = key(m);
+  if (!t) return '';
+  if (/two.?tone/.test(t)) return 'two';
+  if (/rose|pink/.test(t)) return 'rose';
+  if (/yellow|dental/.test(t)) return 'yellow';
+  if (/white|silver|925|platinum|palladium|steel|stainless/.test(t)) return 'white';
+  if (/gold/.test(t)) return 'yellow';
+  return t;
+}
+// Kamenje od najskupljeg ka najjeftinijem, istog izgleda (District: "high end diamonds -> lower end diamonds, or fake
+// diamonds to match the aesthetics and budget"): prirodni, pa lab, pa moissanite / CZ.
+export function stoneRank(s) {
+  const t = key(s);
+  if (/moiss|cz|cubic|simulat|crystal|fake|vvs moiss/.test(t)) return 1;
+  if (/lab/.test(t)) return 2;
+  if (/natural|diamond|default/.test(t)) return 3;
+  return 2;
+}
+const CLARITY_ORDER = ['i1', 'si2', 'si', 'si1', 'vs2', 'vs', 'vs1', 'vvs2', 'vvs', 'vvs1', 'if', 'flawless', 'fl'];
+const clarityRank = (c) => { const t = key(c).replace(/[^a-z0-9]/g, ''); const i = CLARITY_ORDER.indexOf(t) >= 0 ? CLARITY_ORDER.indexOf(t) : CLARITY_ORDER.findIndex((x) => t.startsWith(x)); return i < 0 ? null : i; };
+
 export function middleGround(pricing, spec, budgetHigh, choices = {}) {
   const start = estimate(pricing, spec);
   if (start.total == null || !Number.isFinite(budgetHigh)) return null;
@@ -757,25 +782,39 @@ export function middleGround(pricing, spec, budgetHigh, choices = {}) {
   let total = start.total;
   const changes = [];
   const priced = (s) => estimate(pricing, s).total;
+  const tone = metalTone(spec.metal);
+  const iced = !!spec.coverage;
+  // Redoslijed od najmanje vidljive promjene ka većoj: čistoća prirodnih dijamanata, jeftinije kamenje istog izgleda,
+  // niži karat, metal iste boje, pa tek onda manje leda (nikad bez leda kad ga je kupac izabrao).
   const steps = [
-    () => cur.stones && (choices.stones || []).filter((x) => key(x) !== key(cur.stones)).map((x) => ({ ...cur, stones: x })),
+    () => cur.coverage && /natural/i.test(cur.stones || '') && clarityRank(cur.clarity) != null
+      && (choices.clarities || []).filter((x) => clarityRank(x) != null && clarityRank(x) < clarityRank(cur.clarity)).map((x) => ({ ...cur, clarity: x })),
+    () => cur.coverage && (choices.stones || []).filter((x) => key(x) !== key(cur.stones) && stoneRank(x) < stoneRank(cur.stones)).map((x) => ({ ...cur, stones: x })),
     () => cur.karat && (choices.karats || []).filter((x) => PURITY[key(x)] && PURITY[key(x)] < (PURITY[key(cur.karat)] || 0)).map((x) => ({ ...cur, karat: x })),
+    () => (choices.metals || []).filter((x) => key(x) !== key(cur.metal) && metalTone(x) === tone && !(/dental/i.test(x) && iced))
+      .map((x) => (/dental/i.test(x) ? { ...cur, metal: x, karat: '', stones: '', coverage: '', ice: '', iceParts: '' } : { ...cur, metal: x })),
     () => cur.coverage && (choices.ices || LEVELS.slice(0, LEVELS.indexOf(cur.coverage)).filter((x) => !choices.coverages || choices.coverages.includes(x)).map((x) => ({ value: x, level: x, parts: '', custom: false })))
-      .filter((o) => o.value !== iceKey(cur)).map((o) => ({ ...cur, ...iceFields(o) })),
-    () => (choices.metals || []).filter((x) => key(x) !== key(cur.metal)).map((x) => (/dental/i.test(x) ? { ...cur, metal: x, karat: '', stones: '', coverage: '' } : { ...cur, metal: x })),
+      .filter((o) => o.value !== iceKey(cur) && o.value !== 'none' && LEVELS.indexOf(o.level) >= 0 && LEVELS.indexOf(o.level) < LEVELS.indexOf(cur.coverage)).map((o) => ({ ...cur, ...iceFields(o) })),
   ];
-  const label = { stones: 'Stones', karat: 'Karat', coverage: 'How iced', metal: 'Metal' };
-  for (const step of steps) {
+  const label = { clarity: 'Clarity', stones: 'Stones', karat: 'Karat', coverage: 'How iced', metal: 'Metal' };
+  const val = (s, f) => (f === 'coverage' ? iceKey(s) : s[f]);
+  for (const [si, step] of steps.entries()) {
     if (total <= budgetHigh) break;
-    // Najbliži izbor koji stane, a ako nijedan ne stane, najjeftiniji (pa idući korak nastavlja od njega).
+    // Najbliži izbor koji stane, a ako nijedan ne stane, najjeftiniji (pa idući korak nastavlja od njega). Led je izuzetak:
+    // kad ništa ne stane, samo jedan nivo manje (Fully -> Half), ne odmah Accents.
     const opts = (step() || []).map((s) => ({ s, t: priced(s) })).filter((o) => o.t != null && o.t < total);
     if (!opts.length) continue;
-    const fit = opts.filter((o) => o.t <= budgetHigh).sort((a, b) => b.t - a.t)[0] || opts.sort((a, b) => a.t - b.t)[0];
-    const val = (s, f) => (f === 'coverage' ? iceKey(s) : s[f]);
-    for (const f of ['stones', 'karat', 'coverage', 'metal']) if (key(val(fit.s, f)) !== key(val(cur, f))) changes.push({ what: label[f], from: val(cur, f) || 'none', to: val(fit.s, f) || 'none' });
+    const fits = opts.filter((o) => o.t <= budgetHigh).sort((a, b) => b.t - a.t)[0];
+    const fit = fits || (si === steps.length - 1 ? opts.sort((a, b) => b.t - a.t)[0] : opts.sort((a, b) => a.t - b.t)[0]);
     cur = fit.s;
     total = fit.t;
   }
+  // Promjene od kupčevog izbora do konačnog (jedan red po polju); čistoća se ne pominje kad kamenje više nije prirodno.
+  for (const f of ['clarity', 'stones', 'karat', 'coverage', 'metal']) {
+    if (f === 'clarity' && !/natural/i.test(cur.stones || '')) continue;
+    if (key(val(cur, f)) !== key(val(spec, f))) changes.push({ what: label[f], from: val(spec, f) || 'none', to: val(cur, f) || 'none' });
+  }
+  if (!/natural/i.test(cur.stones || '') && cur.clarity !== spec.clarity) cur = { ...cur, clarity: spec.clarity };
   return { spec: cur, total, changes, fits: total <= budgetHigh };
 }
 
@@ -803,7 +842,7 @@ export function leadSpecFrom(fs, a = {}) {
     },
     budget: parseBudget(lab(fs.budget, a.budget) || a.budget),
     budgetLabel: lab(fs.budget, a.budget) || a.budget || '',
-    choices: { stones: pick('stones').filter((o) => o.value !== 'none').map((o) => o.label), karats: pick('karat').map((o) => o.label), coverages: covOpts.map((o) => o.value).filter((v) => LEVELS.includes(v)), ices, metals: pick('metal').map((o) => o.label) },
+    choices: { stones: pick('stones').filter((o) => o.value !== 'none').map((o) => o.label), karats: pick('karat').map((o) => o.label), clarities: pick('clarity').map((o) => o.label), coverages: covOpts.map((o) => o.value).filter((v) => LEVELS.includes(v)), ices, metals: pick('metal').map((o) => o.label) },
     opts: {
       coverage: covOpts.map((o) => [o.value, o.label]),
       ice: Object.fromEntries(ices.map((o) => [o.value, o])),

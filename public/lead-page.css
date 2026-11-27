@@ -305,3 +305,28 @@ html.js .rv.in { opacity: 1; transform: none; }
 .lp-note { font-size: 12.5px !important; color: var(--ink-faint, #8f887d) !important; }
 .valid-mini.locked { color: var(--ink-faint, #8f887d); }
 @media (max-width: 600px) { .lockpanel { margin-bottom: -110px; padding: 20px 16px 18px; } .lockpanel h3, .teaser-veil h3 { font-size: 25px; } .offer.teaser { min-height: 320px; } }
+
+/* Konfigurator opcije 2 (27.11.2026) */
+.changes.cfg .cfg-hint { margin: -2px 0 12px; font-size: 13px; color: var(--ink-faint); }
+.changes.cfg ul { gap: 10px; }
+.cfg-row { display: flex; align-items: center; gap: 12px; cursor: pointer; font-size: 14px; line-height: 1.4; }
+.cfg-row input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.cfg-sw { flex: none; width: 40px; height: 23px; border-radius: 999px; background: color-mix(in srgb, var(--ink, #f4efe6) 18%, transparent); position: relative; transition: background .2s; }
+.cfg-sw::after { content: ''; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: var(--ink, #f4efe6); transition: transform .2s; }
+.cfg-row input:checked + .cfg-sw { background: var(--accent, #c9a46a); }
+.cfg-row input:checked + .cfg-sw::after { transform: translateX(17px); background: #0b0c0d; }
+.cfg-row input:focus-visible + .cfg-sw { outline: 2px solid var(--accent, #c9a46a); outline-offset: 2px; }
+.cfg-txt { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.cfg-txt em { font-style: normal; color: var(--ink-faint); margin: 0 2px; }
+.cfg-row input:not(:checked) ~ .cfg-txt .was { text-decoration: none; color: var(--ink); }
+.cfg-row input:not(:checked) ~ .cfg-txt b { text-decoration: line-through; color: var(--ink-faint); font-weight: 400; }
+.cfg-same { margin: 12px 0 0; font-size: 13px; color: var(--ink-faint); }
+.amount.bump { animation: cfg-bump .35s ease; }
+@keyframes cfg-bump { 40% { transform: scale(1.04); } }
+
+/* Sekcija studija (27.11.2026): izbori kupca, ideje za drugu verziju, radovi radnje */
+.showcase .tiles.picks { grid-template-columns: repeat(auto-fill, minmax(200px, 260px)); }
+.showcase .row-sub { margin: -6px 0 14px; font-size: 14px; color: var(--ink-faint); max-width: 620px; }
+.showcase .tiles.ideas .tile { opacity: .92; }
+.showcase .tile.prod figcaption { display: flex; justify-content: space-between; gap: 8px; }
+.showcase .prod-price { color: var(--accent, #c9a46a); font-weight: 600; }
