@@ -1,6 +1,6 @@
 # GHL workflowi za District: šta je u JewelryLeadu i šta se radi u GoHighLevel-u
 
-*27.11.2026. Tri toka iz istraživanja (napuštena ponuda, termini, preuzimanje i recenzija), plus telefon (Quo), SMS registracija (A2P 10DLC), Google Calendar i Google Meet. Istraživanja: Ignis `projects/jewelrylead/research/*-workflows-2026-11-27.md`.*
+*27.11.2026. Tri toka iz istraživanja (napuštena ponuda, termini, preuzimanje i recenzija), plus telefon (Quo), SMS registracija (A2P 10DLC), Google Calendar i Google Meet. Istraživanja: Ignis `projects/jewelrylead/research/` (abandoned-quote, appointment i review workflows, 27.11.).*
 
 ## Kako radi (jedna rečenica)
 
