@@ -1542,6 +1542,8 @@ button.dbar.future { opacity: .35; cursor: default; }
 
 /* Tok */
 .wf-flow-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.wf-flow h3 { font-family: var(--serif); font-weight: 500; font-size: 22px; letter-spacing: -.005em; line-height: 1.1; }
+.wf-flow-ic { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--bg)); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .wf-sub { margin-left: auto; font-size: 12px; color: var(--ink-faint); }
 .wf-pill { display: inline-block; padding: 3px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 700; border: 1px solid var(--line-strong); color: var(--ink-soft); background: var(--bg); }
 .wf-pill.is-live { color: var(--wf-live); border-color: color-mix(in srgb, var(--wf-live) 55%, var(--line)); background: color-mix(in srgb, var(--wf-live) 8%, var(--bg)); }
@@ -1572,15 +1574,6 @@ button.dbar.future { opacity: .35; cursor: default; }
 .wf-node.is-error .wf-ic { color: var(--wf-bad); border: 1.5px solid var(--wf-bad); }
 .wf-node.is-error .wf-st { color: #f3a0a0; }
 .wf-node.is-off { opacity: .4; }
-.wf-link { position: relative; flex: 0 0 clamp(14px, 2.4vw, 40px); height: 2px; margin-top: 31px; }
-.wf-ln { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.wf-ln.v { display: none; }
-.wf-ln line { fill: none; stroke-linecap: round; }
-.wf-ln .base { stroke: var(--line-strong); stroke-width: 1.5; }
-.wf-link.is-live .base { stroke: color-mix(in srgb, var(--wf-live) 45%, var(--line-strong)); }
-.wf-link.is-off .base { opacity: .4; }
-.wf-ln .flow { stroke: var(--wf-live); stroke-width: 3; stroke-dasharray: 0.1 13; animation: wf-flow 2.4s linear infinite; }
-@keyframes wf-flow { to { stroke-dashoffset: -26.2; } }
 
 /* Panel koraka */
 .wf-scrim { position: fixed; inset: 0; z-index: 90; background: rgba(2, 6, 7, .55); animation: wf-fade .2s ease both; }
@@ -1647,7 +1640,6 @@ button.dbar.future { opacity: .35; cursor: default; }
 .wf-more-row { text-align: center; margin-top: 12px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .wf-ln .flow { animation: none; stroke-dasharray: none; opacity: .55; }
   .wf-panel, .wf-scrim { animation: none; }
   .wf-sw, .wf-sw i, .wf-ic { transition: none; }
 }
@@ -1660,9 +1652,6 @@ button.dbar.future { opacity: .35; cursor: default; }
   .wf-node { flex-direction: row; align-items: center; text-align: left; gap: 14px; padding: 6px 8px; }
   .wf-nt { justify-items: start; }
   .wf-meta { justify-content: flex-start; }
-  .wf-link { flex: none; width: 2px; height: 16px; margin: 0 0 0 30px; }
-  .wf-ln.h { display: none; }
-  .wf-ln.v { display: block; }
 }
 @media (max-width: 720px) {
   .wf h2 { font-size: 28px; }
@@ -1690,19 +1679,13 @@ button.dbar.future { opacity: .35; cursor: default; }
 @keyframes wf-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 /* Workflows dijagram, dorada (28.11.2026): čvorovi fiksne širine, spojnice popunjavaju prostor između njih;
    čekanje = isprekidano, objavljeno = puna žuta, uživo = puna zelena sa tačkama koje teku i pulsom na čvoru. */
-.wf-lane { gap: 0; }
-.wf-node { flex: 0 0 clamp(118px, 14%, 168px); }
-.wf-link { flex: 1 1 28px; min-width: 18px; margin-top: 30px; }
-.wf-ln .base { stroke-dasharray: 3 5; }
-.wf-link.is-published .base { stroke: color-mix(in srgb, var(--wf-pub) 55%, var(--line-strong)); stroke-dasharray: none; }
-.wf-link.is-live .base { stroke: color-mix(in srgb, var(--wf-live) 55%, var(--line-strong)); stroke-dasharray: none; stroke-width: 2; }
-.wf-link.is-error .base { stroke: color-mix(in srgb, var(--wf-bad) 55%, var(--line-strong)); stroke-dasharray: none; }
-.wf-ln .flow { stroke-width: 3.5; filter: drop-shadow(0 0 3px var(--wf-live)); }
+.wf-lane { gap: clamp(30px, 3.4vw, 52px); position: relative; }
+.wf-node { flex: 0 1 clamp(112px, 14%, 168px); }
 .wf-node.is-live .wf-ic { position: relative; }
 .wf-node.is-live .wf-ic::after { content: ''; position: absolute; inset: -6px; border-radius: 50%; border: 1px solid var(--wf-live); opacity: 0; animation: wf-pulse 2.4s ease-out infinite; }
 @keyframes wf-pulse { 0% { transform: scale(.85); opacity: .55; } 100% { transform: scale(1.35); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .wf-node.is-live .wf-ic::after, .wf-ln .flow { animation: none; } }
-@media (max-width: 820px) { .wf-node { flex: none; } .wf-link { flex: none; width: 2px; min-width: 0; height: 22px; margin: 0 0 0 30px; } }
+@media (prefers-reduced-motion: reduce) { .wf-node.is-live .wf-ic::after, .wf-lk .flow { animation: none; } }
+@media (max-width: 820px) { .wf-node { flex: none; } .wf-lane { gap: 26px; } }
 
 /* Oznake kanala i poruke po koraku (28.11.2026) */
 .wf { --wf-sms: #35d0c4; --wf-mail: #7aa7ff; --wf-task: #f0c27a; }
@@ -1782,3 +1765,22 @@ button.dbar.future { opacity: .35; cursor: default; }
 .wf-tip-body { white-space: pre-wrap; color: var(--ink-soft); display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 .wf-tip-foot { color: var(--ink-faint); font-size: 11.5px; }
 @media (prefers-reduced-motion: reduce) { .wf-tip { transition: none; } }
+
+/* Konektori između koraka (28.11.2026): SVG po traci, od ruba kruga do ruba kruga, sa vrhom strelice i tokom u smjeru toka. */
+.wf-links { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.wf-lk line, .wf-lk path { fill: none; stroke-linecap: round; }
+.wf-lk .base { stroke: var(--line-strong); stroke-width: 1.6; }
+.wf-lk .head { fill: var(--line-strong); stroke: none; }
+.wf-lk .flow { stroke: var(--ink-faint); stroke-width: 3; stroke-dasharray: 0.1 13; opacity: .6; animation: wf-flow 3.2s linear infinite; }
+.wf-lk.is-published .base { stroke: color-mix(in srgb, var(--wf-pub) 55%, var(--line-strong)); } .wf-lk.is-published .head { fill: color-mix(in srgb, var(--wf-pub) 70%, var(--line-strong)); } .wf-lk.is-published .flow { stroke: var(--wf-pub); }
+.wf-lk.is-error .base { stroke: color-mix(in srgb, var(--wf-bad) 55%, var(--line-strong)); } .wf-lk.is-error .head { fill: color-mix(in srgb, var(--wf-bad) 70%, var(--line-strong)); } .wf-lk.is-error .flow { stroke: var(--wf-bad); }
+.wf-lk.is-live .base { stroke: color-mix(in srgb, var(--wf-live) 60%, var(--line-strong)); stroke-width: 2; }
+.wf-lk.is-live .head { fill: var(--wf-live); }
+.wf-lk.is-live .flow { stroke: var(--wf-live); stroke-width: 3.5; opacity: 1; animation-duration: 2.4s; filter: drop-shadow(0 0 3px var(--wf-live)); }
+.wf-lk.is-off { opacity: .4; }
+.wf-lk.k-one .base, .wf-lk.k-trig .base { stroke-dasharray: 3 5; }
+@keyframes wf-flow { to { stroke-dashoffset: -26.2; } }
+.wf-lk .wf-hit { stroke: transparent; stroke-width: 16; stroke-linecap: butt; pointer-events: stroke; cursor: help; outline: none; }
+.wf-lk .wf-hit:focus-visible { stroke: color-mix(in srgb, var(--accent) 25%, transparent); }
+.wf-arr { font-weight: 400; color: var(--ink-faint); }
+@media (prefers-reduced-motion: reduce) { .wf-lk .flow { animation: none; display: none; } }

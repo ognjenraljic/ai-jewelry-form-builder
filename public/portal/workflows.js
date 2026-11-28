@@ -20,6 +20,9 @@ const ICON = {
   video: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.500" y="6.500" width="12" height="11" rx="2.500"/><path d="M15.500 10.500l5-3v9l-5-3"/></svg>',
   mail2: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.500" y="5.500" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></svg>',
   shield: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.500l7 2.500v5.500c0 4.500-3 7.500-7 9-4-1.500-7-4.500-7-9V6z"/><path d="M9 12l2.200 2.200L15.500 10"/></svg>',
+  fOffer: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7a1 1 0 0 1 .7.3l7.6 7.6a1 1 0 0 1 0 1.4l-7.1 7.1a1 1 0 0 1-1.4 0l-7.6-7.6a1 1 0 0 1-.3-.7z"/><circle cx="8.2" cy="8.2" r="1.4"/></svg>',
+  fAppts: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/><path d="M8.5 14.5h2M13.5 14.5h2M8.5 17.5h2"/></svg>',
+  fReviews: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.8 1-5.9L3.5 9.8l5.9-.8z"/></svg>',
   close: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
 };
 
@@ -35,6 +38,14 @@ export function initWorkflows(ctx) {
   C.app.addEventListener('focusin', (e) => { const n = e.target.closest?.('.wf-node'); if (n && C.P.tab === 'workflows') tipShow(n); else tipHide(); });
   C.app.addEventListener('click', tipHide, true);
   addEventListener('scroll', tipHide, { passive: true });
+  // Konektori (28.11.2026): hover i fokus na liniji između dva koraka, crtanje poslije svakog rendera.
+  C.app.addEventListener('mouseover', (e) => { const l = e.target.closest?.('.wf-hit'); if (l && C.P.tab === 'workflows' && matchMedia('(hover: hover)').matches) linkTipShow(l); });
+  C.app.addEventListener('mouseout', (e) => { const l = e.target.closest?.('.wf-hit'); if (l && !l.contains(e.relatedTarget)) tipHide(); });
+  C.app.addEventListener('focusin', (e) => { const l = e.target.closest?.('.wf-hit'); if (l && C.P.tab === 'workflows') linkTipShow(l); });
+  new MutationObserver(scheduleDraw).observe(C.app, { childList: true }); // render() prepisuje app.innerHTML
+  addEventListener('resize', scheduleDraw);
+  document.fonts?.ready?.then(scheduleDraw);
+  if (typeof ResizeObserver === 'function') linkRO = new ResizeObserver((es) => { if (es.some((en) => laneSize.get(en.target) !== `${en.contentRect.width}x${en.contentRect.height}`)) scheduleDraw(); });
   // Osvježavanje svakih 60 s dok je tab otvoren i vidljiv, ali ne dok zlatar nešto upisuje.
   W.timer = setInterval(() => {
     if (C.P.tab !== 'workflows' || document.visibilityState !== 'visible' || W.loading || W.busy) return;
@@ -214,25 +225,21 @@ function channelCard(d) {
   </div>`;
 }
 
-function link(state) {
-  const live = state === 'live';
-  const line = (h) => `<svg class="wf-ln ${h ? 'h' : 'v'}" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line x1="${h ? 0 : 50}" y1="${h ? 50 : 0}" x2="${h ? 100 : 50}" y2="${h ? 50 : 100}" vector-effect="non-scaling-stroke" class="base" />${live ? `<line x1="${h ? 0 : 50}" y1="${h ? 50 : 0}" x2="${h ? 100 : 50}" y2="${h ? 50 : 100}" vector-effect="non-scaling-stroke" class="flow" />` : ''}</svg>`;
-  return `<span class="wf-link is-${state}" aria-hidden="true">${line(true)}${line(false)}</span>`;
-}
 function node(s) {
   return `<button type="button" class="wf-node is-${s.state} ${W.sel === s.ev ? 'is-sel' : ''}" data-wf="node" data-ev="${C.esc(s.ev)}" aria-label="${C.esc(`${s.name}: ${STATE_LABEL[s.state]}`)}">
     <span class="wf-ic">${s.hasText && s.channel !== 'internal' ? ICON.sms : ICON.bell}</span>
     <span class="wf-nt"><b>${C.esc(s.name)}</b><small>${C.esc(s.when)}</small>${badges(s)}<span class="wf-meta"><span class="wf-st${stCls(s)}">${C.esc(stLabel(s))}</span>${s.sent30 ? `<span class="wf-n">${s.sent30} sent</span>` : ''}</span></span>
   </button>`;
 }
+const FLOW_ICON = { offer: ICON.fOffer, appts: ICON.fAppts, reviews: ICON.fReviews };
 function flowCard(f, d) {
   const total = new Set(f.lanes.flatMap((l) => l.steps.filter((s) => s.state !== 'off').map((s) => s.ev))).size;
   const live = new Set(f.lanes.flatMap((l) => l.steps.filter((s) => s.state === 'live').map((s) => s.ev))).size;
   const msgs = W.view[f.key] === 'messages';
   return `<div class="wf-card wf-flow is-${f.state}">
-    <div class="wf-flow-top"><h3>${C.esc(f.title)}</h3>${flowPill(f, d)}<span class="wf-sub">${total ? `${live} of ${plural(total, 'step')} live` : 'All steps off'}</span>
+    <div class="wf-flow-top"><span class="wf-flow-ic" aria-hidden="true">${FLOW_ICON[f.key] || ICON.fOffer}</span><h3>${C.esc(f.title)}</h3>${flowPill(f, d)}<span class="wf-sub">${total ? `${live} of ${plural(total, 'step')} live` : 'All steps off'}</span>
       <div class="wf-seg wf-seg-s" role="group" aria-label="${C.esc(f.title)} view"><button type="button" class="${msgs ? '' : 'on'}" data-wf="fview" data-k="${C.esc(f.key)}" data-v="diagram" aria-pressed="${!msgs}">Diagram</button><button type="button" class="${msgs ? 'on' : ''}" data-wf="fview" data-k="${C.esc(f.key)}" data-v="messages" aria-pressed="${msgs}">Messages</button></div></div>
-    ${msgs ? messagesView(f, d) : f.lanes.map((l) => `<div class="wf-lane-wrap"><p class="wf-lane-label">${C.esc(l.label)}</p><div class="wf-lane">${l.steps.map((s, i) => `${i ? link(s.state === 'live' ? 'live' : s.state === 'off' ? 'off' : 'idle') : ''}${node(s)}`).join('')}</div></div>`).join('')}
+    ${msgs ? messagesView(f, d) : f.lanes.map((l) => `<div class="wf-lane-wrap"><p class="wf-lane-label">${C.esc(l.label)}</p><div class="wf-lane">${l.steps.map(node).join('')}</div></div>`).join('')}
   </div>`;
 }
 
@@ -253,6 +260,105 @@ function messagesView(f, d) {
         </span>
       </button></li>`).join('')}</ol></div>`;
   }).join('');
+}
+
+// ---------- Konektori između koraka ----------
+// Jedan SVG po traci, nacrtan iz stvarnih pozicija krugova (radi vodoravno i okomito). Vrste: 'seq' niz, 'one' jedna od, 'trig' odvojeni okidači.
+const LINK_KIND = {
+  'offer_unopened>offer_saved': 'one', 'appt_noshow>appt_showed': 'one', 'appt_showed>appt_cancelled': 'one',
+  'deposit_click>refresh_ready': 'trig', 'refresh_ready>refresh_moved': 'trig',
+};
+const LINK_TIP = {
+  'quote_ready>offer_unopened': "4 hours after the quote was sent. If they haven't opened their page by then, 'Not opened' goes out.",
+  'offer_unopened>offer_saved': "Only one of these two goes out, 4 hours after the quote: 'Not opened' if they haven't opened their page, 'Opened, no deposit' if they have.",
+  'offer_saved>offer_24h': 'Waits until 24 hours before the price hold ends (holds of 36 hours or more). Stops if they pay a deposit, book an appointment or reply.',
+  'offer_24h>offer_final': 'Waits until 6 hours before the price hold ends. Stops if they pay, book or reply.',
+  'offer_final>offer_expired': 'Waits until the price hold ends. Stops if they pay, book or reply.',
+  'offer_expired>offer_closeout': "6 days later, only if they haven't asked for a refreshed quote.",
+  'deposit_click>refresh_ready': 'Separate triggers, not a sequence. Each goes out when its own event happens.',
+  'refresh_ready>refresh_moved': 'Separate triggers, not a sequence. Each goes out when its own event happens.',
+  'appt_booked>visit_3d': 'Waits until 3 days before the visit. Only when it was booked more than 3.5 days ahead.',
+  'visit_3d>visit_24h': 'Waits until 24 hours before the visit.',
+  'visit_24h>visit_2h': 'Waits until 2 hours before the visit.',
+  'appt_booked>call_1h': 'Waits until 1 hour before the consultation.',
+  'call_1h>call_10m': 'Waits until 10 minutes before the consultation.',
+  'appt_noshow>appt_showed': 'Only one of these goes out, depending on how the appointment ends: marked No-show, marked Done (2 hours later, if there is still no deposit), or cancelled.',
+  'appt_showed>appt_cancelled': 'Only one of these goes out, depending on how the appointment ends: marked No-show, marked Done (2 hours later, if there is still no deposit), or cancelled.',
+  'order_ready>picked_up': 'Waits until you mark the order Picked up.',
+  'picked_up>review_request': 'The next day (grillz 3 days, gifts 2 days after the occasion). Held while a remake or fix is open.',
+};
+const LINK_FALLBACK = "Goes out when the next step's own trigger happens.";
+const LINK_TAG = { seq: '', one: 'One of', trig: 'Triggers' };
+const SVGNS = 'http://www.w3.org/2000/svg';
+const sv = (tag, attrs) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
+let linkRO = null, drawRaf = 0;
+const laneSize = new WeakMap();
+const scheduleDraw = () => { cancelAnimationFrame(drawRaf); drawRaf = requestAnimationFrame(drawLinks); };
+
+function drawLinks() {
+  const lanes = C.app.querySelectorAll('.wf-lane');
+  linkRO?.disconnect(); // stari opservatori se uklanjaju prije novog crtanja
+  if (C.P.tab !== 'workflows' || !W.data) return;
+  const GAP = 4, HEAD = 7;
+  lanes.forEach((lane) => {
+    lane.querySelector(':scope > svg.wf-links')?.remove();
+    const lr = lane.getBoundingClientRect();
+    laneSize.set(lane, `${lr.width}x${lr.height}`);
+    const nodes = [...lane.querySelectorAll(':scope > .wf-node')];
+    if (nodes.length < 2) { linkRO?.observe(lane); return; }
+    const svg = sv('svg', { class: 'wf-links', 'aria-hidden': 'false' });
+    for (let i = 1; i < nodes.length; i++) {
+      const A = nodes[i - 1], B = nodes[i];
+      const ca = A.querySelector('.wf-ic')?.getBoundingClientRect(), cb = B.querySelector('.wf-ic')?.getBoundingClientRect();
+      if (!ca || !cb) continue;
+      const ax = ca.left + ca.width / 2 - lr.left, ay = ca.top + ca.height / 2 - lr.top;
+      const bx = cb.left + cb.width / 2 - lr.left, by = cb.top + cb.height / 2 - lr.top;
+      const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy);
+      const ra = ca.width / 2 + GAP, rb = cb.width / 2 + GAP;
+      if (L - ra - rb < 10) continue;
+      const ux = dx / L, uy = dy / L;
+      const kind = LINK_KIND[`${A.dataset.ev}>${B.dataset.ev}`] || 'seq';
+      const sB = findStep(W.data, B.dataset.ev);
+      const st = !sB ? 'idle' : ['live', 'published', 'error', 'off'].includes(sB.state) ? sB.state : 'idle';
+      const x1 = ax + ux * ra, y1 = ay + uy * ra, x2 = bx - ux * rb, y2 = by - uy * rb;
+      const g = sv('g', { class: `wf-lk is-${st} k-${kind}` });
+      const arrow = kind === 'seq';
+      const ex = arrow ? x2 - ux * HEAD : x2, ey = arrow ? y2 - uy * HEAD : y2;
+      g.appendChild(sv('line', { class: 'base', x1: x1.toFixed(1), y1: y1.toFixed(1), x2: ex.toFixed(1), y2: ey.toFixed(1) }));
+      if (arrow && st !== 'off') g.appendChild(sv('line', { class: 'flow', x1: x1.toFixed(1), y1: y1.toFixed(1), x2: ex.toFixed(1), y2: ey.toFixed(1) }));
+      if (arrow) g.appendChild(sv('path', { class: 'head', d: `M${x2.toFixed(1)} ${y2.toFixed(1)}L${(ex - uy * 3.6).toFixed(1)} ${(ey + ux * 3.6).toFixed(1)}L${(ex + uy * 3.6).toFixed(1)} ${(ey - ux * 3.6).toFixed(1)}Z` }));
+      const hit = sv('line', { class: 'wf-hit', x1: x1.toFixed(1), y1: y1.toFixed(1), x2: x2.toFixed(1), y2: y2.toFixed(1), tabindex: '0', role: 'img', 'data-a': A.dataset.ev, 'data-b': B.dataset.ev });
+      const an = findStep(W.data, A.dataset.ev)?.name || '', bn = sB?.name || '';
+      hit.setAttribute('aria-label', `${an} to ${bn}: ${LINK_TIP[`${A.dataset.ev}>${B.dataset.ev}`] || LINK_FALLBACK}`);
+      g.appendChild(hit);
+      svg.appendChild(g);
+    }
+    lane.appendChild(svg);
+    linkRO?.observe(lane);
+  });
+}
+
+function linkTipHtml(a, b, kind) {
+  const key = `${a.ev}>${b.ev}`;
+  const win = /\bam\b|\bpm\b/.test(b.window || '') ? `Sent ${b.window}` : '';
+  return `<div class="wf-tip-top"><b>${C.esc(a.name)} <span class="wf-arr">&rarr;</span> ${C.esc(b.name)}</b>${LINK_TAG[kind] ? `<span class="wf-tip-st">${LINK_TAG[kind]}</span>` : ''}</div>
+    <p class="wf-tip-when">${C.esc(LINK_TIP[key] || LINK_FALLBACK)}</p>
+    ${win ? `<p class="wf-tip-win">${C.esc(win)}</p>` : ''}`;
+}
+function linkTipShow(el) {
+  const d = W.data;
+  const a = d && findStep(d, el.dataset.a), b = d && findStep(d, el.dataset.b);
+  if (!a || !b || W.sel) return;
+  if (!tipEl) { tipEl = document.createElement('div'); tipEl.className = 'wf-tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl); }
+  tipEl.innerHTML = linkTipHtml(a, b, LINK_KIND[`${a.ev}>${b.ev}`] || 'seq');
+  tipEl.classList.add('on');
+  const r = el.getBoundingClientRect();
+  const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8);
+  let top = r.bottom + 10;
+  if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 10);
+  tipEl.style.left = `${left}px`;
+  tipEl.style.top = `${top}px`;
 }
 
 // ---------- Hover kartica koraka ----------
