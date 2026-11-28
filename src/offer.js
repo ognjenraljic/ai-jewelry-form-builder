@@ -41,7 +41,10 @@ export const STAGE_TEXT = {
 export function offerTimeline(d, now = Date.now()) {
   const s = offerSettings(d.pricing);
   const q = d.quotes || {};
-  const from = Math.max(Number(q.picked?.at) || 0, q.fit?.show ? Number(q.fit.showAt || q.fit.at) || 0 : 0) || Number(d.lead?.createdAt) || now;
+  const fitAt = q.fit?.show ? Number(q.fit.showAt || q.fit.at) || 0 : 0;
+  // Poslije "Approve & send" (quotes.sent) rok kreće od slanja; leadovi bez toga ostaju po starom (od poruke).
+  const sentAt = Number(q.sent?.at) || 0;
+  const from = (sentAt ? Math.max(sentAt, fitAt) : Math.max(Number(q.picked?.at) || 0, fitAt)) || Number(d.lead?.createdAt) || now;
   const r = q.refresh && Number(q.refresh.at) > from ? q.refresh : null;
   let hours = s.hours;
   let start = from;

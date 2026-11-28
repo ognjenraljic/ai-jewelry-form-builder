@@ -80,10 +80,10 @@ const put = (body) => fetch(`${BASE}/api/portal/ghl`, { method: 'PUT', headers: 
 let g = (await put({ token: 'pit-local-test-token-1234567890', locationId: 'LOC1234567890ab', pipelineId: 'pipe1', stages: { new: 'st-new', won: 'st-won' }, enabled: true, calendars: { online: 'calOnline01', visit: 'calVisit001' } })).body;
 ok(g.connected && g.enabled, 'GHL povezan');
 const fieldsRes = await fetch(`${BASE}/api/portal/ghl/fields`, { method: 'POST', headers: C, body: '{}' }).then(j);
-ok(Object.keys(fieldsRes.body.fields || {}).length === 15 && fieldsRes.body.fields.jl_page_url === 'contact.jl_page_url', `JL polja napravljena (${Object.keys(fieldsRes.body.fields || {}).length})`);
+ok(Object.keys(fieldsRes.body.fields || {}).length === 16 && fieldsRes.body.fields.jl_page_url === 'contact.jl_page_url', `JL polja napravljena (${Object.keys(fieldsRes.body.fields || {}).length})`);
 const again = await fetch(`${BASE}/api/portal/ghl/fields`, { method: 'POST', headers: C, body: '{}' }).then(j);
-ok((await ghl()).fields.filter((f) => f.name.startsWith('JL ')).length >= 15 && Object.keys(again.body.fields).length === 15, 'ponovni klik ne pravi duplikate polja');
-g = (await put({ auto: { on: true, holdout: 0 } })).body;
+ok((await ghl()).fields.filter((f) => f.name.startsWith('JL ')).length >= 16 && Object.keys(again.body.fields).length === 16, 'ponovni klik ne pravi duplikate polja');
+g = (await put({ auto: { on: true, holdout: 0, disabled: { quote_ready: true } } })).body;
 ok(g.auto?.on && g.auto.since > 0 && g.auto.holdout === 0, 'Automations uključene');
 
 const fd = new FormData();

@@ -36,9 +36,9 @@ const hd = (o) => ({ get: (k) => o[k] ?? null });
 ok(await verifyQuoSignature(sec, hd({ 'webhook-id': 'msg_1', 'webhook-timestamp': ts0, 'webhook-signature': `v1,AAAA ${sig0}` }), '{"a":1}', now0), 'potpis: ispravan među više potpisa');
 ok(!(await verifyQuoSignature(sec, hd({ 'webhook-id': 'msg_1', 'webhook-timestamp': ts0, 'webhook-signature': sig0 }), '{"a":2}', now0)), 'potpis: izmijenjeno tijelo odbijeno');
 ok(!(await verifyQuoSignature(sec, hd({ 'webhook-id': 'msg_1', 'webhook-timestamp': ts0, 'webhook-signature': sig0 }), '{"a":1}', now0 + 6 * 60_000)), 'potpis: stariji od 5 min odbijen');
-ok(renderTemplate(DEFAULT_TEMPLATES.visit_2h, { sender: 'District', appt_location: '1550 Larimer St', appt_time: 'Tue 11:00 AM' }) === 'District is pulling pieces for you. 1550 Larimer St. See you at Tue 11:00 AM.', 'šablon: zamjene');
+ok(renderTemplate(DEFAULT_TEMPLATES.visit_2h, { sender: 'District', appt_location: '1550 Larimer St', appt_time: 'Tue 11:00 AM' }) === "District here. I'm pulling some pieces for you, see you at Tue 11:00 AM. 1550 Larimer St", 'šablon: zamjene');
 ok(renderTemplate(DEFAULT_TEMPLATES.offer_unopened, { first_name: 'Ava', sender: 'District', store: 'District', piece: 'grillz', page_url: 'https://x/p/1' }) === "Hey Ava, this is District. Did you get a chance to see your grillz design? It's here: https://x/p/1 Reply STOP to opt out.", 'šablon: ime pošiljaoca isto kao radnja se ne ponavlja');
-ok(Object.keys(EVENTS).every((k) => STEP_CONTENT[k] && (STEP_CONTENT[k].email || STEP_CONTENT[k].task)) && Object.values(STEP_CONTENT).every((c) => !c.email || (c.email[0].length <= 80 && c.email[1].includes('{first_name}'))), 'svaki korak ima primjer mejla ili zadatka');
+ok(Object.keys(EVENTS).every((k) => STEP_CONTENT[k] && (STEP_CONTENT[k].email || STEP_CONTENT[k].task)) && Object.entries(STEP_CONTENT).every(([k, c]) => !c.email || (c.email[0].length <= 80 && (k === 'quote_ready' ? c.email[1] === '{quote_message}' : c.email[1].includes('{first_name}')))), 'svaki korak ima primjer mejla ili zadatka');
 ok(renderTemplate(STEP_CONTENT.offer_closeout.email[1], { first_name: 'Ava', sender: 'District', store: 'District', piece: 'grillz' }).endsWith('\n\nDistrict') && renderTemplate(DEFAULT_TEMPLATES.offer_closeout, { sender: 'Enrique', store: 'District', piece: 'grillz' }).endsWith('Enrique, District'), 'potpis: ime radnje se ne ponavlja');
 ok(!Object.entries(DEFAULT_TEMPLATES).some(([k, v]) => v && v.length > 320) && Object.keys(DEFAULT_TEMPLATES).sort().join() === Object.keys(EVENTS).sort().join(), 'svaki događaj ima ključ u šablonima (internalni null), nijedan tekst predug');
 const T0x = Date.parse('2026-11-27T17:00:00Z');
@@ -47,7 +47,7 @@ ok(offerEvents({ tl: tlx, leadId: 'L', views: 0, clicks: [], replied: T0x + HR }
 ok(autoSettings({ texts: 'sms', templates: { picked_up: 'x', offer_24h: 'ok <b>' } }).texts === 'ghl' && !autoSettings({ templates: { picked_up: 'x', offer_24h: 'fine' } }).templates.picked_up && autoSettings({ templates: { offer_24h: 'fine' } }).templates.offer_24h === 'fine', 'autoSettings čisti kanal i šablone');
 
 // ---------- Pomoćnici za radnje ----------
-async function mkClient(name) {
+async function mkClient(name, { gate = false } = {}) {
   const client = (await fetch(`${BASE}/api/admin/clients`, { method: 'POST', headers: H, body: JSON.stringify({ name: `${name} ${tag}` }) }).then(j)).body.client;
   const form = (await fetch(`${BASE}/api/admin/forms`, { method: 'POST', headers: H, body: JSON.stringify({ clientId: client.id, template: 'custom-enquiry' }) }).then(j)).body.form;
   const link = (await fetch(`${BASE}/api/admin/clients/${client.id}/portal-link`, { method: 'POST', headers: H, body: '{}' }).then(j)).body.url;
@@ -57,6 +57,8 @@ async function mkClient(name) {
   const wf = () => fetch(`${BASE}/api/portal/workflows`, { headers: C }).then(j);
   const put = (body) => fetch(`${BASE}/api/portal/workflows`, { method: 'PUT', headers: C, body: JSON.stringify(body) }).then(j);
   const post = (path, body) => fetch(`${BASE}/api/portal/quo/${path}`, { method: 'POST', headers: C, body: JSON.stringify(body || {}) }).then(j);
+  // Prva ponuda (Quote sent) čeka Approve & send; starije provjere o podsjetnicima je gase da offer događaji idu kao prije.
+  if (!gate) await put({ disabled: { quote_ready: true } });
   return { client, form, C, wf, put, post };
 }
 async function mkLead(co, { name, phone, sms = true, mkt = true }) {
@@ -89,7 +91,7 @@ ok(v.ghl.connected === false && v.quo.connected === false && v.channel === 'ghl'
 let r = await A.put({ on: true, holdout: 0 });
 v = r.body;
 ok(r.status === 200 && v.automation.on && v.automation.since > 0, 'glavni prekidač uključen (since postavljen)');
-ok(stepsOf(v).every((s) => s.state === 'not_connected') && v.flows.every((f) => f.state === 'not_connected'), 'uključeno a ništa povezano: svi koraci "not_connected", nijedan "live"');
+ok(stepsOf(v).filter((s) => s.ev !== 'quote_ready').every((s) => s.state === 'not_connected') && v.flows.every((f) => f.state === 'not_connected'), 'uključeno a ništa povezano: svi koraci "not_connected", nijedan "live"');
 ok(!stepsOf(v).some((s) => ['live', 'published', 'waiting'].includes(s.state)), 'nema lažnog live / waiting bez veze');
 ok(v.connections?.length === 7 && ['ghl', 'phone', 'calendar', 'meet', 'gmail', 'a2p', 'quo'].every((k) => cn(v, k)), 'Connections: sedam redova');
 ok(['ghl', 'phone', 'calendar', 'meet', 'quo'].every((k) => cn(v, k).state === 'off'), 'Connections bez GHL-a i Quo-a: GHL redovi i Quo "off"');
@@ -348,6 +350,137 @@ r = await A.put({ disabled: { offer_24h: true }, templates: { offer_24h: 'Custom
 ok(stepOf(r.body, 'offer_24h').state === 'off' && stepOf(r.body, 'offer_24h').disabled && stepOf(r.body, 'offer_24h').template === 'Custom text {first_name}' && !stepOf(r.body, 'offer_24h').isDefaultTemplate, 'pojedinačni korak ugašen, tekst sačuvan');
 r = await A.put({ templates: { offer_24h: '' } });
 ok(stepOf(r.body, 'offer_24h').isDefaultTemplate, 'Reset to default vraća podrazumijevani tekst');
+
+
+// ---------- 9. Approve & send: prva ponuda (quote_ready) ----------
+{
+  const GHL_BODY = { token: 'pit-local-test-token-1234567890', locationId: 'LOC1234567890ab', enabled: true };
+  const connectGhl = async (co) => { await fetch(`${BASE}/api/portal/ghl`, { method: 'PUT', headers: co.C, body: JSON.stringify(GHL_BODY) }).then(j); return fetch(`${BASE}/api/portal/ghl/fields`, { method: 'POST', headers: co.C, body: '{}' }).then(j); };
+  const leadsOf = async (co) => (await fetch(`${BASE}/api/portal/leads`, { headers: co.C }).then(j)).body.leads;
+  const leadRow = async (co, id) => (await leadsOf(co)).find((l) => l.id === id);
+  const waitPicked = async (co, id) => { for (let i = 0; i < 20; i++) { const l = await leadRow(co, id); if (l?.quotes?.picked?.msg) return l; await sleep(500); } return null; };
+  const sendQuote = (co, id, C = co.C) => fetch(`${BASE}/api/portal/leads/${id}/send-quote`, { method: 'POST', headers: C, body: '{}' }).then(j);
+  const preview = (co, id, C = co.C) => fetch(`${BASE}/api/portal/leads/${id}/send-quote/preview`, { headers: C }).then(j);
+  const tagsOf = async (email) => { const g = await ghl(); const c = Object.values(g.contacts).find((x) => x.email === email); return { c, g, log: g.tagLog.filter((x) => x.contact === c?.id && x.op === 'add').map((x) => x.tags[0]) }; };
+  const fieldVal = async (email, key) => { const g = await ghl(); const c = Object.values(g.contacts).find((x) => x.email === email); const def = g.fields.find((f) => f.fieldKey === `contact.${key}`); return c?.customFields?.find((f) => f.id === def?.id)?.field_value; };
+  ok(autoSettings({}).quoteMode === 'approve' && autoSettings({ quoteMode: 'auto' }).quoteMode === 'auto' && autoSettings({ quoteMode: 'x' }).quoteMode === 'approve', 'quoteMode: podrazumijevano approve, auto prihvaćen, ostalo se čisti');
+  const tq = offerTimeline({ pricing: {}, quotes: { picked: { at: 1000 * HR }, sent: { at: 1010 * HR } }, lead: { createdAt: 990 * HR } }, 1011 * HR);
+  const tq0 = offerTimeline({ pricing: {}, quotes: { picked: { at: 1000 * HR } }, lead: { createdAt: 990 * HR } }, 1011 * HR);
+  ok(tq.from === 1010 * HR && tq0.from === 1000 * HR, 'offerTimeline: rok kreće od sent.at, bez sent ostaje od picked.at');
+
+  const G = await mkClient('QA GHL', { gate: true });
+  const fr = await connectGhl(G);
+  ok(fr.body.fields?.jl_quote_message === 'contact.jl_quote_message' && (await ghl()).fields.find((f) => f.fieldKey === 'contact.jl_quote_message')?.dataType === 'LARGE_TEXT', 'polje JL Quote Message napravljeno kao LARGE_TEXT');
+  v = (await G.wf()).body;
+  ok(v.automation.quoteMode === 'approve' && stepOf(v, 'quote_ready').quoteMode === 'approve' && stepOf(v, 'quote_ready').awaiting === 0 && v.flows.find((f) => f.key === 'offer').lanes[0].steps[0].ev === 'quote_ready', 'quoteMode podrazumijevano approve, korak quote_ready je prvi u traci');
+  ok((await G.put({ quoteMode: 'nope' })).status === 400 && (await G.put({ quoteMode: 'auto' })).body.automation.quoteMode === 'auto' && (await G.put({ quoteMode: 'approve' })).body.automation.quoteMode === 'approve', 'PUT quoteMode: auto i approve prolaze, drugo 400');
+  const G1 = await mkLead(G, { name: 'Gia Approve', phone: '303 555 0301' });
+  // Automations isključene: nema slanja
+  let sq = await sendQuote(G, G1.id);
+  ok(sq.status === 400 && /Turn on Automations/.test(sq.body.error), `Automations off: send-quote 400 (${sq.body.error})`);
+  await G.put({ on: true, holdout: 0 });
+  const G2 = await mkLead(G, { name: 'Hal Approve', phone: '303 555 0302' });
+  const l2 = await waitPicked(G, G2.id);
+  ok(!!l2?.quotes?.picked?.msg, 'nov lead ima automatsku Estimated price poruku');
+  ok(l2.quoteSend?.toApprove === true && l2.quoteSend.can && !l2.quoteSend.sent, 'lista: lead čeka odobrenje (toApprove)');
+  v = (await G.wf()).body;
+  ok(stepOf(v, 'quote_ready').awaiting >= 1, `Workflows: awaiting ${stepOf(v, 'quote_ready').awaiting}`);
+  // Prije slanja nema offer događaja ni poslije 5 h; notifikacija čeka odobrenje
+  const tg0 = Date.now();
+  await sweep(dayTime(tg0 + 5 * HR));
+  v = (await G.wf()).body;
+  ok(!v.history.some((h) => h.name === 'Hal Approve'), 'bez odobrenja: ni quote_ready ni offer događaja poslije 5 h');
+  const nt = (await fetch(`${BASE}/api/portal/notifications`, { headers: G.C }).then(j)).body;
+  ok(nt.items.some((x) => x.type === 'quote_awaiting' && x.name === 'Hal Approve') && nt.items.some((x) => x.type === 'quote_reminder' && x.name === 'Hal Approve'), 'notifikacije: čeka odobrenje i podsjetnik poslije 2 h (u 9-19)');
+  const remN = () => fetch(`${BASE}/api/portal/notifications`, { headers: G.C }).then(j).then((r) => r.body.items.filter((x) => x.type === 'quote_reminder' && x.name === 'Hal Approve').length);
+  await sweep(dayTime(tg0 + 6 * HR));
+  ok((await remN()) === 1, 'podsjetnik samo jednom po leadu');
+  // Preview i slanje
+  const pv = await preview(G, G2.id);
+  ok(pv.status === 200 && pv.body.can && pv.body.to.name === 'Hal Approve' && pv.body.to.phone === '+1 ••• ••• 0302' && /Text and email from GoHighLevel/.test(pv.body.from) && pv.body.email.subject.includes('QA GHL') && pv.body.email.body === l2.quotes.picked.msg, 'preview: kome, odakle, naslov mejla, tekst mejla = sačuvana poruka');
+  const VAv = { 'x-portal-token': (await fetch(`${BASE}/api/admin/clients/${G.client.id}/view-as`, { method: 'POST', headers: H }).then(j)).body.token, 'content-type': 'application/json' };
+  ok((await preview(G, G2.id, VAv)).status === 200 && (await sendQuote(G, G2.id, VAv)).status === 403, 'view-as: preview čita, send-quote 403');
+  sq = await sendQuote(G, G2.id);
+  const t1 = await tagsOf(l2.email);
+  ok(sq.status === 200 && sq.body.quoteSend.sent?.by === 'portal' && sq.body.quoteSend.sent.at > 0 && t1.log.includes('jl quote ready'), `send-quote: tag "jl quote ready" stigao u GHL (${sq.body.error || ''})`);
+  ok((await fieldVal(l2.email, 'jl_quote_message')) === l2.quotes.picked.msg, 'polje jl_quote_message nosi tekst Estimated price poruke');
+  v = (await G.wf()).body;
+  const hq1 = histFor(v, 'quote_ready').filter((h) => h.name === 'Hal Approve');
+  ok(hq1.length === 1 && hq1[0].status === 'sent' && hq1[0].channel === 'ghl', 'istorija: jedan red quote_ready, kanal GHL');
+  const l2b = await leadRow(G, G2.id);
+  ok(l2b.quoteSend.sent.at === sq.body.quoteSend.sent.at && !l2b.quoteSend.toApprove && l2b.firstReplyAt > 0, 'lead: quotes.sent postavljen, više ne čeka odobrenje, first reply upisan');
+  // offer_unopened ide 4 h poslije sent.at
+  const sentAt = l2b.quoteSend.sent.at;
+  await sweep(dayTime(sentAt + 3 * HR));
+  ok(!histFor((await G.wf()).body, 'offer_unopened').some((h) => h.name === 'Hal Approve'), 'offer_unopened ne ide prije 4 h poslije slanja');
+  await sweep(dayTime(sentAt + 4 * HR + 5 * 60_000));
+  ok(histFor((await G.wf()).body, 'offer_unopened').some((h) => h.name === 'Hal Approve' && h.status === 'sent'), 'offer_unopened ide 4 h poslije sent.at (ne poslije picked.at)');
+  // Send again
+  await sleep(1100);
+  sq = await sendQuote(G, G2.id);
+  v = (await G.wf()).body;
+  const hq2 = histFor(v, 'quote_ready').filter((h) => h.name === 'Hal Approve');
+  ok(sq.status === 200 && sq.body.quoteSend.sent.count === 2 && hq2.length === 2 && new Set(hq2.map((h) => h.id)).size === 2, 'Send again: drugi red u istoriji, novi ključ, count 2');
+  // Bez picked poruke i arhiviran
+  const G3 = await mkLead(G, { name: 'Ivo NoMsg', phone: '303 555 0303' });
+  await sleep(2500);
+  await fetch(`${BASE}/api/portal/pricing`, { method: 'PUT', headers: G.C, body: JSON.stringify({ pricing: { ...SUGGESTED_PRICING } }) });
+  // lead bez picked: poruka se obriše direktno nije moguće preko API-ja, pa se koristi lead čija se procjena nije dala
+  const nomsg = (await leadsOf(G)).find((l) => l.id === G3.id);
+  if (nomsg?.quotes?.picked?.msg) { ok(true, 'lead bez poruke: preskočeno (poruka je napravljena automatski)'); } else { ok((await sendQuote(G, G3.id)).status === 400, 'bez picked poruke: send-quote 400'); }
+  ok((await fetch(`${BASE}/api/portal/leads/nepostoji/send-quote`, { method: 'POST', headers: G.C, body: '{}' })).status === 404, 'nepoznat lead 404');
+  // Step ugašen
+  await G.put({ disabled: { quote_ready: true } });
+  sq = await sendQuote(G, G2.id);
+  ok(sq.status === 400 && /turned off/.test(sq.body.error), 'korak quote_ready ugašen: send-quote 400');
+  await G.put({ disabled: { quote_ready: false } });
+
+  // Quo kanal
+  const Q = await mkClient('QA Quo', { gate: true });
+  await connectGhl(Q);
+  await Q.post('connect', { key: `quo-test-key-q${tag}` });
+  await Q.post('number', { id: 'PNmain00001' });
+  await Q.put({ texts: 'quo', on: true, holdout: 0, sender: 'Enrique' });
+  const Q1 = await mkLead(Q, { name: 'Quin Quo', phone: '303 555 0311' });
+  const lq = await waitPicked(Q, Q1.id);
+  const pq = await preview(Q, Q1.id);
+  ok(pq.body.sms.willSend && /^Hey Quin, this is Enrique from QA Quo \w+\. Your custom grillz design and price are ready: http.+\/p\/.+ Reply STOP to opt out\.$/.test(pq.body.sms.text) && /Text from your Quo number \+1 303 555 0100 · email from GoHighLevel/.test(pq.body.from), `preview Quo: SMS tekst i izvor (${pq.body.sms?.text?.slice(0, 80)})`);
+  const nq = (await quo()).messages.length;
+  sq = await sendQuote(Q, Q1.id);
+  const mq = (await quo()).messages.findLast((m) => m.to[0] === '+13035550311');
+  ok(sq.status === 200 && (await quo()).messages.length === nq + 1 && mq?.content === pq.body.sms.text && mq.from === 'PNmain00001', 'preview vraća isti SMS tekst koji se stvarno pošalje (Quo)');
+  const tq1 = await tagsOf(lq.email);
+  ok(tq1.log.includes('jl quote ready') && tq1.c.tags.includes('jl texts via quo') && (await fieldVal(lq.email, 'jl_quote_message')) === lq.quotes.picked.msg, 'Quo kanal: GHL tag za mejl + polje sa porukom');
+  ok(histFor((await Q.wf()).body, 'quote_ready').some((h) => h.name === 'Quin Quo' && h.channel === 'quo' && h.body === mq.content), 'istorija: Quo red sa tekstom');
+  ok(sq.body.quoteSend.sent.text === 'quo' && sq.body.quoteSend.sent.email === 'ghl', 'sent pamti kanale: text quo, email ghl');
+  // Bez SMS pristanka: SMS preskočen, mejl (GHL tag) ide
+  const Q2 = await mkLead(Q, { name: 'Nia NoSms', phone: '303 555 0312', sms: false, mkt: false });
+  const lq2 = await waitPicked(Q, Q2.id);
+  const pq2 = await preview(Q, Q2.id);
+  const nq2 = (await quo()).messages.length;
+  sq = await sendQuote(Q, Q2.id);
+  ok(pq2.body.sms.willSend === false && /no SMS consent/.test(pq2.body.sms.why) && sq.status === 200 && (await quo()).messages.length === nq2 && (await tagsOf(lq2.email)).log.includes('jl quote ready'), `bez SMS pristanka: preview kaže zašto, SMS ne ide, mejl (tag) ide (${pq2.status} ${JSON.stringify(pq2.body.sms)} ${sq.status} ${sq.body.error || ''} ${(await quo()).messages.length}/${nq2})`);
+
+  // Auto način
+  const U = await mkClient('QA Auto', { gate: true });
+  await connectGhl(U);
+  await U.put({ on: true, holdout: 0, quoteMode: 'auto' });
+  const U1 = await mkLead(U, { name: 'Uma Auto', phone: '303 555 0321' });
+  const lu = await waitPicked(U, U1.id);
+  let lu2 = null;
+  for (let i = 0; i < 20 && !lu2?.quoteSend?.sent; i++) { await sleep(500); lu2 = await leadRow(U, U1.id); }
+  ok(lu2?.quoteSend?.sent?.by === 'auto' && (await tagsOf(lu.email)).log.filter((x) => x === 'jl quote ready').length === 1, 'auto način: nov lead dobija quote_ready bez klika (jednom)');
+  ok(!lu2.quoteSend.toApprove && !(await fetch(`${BASE}/api/portal/notifications`, { headers: U.C }).then(j)).body.items.some((x) => x.type === 'quote_awaiting'), 'auto način: nema "čeka odobrenje"');
+
+  // Stari mejl preko Resenda ne šalje kad je quote_ready aktivan: autoSend se ne dira, ali slanje preskače
+  const mailCfg = await fetch(`${BASE}/api/portal/pricing`, { method: 'PUT', headers: G.C, body: JSON.stringify({ pricing: { ...SUGGESTED_PRICING, quoteInfo: 'QA Jewelers\n1550 Larimer St', autoSend: true, replyTo: 'shop@example.com', alertEmails: ['shop@example.com'] } }) }).then(j);
+  ok(mailCfg.status === 200, 'autoSend uključen u cijenama');
+  const G4 = await mkLead(G, { name: 'Gus Resend', phone: '303 555 0304' });
+  await waitPicked(G, G4.id);
+  await sleep(1500);
+  const g4 = await leadRow(G, G4.id);
+  ok(!g4.autoSentAt, 'autoSendFirst ne šalje stari mejl kad je Automations uključen i quote_ready aktivan');
+}
 
 console.log(`\n${passes} OK, ${fails} FAIL`);
 process.exit(fails ? 1 : 0);

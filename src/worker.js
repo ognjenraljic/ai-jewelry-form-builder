@@ -21,7 +21,7 @@ import { areaOf } from '../public/area-codes.js';
 import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE, oppName, ghlRenameOpp, guessOrderStages, ghlUsers, ghlPushOrder, ghlPushOrderStage, ghlReadOrderStage, prodReady, ORDER_KEYS,
   ghlCalendars, ghlFreeSlots, ghlBookAppointment, ghlCancelAppointment, ghlAddNote, ghlEnsureContact, ghlSetAddress, ghlSendSms, hookPayload,
   ghlEnsureFields, ghlSetFields, ghlFireTag, ghlSetApptStatus, ghlGetAppointment, ghlWorkflows, ghlPhoneNumbers, ghlCalendarMeet, ghlRemoveTags, sealSecret, openSecret } from './ghl.js';
-import { EVENTS, FIELDS, autoSettings, inHoldout, offerEvents, apptEvents, reviewEvents, dueNow, STEP_INFO, FLOWS, DEFAULT_TEMPLATES, STEP_CONTENT, sendWindow, TEMPLATE_VARS, renderTemplate, exampleVars, cleanReviewLink, cleanTemplate } from './automations.js';
+import { localHour, EVENTS, FIELDS, autoSettings, inHoldout, offerEvents, apptEvents, reviewEvents, dueNow, STEP_INFO, FLOWS, DEFAULT_TEMPLATES, STEP_CONTENT, sendWindow, TEMPLATE_VARS, renderTemplate, exampleVars, cleanReviewLink, cleanTemplate } from './automations.js';
 import { QUO_BASE, sealQuoKey, openQuoKey, quoNumbers, quoSend, quoCreateWebhook, quoDeleteWebhook, toE164, isUsNumber, maskPhone, STOP_WORDS, START_WORDS, verifyQuoSignature } from './quo.js';
 import { KINDS, KIND_LABEL, TIMEZONES, bookingSettings, cleanBooking, kindsOn, nativeSlots, ghlSlotsToDays, zonedToUtc, zonedYmd, addDays, whenText, icsFor, cleanFulfillment, fulfillmentText, depositLink } from './booking.js';
 import { offerTimeline, offerSettings, metalMoved } from './offer.js';
@@ -1888,6 +1888,8 @@ async function portalApi(request, env, p, secure, ctx) {
     ]);
     const leads = leadRes.results;
     const bcfg = bookingSettings(parseJson(client.data).booking);
+    const qst = autoOf(parseJson(client.data));
+    const qch = quoteChannelsLite(parseJson(client.data), qst);
     // Won lead bez broja narudžbe (npr. Won prije praćenja narudžbi) dobija broj sada.
     for (const l of leads.slice(0, PAGE_SIZE).filter((x) => x.status === 'won' && !x.order_no)) {
       const o = await assignOrder(env, l.id, client).catch((e) => { console.error('order', l.id, e.message); return null; });
@@ -1930,7 +1932,7 @@ async function portalApi(request, env, p, secure, ctx) {
         try { files = JSON.parse(l.files || '{}'); } catch {}
         return {
           id: l.id, ref: leadRef(l.lead_no), formId: l.form_id, form: forms[l.form_id]?.name || l.form_id, name: l.name, email: l.email, phone: l.phone, created_at: l.created_at,
-          status: l.status || 'new', note: l.note || '', archivedAt: l.archived_at || null, tags: parseTags(l.tags), quotes: leadQuotes(l.quotes), page: pageInfo(l), sms: smsState(l.consent),
+          status: l.status || 'new', note: l.note || '', archivedAt: l.archived_at || null, tags: parseTags(l.tags), quotes: leadQuotes(l.quotes), quoteSend: quoteSendView(l, qst, qch), page: pageInfo(l), sms: smsState(l.consent),
           alertedAt: l.alerted_at || null, autoSentAt: l.auto_sent_at || null, firstReplyAt: l.first_reply_at || null,
           order: orderView(l.order_no, l.order_data), prodBoard: ghlOrderInfo(l.ghl_order),
           ...leadBookingInfo(l, bcfg),
@@ -2018,6 +2020,22 @@ async function portalApi(request, env, p, secure, ctx) {
     await logEvent(env, lead.id, type, meta);
     if (type === 'quote_copied') await markReply(env, lead.id);
     return json({ ok: true });
+  }
+  // Approve & send (28.11.2026): pregled onoga što će kupac dobiti, pa slanje prve ponude.
+  if ((lm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)\/send-quote(\/preview)?$/))) {
+    if (lm[2]) {
+      if (request.method !== 'GET') return json({ error: 'Not found' }, 404);
+      const pv = await quotePreview(env, lm[1], client.id);
+      return pv ? json(pv) : json({ error: 'Not found' }, 404);
+    }
+    if (request.method !== 'POST') return json({ error: 'Not found' }, 404);
+    if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
+    const r = await sendQuote(env, lm[1], { by: 'portal', clientId: client.id });
+    if (r.error) return json({ error: r.error }, r.status);
+    const row = await notifyRow(env, lm[1]);
+    const d2 = parseJson(row.client_data);
+    const st2 = autoOf(d2);
+    return json({ ok: true, quoteSend: quoteSendView(row, st2, quoteChannelsLite(d2, st2)), note: r.delivery?.error || null });
   }
   // Status i bilješka upita (zlatar prati šta je uradio); admin pregled ne mijenja podatke klijenta.
   if ((lm = p.match(/^\/api\/portal\/leads\/([a-z0-9]+)$/)) && request.method === 'PATCH') {
@@ -2186,7 +2204,7 @@ async function portalStats(env, client) {
   };
 }
 // Automatske quote poruke nisu ovdje: stižu uz svaki lead (dvije po leadu) i samo bi zatrpale listu.
-const NOTIFY_TYPES = ['created', 'page_view', 'page_action', 'refresh_requested', 'deposit_unpaid', 'refresh_ready', 'refresh_moved', 'appointment_unmarked', 'order_picked', 'chat_question', 'auto_sent', 'auto_send_failed', 'alert_failed', 'order_created', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment'];
+const NOTIFY_TYPES = ['created', 'page_view', 'page_action', 'refresh_requested', 'deposit_unpaid', 'refresh_ready', 'refresh_moved', 'appointment_unmarked', 'order_picked', 'chat_question', 'auto_sent', 'auto_send_failed', 'alert_failed', 'order_created', 'appointment_booked', 'appointment_cancelled', 'deposit_paid', 'deposit_returned', 'fulfillment', 'quote_awaiting', 'quote_reminder'];
 async function portalNotifications(env, client) {
   const since = Date.now() - 30 * 864e5;
   const rows = (await env.DB.prepare(`SELECT e.id, e.lead_id, e.type, e.at, e.meta, l.name, l.email, json_extract(l.answers, '$.type') AS piece
@@ -2527,6 +2545,7 @@ async function workflowsView(env, client, origin) {
     if (r.status === 'holdout') counts.holdout30++;
     if (r.status === 'sent' || r.status === 'failed') { a.lastAt = Math.max(a.lastAt, r.at); if (!a.last[ch]) a.last[ch] = r; }
   }
+  const awaiting = st.on && st.since ? (await env.DB.prepare(`SELECT COUNT(*) AS n FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL AND l.created_at >= ? AND json_type(COALESCE(l.quotes, '{}'), '$.picked') = 'object' AND json_type(COALESCE(l.quotes, '{}'), '$.sent') IS NULL`).bind(client.id, st.since).first())?.n || 0 : 0;
   const wfFor = (tag) => (wf?.list || []).find((w) => w.name.toLowerCase().includes(tag));
   const groupOn = (grp) => st[grp] !== false;
   const stepOf = (ev) => {
@@ -2556,6 +2575,7 @@ async function workflowsView(env, client, origin) {
       ev, tag, group, name: info.name, when: info.when, desc, state, hint, channel, needsMkt: !!info.mkt, hasText: !!DEFAULT_TEMPLATES[ev],
       sent7: a.sent7, sent30: a.sent30, failed30: a.failed30, lastAt: a.lastAt || null, ackAt: ackAt || null, workflow: wfFor(tag)?.status || null,
       email: STEP_CONTENT[ev]?.email ? { subject: STEP_CONTENT[ev].email[0], body: STEP_CONTENT[ev].email[1] } : null, task: STEP_CONTENT[ev]?.task || null, window: sendWindow(ev),
+      ...(ev === 'quote_ready' ? { quoteMode: st.quoteMode, awaiting } : {}),
       disabled: st.disabled[ev] === true, template: DEFAULT_TEMPLATES[ev] ? st.templates[ev] || DEFAULT_TEMPLATES[ev] : null, defaultTemplate: DEFAULT_TEMPLATES[ev] || null, isDefaultTemplate: !st.templates[ev],
     };
   };
@@ -2619,6 +2639,7 @@ async function portalWorkflows(request, env, ctx, client, sess, p) {
       if (b.texts === 'quo' && !(q.key && (q.fromId || q.from))) return bad('Connect Quo and pick your number first.');
       next.texts = b.texts;
     }
+    if ('quoteMode' in b) { if (!['approve', 'auto'].includes(b.quoteMode)) return bad('The quote can go out after you approve it, or automatically.'); next.quoteMode = b.quoteMode; }
     if ('reviewLink' in b) { const v = String(b.reviewLink || '').trim(); if (v && !cleanReviewLink(v)) return bad('The review link must start with https://.'); next.reviewLink = v; }
     if ('sender' in b) { const v = String(b.sender || '').trim(); if (v.length > 40 || /[<>]/.test(v)) return bad('The name is up to 40 characters, no < or >.'); next.sender = v; }
     if (b.templates && typeof b.templates === 'object') {
@@ -2967,6 +2988,7 @@ async function autoQuote(env, leadId, origin) {
   if (doPicked) {
     await mark('auto');
     out = await writeQuote(env, client, lead, { ...quoteBody(ls, ls.spec, est), slot: 'picked', spec: ls.spec }, origin, { auto: true });
+    if (out) await afterPickedQuote(env, leadId).catch((e) => console.error('after quote', leadId, e.message));
   }
   // Fits the budget postoji samo kad kupac ima gornju granicu budžeta (inače je kartica "Your quote", ista kao izbor).
   const high = ls.budget?.high;
@@ -3107,6 +3129,9 @@ async function autoSendFirst(env, leadId) {
   if (!mailOn(env)) return null;
   const row = await notifyRow(env, leadId);
   if (!row || row.auto_sent_at || row.first_reply_at || (row.status && row.status !== 'new')) return null;
+  // Kad su Automations uključene i korak Quote sent aktivan, prvu ponudu šalje on (Approve & send); mejl preko Resenda bi bio dupli.
+  const au = autoOf(parseJson(row.client_data));
+  if (au.on && au.offer !== false && !au.disabled.quote_ready) return null;
   const s = notifySettings(row.client_data);
   if (!s.autoSend || !s.replyTo || !s.autoSendSince || row.created_at < s.autoSendSince) return null;
   let quotes = {};
@@ -4366,7 +4391,7 @@ async function autoFields(env, row, { tl, appt, storeTz, origin = ORIGIN_BASE } 
     jl_lead_id: leadRef(row.lead_no), jl_piece: pieceName(a), jl_page_url: page, jl_render_url: img?.image_key ? `${origin}/media/${img.image_key}` : '',
     jl_price: usd(quotePrice(q.picked?.price) || q.picked?.total), jl_option_2_price: q.fit?.show ? usd(quotePrice(q.fit?.price) || q.fit?.total) : '',
     jl_offer_expires: tl?.deadline ? whenText(tl.deadline, storeTz) : '',
-    jl_order_no: row.order_no || '', jl_order_status: o ? (o.pickedAt ? 'Picked up' : ORDER_STAGES[o.stage].label) : '', jl_occasion_date: o?.occasion || '',
+    jl_quote_message: typeof q.picked?.msg === 'string' ? q.picked.msg : '', jl_order_no: row.order_no || '', jl_order_status: o ? (o.pickedAt ? 'Picked up' : ORDER_STAGES[o.stage].label) : '', jl_occasion_date: o?.occasion || '',
   };
   if (appt) {
     const video = appt.kind === 'online' && appt.via === 'video';
@@ -4420,6 +4445,7 @@ async function autoSweep(env, now = Date.now()) {
   const clients = (await env.DB.prepare(`SELECT id, name, data FROM clients WHERE json_extract(data, '$.automation.on') = 1
       OR (json_extract(data, '$.automation') IS NULL AND json_extract(data, '$.ghl.enabled') = 1 AND json_extract(data, '$.ghl.auto.on') = 1)`).all()).results;
   for (const c of clients) await autoClient(env, c, now).catch((e) => console.error('auto', c.id, e.message));
+  await approvalReminders(env, now).catch((e) => console.error('approval reminders', e.message));
 }
 const AUTO_MAX = 25;
 async function autoClient(env, client, now) {
@@ -4445,7 +4471,11 @@ async function autoClient(env, client, now) {
     for (const r of rows) {
       leads.set(r.id, r);
       const pg = parseJson(r.page);
-      const tl = offerTimeline({ pricing, quotes: parseJson(r.quotes), lead: { createdAt: r.created_at } }, now);
+      const qs = parseJson(r.quotes);
+      const tl = offerTimeline({ pricing, quotes: qs, lead: { createdAt: r.created_at } }, now);
+      // Prva ponuda još nije poslata (čeka Approve & send): rok i podsjetnici kreću tek od slanja. Stari leadovi se ne diraju.
+      if (qs.sent?.at) jobs.push({ ev: 'quote_ready', key: `quote_ready:${r.id}:${qs.sent.at}`, at: Number(qs.sent.at), until: Number(qs.sent.at) + 48 * 3600_000, lead: r.id, tl, tz: validTz(pg.tz) || storeTz });
+      else if (!st.disabled.quote_ready && since && r.created_at >= since) continue;
       const clicks = (Array.isArray(pg.actions) ? pg.actions : []).filter((x) => x.action === 'deposit').map((x) => x.at);
       for (const e of offerEvents({ tl, leadId: r.id, views: pg.views || 0, clicks, paid: !!parseJson(r.deposit).paidAt, booked: withAppt.has(r.id), replied: Number(pg.repliedAt) || 0 })) jobs.push({ ...e, lead: r.id, tl, tz: validTz(pg.tz) || storeTz });
     }
@@ -4477,54 +4507,229 @@ async function autoClient(env, client, now) {
   const seen = new Map((await env.DB.prepare('SELECT id, status, tries FROM ghl_events WHERE client_id = ? AND at > ?').bind(client.id, now - 150 * 864e5).all()).results.map((r) => [r.id, r]));
   const done = (k) => { const x = seen.get(k); return !!x && (x.status !== 'failed' || x.tries >= 3); };
   const due = jobs.filter((j) => !st.disabled[j.ev] && (conf || (quo && DEFAULT_TEMPLATES[j.ev])) && dueNow([j], { now, since, tz: j.tz, done }).length).sort((a, b) => a.at - b.at).slice(0, AUTO_MAX);
+  const c = { st, conf, quo, storeTz, pricing };
+  for (const j of due) await deliverAuto(env, client, c, leads.get(j.lead), j, now);
+}
+
+// Jedan događaj kupcu: SMS preko Quo-a (ako je izabran) i/ili polja + tag u GHL-u. Koristi ga sweep i Approve & send.
+// Vraća { status: 'sent' | 'failed' | 'skipped' | 'holdout' | 'locked', error, text: 'quo' | null, ghl: bool }.
+async function deliverAuto(env, client, c, r, j, now) {
+  const { st, conf, quo, storeTz, pricing } = c;
   const f = ghlFetch(env);
-  for (const j of due) {
-    const [tag, group] = EVENTS[j.ev];
-    const r = leads.get(j.lead);
-    const viaQuo = !!quo && !!DEFAULT_TEMPLATES[j.ev];
-    // Kontrolna grupa: samo ponude; zapis ostaje da se vidi koliko poruka nije poslato i kako su ti kupci prošli.
-    const hold = group === 'offer' && j.ev !== 'refresh_moved' && inHoldout(j.lead, st.holdout);
-    const lock = await env.DB.prepare(`INSERT INTO ghl_events (id, client_id, lead_id, appt_id, ev, tag, at, status, tries, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
-        ON CONFLICT(id) DO UPDATE SET tries = ghl_events.tries + 1, status = 'sending', at = excluded.at, channel = excluded.channel WHERE ghl_events.status = 'failed' AND ghl_events.tries < 3`)
-      .bind(j.key, client.id, j.lead, j.appt?.id || null, j.ev, tag, now, hold ? 'holdout' : 'sending', viaQuo ? 'quo' : 'ghl').run();
-    if (!lock.meta?.changes || hold) continue;
-    try {
-      const sync = parseJson(r.ghl);
-      const appt = j.appt || (await env.DB.prepare(`SELECT *, json_extract(ghl, '$.meet') AS meet FROM appointments WHERE lead_id = ? AND status = 'booked' AND start_at > ? ORDER BY start_at LIMIT 1`).bind(r.id, now).first());
-      const values = await autoFields(env, r, { tl: j.tl || offerTimeline({ pricing, quotes: parseJson(r.quotes), lead: { createdAt: r.created_at } }, now), appt, storeTz });
-      // SMS preko Quo-a prvi: ako padne, tag se ne šalje (ponovni pokušaj radi oba), a već poslata poruka se ne šalje dvaput.
-      let q = null;
-      if (viaQuo) {
-        q = await autoQuoSend(env, client, quo, st, r, values, j);
-        if (q.status === 'failed') {
-          await env.DB.prepare(`UPDATE ghl_events SET status = 'failed', error = ? WHERE id = ?`).bind(String(q.error).slice(0, 300), j.key).run();
-          continue;
-        }
+  const [tag, group] = EVENTS[j.ev];
+  const viaQuo = !!quo && !!DEFAULT_TEMPLATES[j.ev];
+  // Kontrolna grupa: samo ponude (ne i prva ponuda, koju kupac mora dobiti); zapis ostaje da se vidi koliko poruka nije poslato.
+  const hold = group === 'offer' && j.ev !== 'refresh_moved' && j.ev !== 'quote_ready' && inHoldout(j.lead, st.holdout);
+  const lock = await env.DB.prepare(`INSERT INTO ghl_events (id, client_id, lead_id, appt_id, ev, tag, at, status, tries, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+      ON CONFLICT(id) DO UPDATE SET tries = ghl_events.tries + 1, status = 'sending', at = excluded.at, channel = excluded.channel WHERE ghl_events.status = 'failed' AND ghl_events.tries < 3`)
+    .bind(j.key, client.id, j.lead, j.appt?.id || null, j.ev, tag, now, hold ? 'holdout' : 'sending', viaQuo ? 'quo' : 'ghl').run();
+  if (!lock.meta?.changes || hold) return { status: hold ? 'holdout' : 'locked' };
+  try {
+    const sync = parseJson(r.ghl);
+    const appt = j.appt || (await env.DB.prepare(`SELECT *, json_extract(ghl, '$.meet') AS meet FROM appointments WHERE lead_id = ? AND status = 'booked' AND start_at > ? ORDER BY start_at LIMIT 1`).bind(r.id, now).first());
+    const values = await autoFields(env, r, { tl: j.tl || offerTimeline({ pricing, quotes: parseJson(r.quotes), lead: { createdAt: r.created_at } }, now), appt, storeTz });
+    // SMS preko Quo-a prvi: ako padne, tag se ne šalje (ponovni pokušaj radi oba), a već poslata poruka se ne šalje dvaput.
+    let q = null;
+    if (viaQuo) {
+      q = await autoQuoSend(env, client, quo, st, r, values, j);
+      if (q.status === 'failed') {
+        await env.DB.prepare(`UPDATE ghl_events SET status = 'failed', error = ? WHERE id = ?`).bind(String(q.error).slice(0, 300), j.key).run();
+        return { status: 'failed', error: q.error };
       }
-      let ghlDone = false;
-      if (conf) {
-        let contactId = sync.contactId || parseJson(j.appt?.ghl).contactId;
-        if (!contactId) {
-          contactId = await ghlEnsureContact(conf.token, conf.cfg, r, f);
-          await env.DB.prepare(`UPDATE leads SET ghl = json_set(COALESCE(ghl, '{}'), '$.contactId', ?) WHERE id = ? AND json_extract(ghl, '$.contactId') IS NULL`).bind(contactId, r.id).run();
-        }
-        // Dok SMS ide preko Quo-a, kontakt nosi tag koji GHL workflow čita: "SMS samo bez ovog taga, inače mejl".
-        if (quo && !sync.quoTag) {
-          await ghlPushTags(conf.token, { contactId }, [QUO_TAG], f);
-          await env.DB.prepare(`UPDATE leads SET ghl = json_set(COALESCE(ghl, '{}'), '$.quoTag', 1) WHERE id = ?`).bind(r.id).run();
-        }
-        const tz = validTz(parseJson(r.page).tz);
-        await ghlSetFields(conf.token, contactId, conf.cfg.fields, values, tz ? { timezone: tz } : {}, f);
-        await ghlFireTag(conf.token, contactId, tag, f);
-        ghlDone = true;
+    }
+    let ghlDone = false;
+    if (conf) {
+      let contactId = sync.contactId || parseJson(j.appt?.ghl).contactId;
+      if (!contactId) {
+        contactId = await ghlEnsureContact(conf.token, conf.cfg, r, f);
+        await env.DB.prepare(`UPDATE leads SET ghl = json_set(COALESCE(ghl, '{}'), '$.contactId', ?) WHERE id = ? AND json_extract(ghl, '$.contactId') IS NULL`).bind(contactId, r.id).run();
       }
-      const sentQuo = q?.status === 'sent';
-      if (!sentQuo && !ghlDone) await env.DB.prepare(`UPDATE ghl_events SET status = 'skipped', error = ? WHERE id = ?`).bind(String(q?.error || 'not sent').slice(0, 300), j.key).run();
-      // Quo preskočio SMS (pristanak, odjava), a GHL tag je otišao (mejl ili workflow): ostaje "sent", razlog se vidi u istoriji.
-      else await env.DB.prepare(`UPDATE ghl_events SET status = 'sent', error = ?, channel = ? WHERE id = ?`).bind(q?.status === 'skipped' ? `Text not sent: ${q.error}` : null, sentQuo ? 'quo' : 'ghl', j.key).run();
-    } catch (e) {
-      await env.DB.prepare(`UPDATE ghl_events SET status = 'failed', error = ? WHERE id = ?`).bind(String(e.message).slice(0, 300), j.key).run();
-      if (conf) await ghlNote(env, client.id, false, `Automation ${tag}: ${e.message}`);
+      // Dok SMS ide preko Quo-a, kontakt nosi tag koji GHL workflow čita: "SMS samo bez ovog taga, inače mejl".
+      if (quo && !sync.quoTag) {
+        await ghlPushTags(conf.token, { contactId }, [QUO_TAG], f);
+        await env.DB.prepare(`UPDATE leads SET ghl = json_set(COALESCE(ghl, '{}'), '$.quoTag', 1) WHERE id = ?`).bind(r.id).run();
+      }
+      const tz = validTz(parseJson(r.page).tz);
+      await ghlSetFields(conf.token, contactId, conf.cfg.fields, values, tz ? { timezone: tz } : {}, f);
+      await ghlFireTag(conf.token, contactId, tag, f);
+      ghlDone = true;
+    }
+    const sentQuo = q?.status === 'sent';
+    if (!sentQuo && !ghlDone) { await env.DB.prepare(`UPDATE ghl_events SET status = 'skipped', error = ? WHERE id = ?`).bind(String(q?.error || 'not sent').slice(0, 300), j.key).run(); return { status: 'skipped', error: q?.error || 'not sent' }; }
+    // Quo preskočio SMS (pristanak, odjava), a GHL tag je otišao (mejl ili workflow): ostaje "sent", razlog se vidi u istoriji.
+    const note = q?.status === 'skipped' ? `Text not sent: ${q.error}` : null;
+    await env.DB.prepare(`UPDATE ghl_events SET status = 'sent', error = ?, channel = ? WHERE id = ?`).bind(note, sentQuo ? 'quo' : 'ghl', j.key).run();
+    return { status: 'sent', error: note, text: sentQuo ? 'quo' : null, ghl: ghlDone };
+  } catch (e) {
+    await env.DB.prepare(`UPDATE ghl_events SET status = 'failed', error = ? WHERE id = ?`).bind(String(e.message).slice(0, 300), j.key).run();
+    if (conf) await ghlNote(env, client.id, false, `Automation ${tag}: ${e.message}`);
+    return { status: 'failed', error: e.message };
+  }
+}
+
+// Promjenljive za šablone (SMS i mejl) iz polja kontakta.
+function tplVars(st, r, values) {
+  const store = storeOf({ form_data: r.form_data, client_data: r.client_data, client_name: r.client_name }).name;
+  return {
+    first_name: String(r.name || '').trim().split(/\s+/)[0] || 'there', piece: values.jl_piece, page_url: values.jl_page_url, price: values.jl_price, offer_expires: values.jl_offer_expires,
+    appt_type: values.jl_appt_type, appt_time: values.jl_appt_time, appt_location: values.jl_appt_location, meet_link: values.jl_meet_link, reschedule_url: values.jl_reschedule_url,
+    order_no: values.jl_order_no, store, review_link: st.reviewLink, sender: st.sender || store, quote_message: values.jl_quote_message,
+  };
+}
+// Tačan tekst SMS-a za događaj (isti za slanje i za pregled prije slanja).
+async function quoSmsText(env, client, st, r, values, j) {
+  let text = renderTemplate(st.templates[j.ev] || DEFAULT_TEMPLATES[j.ev], tplVars(st, r, values));
+  // Prva poruka kupcu u životu nosi uputu za odjavu (A2P), osim ako je tekst već ima.
+  const earlier = await env.DB.prepare(`SELECT 1 AS x FROM ghl_events WHERE client_id = ? AND lead_id = ? AND channel = 'quo' AND status = 'sent' AND ev != 'test' AND id != ? LIMIT 1`).bind(client.id, r.id, j.key).first();
+  if (!earlier && !/\bSTOP\b/i.test(text)) text += ' Reply STOP to opt out.';
+  return text;
+}
+
+// ---------- Approve & send: prva ponuda ide kupcu tek kad zlatar odobri (ili odmah, u načinu "automatically") ----------
+// Kanali bez dešifrovanja ključeva (za listu leadova): GHL povezan i uključen, Quo spreman i izabran za SMS.
+function quoteChannelsLite(d, st) {
+  const g = d.ghl || {};
+  const q = d.quo || {};
+  const ghl = g.enabled === true && !!g.token && !!g.locationId;
+  const quo = st.texts === 'quo' && !!q.key && !!(q.fromId || q.from);
+  return { ghl, quo, textVia: quo ? 'quo' : ghl ? 'ghl' : null, emailVia: ghl ? 'ghl' : null };
+}
+// Razlog zašto se ne može slati ('' = može).
+function quoteBlock(st, ch, quotes, archived) {
+  if (!st.on) return 'Turn on Automations in Workflows first';
+  if (st.offer === false || st.disabled.quote_ready) return 'The Quote sent step is turned off in Workflows';
+  if (!ch.ghl && !ch.quo) return 'Connect GoHighLevel or Quo in Workflows';
+  if (!(typeof quotes?.picked?.msg === 'string' && quotes.picked.msg.trim())) return 'Write the Estimated price message first';
+  if (archived) return 'This lead is archived';
+  return '';
+}
+const sentView = (x) => (x && Number(x.at) ? { at: Number(x.at), by: x.by === 'auto' ? 'auto' : 'portal', count: Number(x.count) || 1, text: x.text || null, email: x.email || null, note: x.note || '' } : null);
+// Za karticu leada: može li se slati, zašto ne, je li poslato, čeka li odobrenje.
+function quoteSendView(l, st, ch) {
+  const quotes = parseJson(l.quotes);
+  const reason = quoteBlock(st, ch, quotes, !!l.archived_at);
+  const sent = sentView(quotes.sent);
+  return { sent, can: !reason, reason, mode: st.quoteMode, via: { text: ch.textVia, email: ch.emailVia }, toApprove: !reason && !sent && st.quoteMode === 'approve' };
+}
+async function quoteChannels(env, client) {
+  const d = parseJson(client.data);
+  const st = autoOf(d);
+  const conf = await ghlConfig(env, client);
+  const quo = st.texts === 'quo' ? await quoConfig(env, client) : null;
+  return { d, st, conf, quo, ch: { ghl: !!conf, quo: !!quo, textVia: quo ? 'quo' : conf ? 'ghl' : null, emailVia: conf ? 'ghl' : null } };
+}
+const clientOf = (row) => ({ id: row.client_id, name: row.client_name, data: row.client_data });
+
+// Pregled prije slanja: kome ide, tačan tekst SMS-a, naslov mejla i odakle ide.
+async function quotePreview(env, leadId, clientId, now = Date.now()) {
+  const row = await notifyRow(env, leadId);
+  if (!row || row.client_id !== clientId) return null;
+  const client = clientOf(row);
+  const { d, st, conf, quo, ch } = await quoteChannels(env, client);
+  const quotes = parseJson(row.quotes);
+  const reason = quoteBlock(st, ch, quotes, !!row.archived_at);
+  const storeTz = bookingSettings(d.booking).tz;
+  const pricing = d.pricing || {};
+  const withSent = { ...quotes, sent: { at: now } };
+  const values = await autoFields(env, row, { tl: offerTimeline({ pricing, quotes: withSent, lead: { createdAt: row.created_at } }, now), storeTz });
+  const vars = tplVars(st, row, values);
+  const to = toE164(row.phone);
+  const consent = parseJson(row.consent, {});
+  let smsWhy = '';
+  if (!consent.sms) smsWhy = 'no SMS consent';
+  else if (!to) smsWhy = 'no phone number';
+  else if (await env.DB.prepare('SELECT 1 AS x FROM sms_optouts WHERE client_id = ? AND phone = ?').bind(client.id, to).first()) smsWhy = 'opted out of texts';
+  const j = { ev: 'quote_ready', key: 'preview' };
+  const text = DEFAULT_TEMPLATES.quote_ready ? await quoSmsText(env, client, st, row, values, j) : '';
+  const [subj, body] = STEP_CONTENT.quote_ready.email;
+  const q = d.quo || {};
+  const from = ch.quo && ch.ghl ? `Text from your Quo number ${prettyPhone(q.from)} · email from GoHighLevel`
+    : ch.quo ? `Text from your Quo number ${prettyPhone(q.from)}` : ch.ghl ? 'Text and email from GoHighLevel' : '';
+  return {
+    can: !reason, reason, resend: !!quotes.sent?.at, mode: st.quoteMode,
+    to: { name: row.name || '', email: row.email || '', phone: to ? maskPhone(to) : '' },
+    sms: { text, willSend: !smsWhy, why: smsWhy, via: ch.textVia },
+    email: { subject: renderTemplate(subj, vars), body: renderTemplate(body, vars), via: ch.emailVia },
+    from,
+  };
+}
+
+// Šalje prvu ponudu. by: 'portal' (klik) ili 'auto'. Vraća { status, error } ili { ok, sent, delivery }.
+async function sendQuote(env, leadId, { by = 'portal', clientId = null, onlyOnce = false, now = Date.now() } = {}) {
+  const row = await notifyRow(env, leadId);
+  if (!row || (clientId && row.client_id !== clientId)) return { status: 404, error: 'Not found' };
+  const client = clientOf(row);
+  const { d, st, conf, quo, ch } = await quoteChannels(env, client);
+  const quotes = parseJson(row.quotes);
+  const why = quoteBlock(st, ch, quotes, !!row.archived_at);
+  if (why) return { status: 400, error: `${why}.` };
+  const prev = quotes.sent?.at ? quotes.sent : null;
+  if (prev && onlyOnce) return { status: 200, ok: true, already: true };
+  const sent = { at: now, by, ...(prev ? { count: (Number(prev.count) || 1) + 1 } : {}), text: ch.textVia, email: ch.emailVia };
+  const set = await env.DB.prepare(`UPDATE leads SET quotes = json_set(COALESCE(quotes, '{}'), '$.sent', json(?)) WHERE id = ?${prev ? '' : " AND json_type(COALESCE(quotes, '{}'), '$.sent') IS NULL"}`).bind(JSON.stringify(sent), leadId).run();
+  if (!set.meta.changes) return { status: 409, error: 'This quote was already sent.' };
+  const fresh = await notifyRow(env, leadId);
+  const storeTz = bookingSettings(d.booking).tz;
+  const pricing = d.pricing || {};
+  const key = `quote_ready:${leadId}:${now}`;
+  const tl = offerTimeline({ pricing, quotes: parseJson(fresh.quotes), lead: { createdAt: fresh.created_at } }, now);
+  const j = { ev: 'quote_ready', key, at: now, until: now + 48 * 3600_000, lead: leadId, tl, tz: validTz(parseJson(fresh.page).tz) || storeTz };
+  const res = await deliverAuto(env, client, { st, conf, quo, storeTz, pricing }, fresh, j, now);
+  if (res.status !== 'sent') {
+    // Ništa nije stiglo do kupca: slanje se poništava da zlatar može ponovo (a rok ponude ne kreće).
+    const back = prev ? JSON.stringify(prev) : null;
+    await env.DB.prepare(`UPDATE leads SET quotes = ${back ? "json_set(quotes, '$.sent', json(?))" : "json_remove(quotes, '$.sent')"} WHERE id = ?`).bind(...(back ? [back] : []), leadId).run();
+    const msg = res.status === 'failed' ? `Could not send: ${res.error}` : res.status === 'skipped' ? `Nothing was sent (${res.error}). You can copy the message and send it yourself.` : 'This quote is already being sent.';
+    return { status: res.status === 'failed' ? 502 : 400, error: msg };
+  }
+  if (res.error) await env.DB.prepare(`UPDATE leads SET quotes = json_set(quotes, '$.sent.note', ?) WHERE id = ?`).bind(String(res.error).slice(0, 160), leadId).run();
+  if (ch.textVia === 'quo' && !res.text) await env.DB.prepare(`UPDATE leads SET quotes = json_set(quotes, '$.sent.text', json('null')) WHERE id = ?`).bind(leadId).run();
+  await markReply(env, leadId, now);
+  await logEvent(env, leadId, 'quote_sent', { by, again: !!prev }, now);
+  return { status: 200, ok: true, delivery: res };
+}
+
+// Poslije nove Estimated price poruke za nov lead (poslije uključenja Automations): ili ode odmah (auto), ili čeka odobrenje.
+async function afterPickedQuote(env, leadId) {
+  const row = await notifyRow(env, leadId);
+  if (!row || row.archived_at) return;
+  const d = parseJson(row.client_data);
+  const st = autoOf(d);
+  if (!st.on || !st.since || row.created_at < st.since) return;
+  const quotes = parseJson(row.quotes);
+  if (quotes.sent?.at) return;
+  const why = quoteBlock(st, quoteChannelsLite(d, st), quotes, false);
+  if (why) return;
+  if (st.quoteMode === 'auto') {
+    const r = await sendQuote(env, leadId, { by: 'auto', onlyOnce: true });
+    if (r.error) console.error('auto quote send', leadId, r.error);
+    return;
+  }
+  const had = await env.DB.prepare(`SELECT 1 AS x FROM lead_events WHERE lead_id = ? AND type = 'quote_awaiting' LIMIT 1`).bind(leadId).first();
+  if (!had) await logEvent(env, leadId, 'quote_awaiting', null);
+}
+
+// Podsjetnik zlataru: ponuda čeka odobrenje 2 sata, jednom po leadu, samo od 9 do 19 po vremenu radnje (inače ujutro).
+async function approvalReminders(env, now = Date.now()) {
+  const clients = (await env.DB.prepare(`SELECT id, name, data FROM clients WHERE json_extract(data, '$.automation.on') = 1`).all()).results;
+  for (const c of clients) {
+    const d = parseJson(c.data);
+    const st = autoOf(d);
+    if (st.quoteMode !== 'approve' || st.offer === false || st.disabled.quote_ready || !st.since) continue;
+    const tz = bookingSettings(d.booking).tz;
+    const h = localHour(now, tz);
+    if (h < 9 || h >= 19) continue;
+    const rows = (await env.DB.prepare(`SELECT l.id, l.name, l.answers FROM leads l JOIN forms f ON f.id = l.form_id
+        WHERE f.client_id = ? AND l.archived_at IS NULL AND l.created_at >= ? AND l.created_at > ? AND json_type(COALESCE(l.quotes, '{}'), '$.picked') = 'object' AND json_type(COALESCE(l.quotes, '{}'), '$.sent') IS NULL
+          AND EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id = l.id AND e.type = 'quote_awaiting' AND e.at <= ?)
+          AND NOT EXISTS (SELECT 1 FROM lead_events e WHERE e.lead_id = l.id AND e.type = 'quote_reminder') LIMIT 10`).bind(c.id, st.since, now - 3 * 864e5, now - 2 * 3600_000).all()).results;
+    for (const r of rows) {
+      await logEvent(env, r.id, 'quote_reminder', null, now);
+      const alert = emailList(d.pricing?.alertEmails);
+      if (mailOn(env) && alert.length) {
+        const text = `${r.name || 'A customer'} is still waiting for their ${pieceName(parseJson(r.answers))} quote. Open your portal, check the message and tap Approve & send: ${ORIGIN_BASE}/portal`;
+        await sendMail(env, { to: alert, subject: `Waiting for your OK: quote for ${r.name || 'a lead'}`, text, html: textToHtml(text), fromName: `${c.name} leads` }).catch((e) => console.error('approval reminder', r.id, e.message));
+      }
     }
   }
 }
@@ -4540,16 +4745,7 @@ async function autoQuoSend(env, client, quo, st, r, values, j) {
   if (!to) return skip('no phone number');
   if (await env.DB.prepare('SELECT 1 AS x FROM sms_optouts WHERE client_id = ? AND phone = ?').bind(client.id, to).first()) return skip('opted out of texts');
   if (j.ev === 'review_request' && !st.reviewLink) return skip('Add your Google review link');
-  const store = storeOf({ form_data: r.form_data, client_data: r.client_data, client_name: r.client_name }).name;
-  const vars = {
-    first_name: String(r.name || '').trim().split(/\s+/)[0] || 'there', piece: values.jl_piece, page_url: values.jl_page_url, price: values.jl_price, offer_expires: values.jl_offer_expires,
-    appt_type: values.jl_appt_type, appt_time: values.jl_appt_time, appt_location: values.jl_appt_location, meet_link: values.jl_meet_link, reschedule_url: values.jl_reschedule_url,
-    order_no: values.jl_order_no, store, review_link: st.reviewLink, sender: st.sender || store,
-  };
-  let text = renderTemplate(st.templates[j.ev] || DEFAULT_TEMPLATES[j.ev], vars);
-  // Prva poruka kupcu u životu nosi uputu za odjavu (A2P), osim ako je tekst već ima.
-  const earlier = await env.DB.prepare(`SELECT 1 AS x FROM ghl_events WHERE client_id = ? AND lead_id = ? AND channel = 'quo' AND status = 'sent' AND ev != 'test' AND id != ? LIMIT 1`).bind(client.id, r.id, j.key).first();
-  if (!earlier && !/\bSTOP\b/i.test(text)) text += ' Reply STOP to opt out.';
+  const text = await quoSmsText(env, client, st, r, values, j);
   try {
     const out = await quoSend(quo.key, quo.from, to, text, quoFetch(env));
     await env.DB.prepare(`UPDATE ghl_events SET ext_id = ?, target = ?, body = ?, channel = 'quo' WHERE id = ?`).bind(out.id || null, maskPhone(to), text.slice(0, 1600), j.key).run();
