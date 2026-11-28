@@ -83,7 +83,7 @@ function render(tpl, v) {
   // Potpis "{sender}, {store}" kad je ime pošiljaoca isto kao radnja: samo jednom.
   const st = String(v.store || '').trim();
   if (st && String(v.sender || '').trim() === st) t = t.split(`${st}, ${st}`).join(st);
-  return t.replace(/\b(it's|It's) (.{1,40}?) from \2\b/, '$1 $2').trim();
+  return t.replace(/\b(it's|It's|this is|This is) (.{1,80}?) from \2(?=$|[\s.,!?])/, '$1 $2').trim();
 }
 const segments = (n) => (n <= 160 ? 1 : Math.ceil(n / 153));
 const copyBtn = (v, what) => `<button type="button" class="wf-copy" data-wf="copy" data-v="${C.esc(v)}" aria-label="Copy ${C.esc(what)}" title="Copy ${C.esc(what)}">${ICON.copy}</button>`;

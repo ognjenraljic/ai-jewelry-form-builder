@@ -223,8 +223,8 @@ export const FLOWS = [
 ];
 // Tekstovi za SMS preko Quo-a (iz docs/ghl-workflows-en.md, sekcija 6). null = nema SMS teksta (interni / zahvala u GHL-u).
 export const DEFAULT_TEMPLATES = {
-  deposit_click: "Hi {first_name}, it's {sender} from {store}. I saw you opened the deposit for your {piece}. Anything I can help with? I can hold it with a smaller deposit or set up a quick call.",
-  offer_unopened: "Hey {first_name}, it's {sender} from {store}. Did you get a chance to see your {piece} design? It's here: {page_url}",
+  deposit_click: "Hi {first_name}, this is {sender} from {store}. I saw you opened the deposit for your {piece}. Anything I can help with? I can hold it with a smaller deposit or set up a quick call.",
+  offer_unopened: "Hey {first_name}, this is {sender} from {store}. Did you get a chance to see your {piece} design? It's here: {page_url}",
   offer_saved: 'Hey {first_name}, your {piece} design is saved here: {page_url} Price held until {offer_expires}. Questions? Just reply.',
   offer_24h: '{first_name}, {sender} here. Your {piece} is on hold until {offer_expires}. Want me to walk you through it on a quick 10-min call? {page_url}',
   offer_final: "Last few hours on your {piece} price. After that I re-quote at that day's gold price, which can go up or down. {page_url}",
@@ -232,7 +232,7 @@ export const DEFAULT_TEMPLATES = {
   offer_closeout: 'Should I keep your {piece} design on file, or close it out for now? Either is totally fine. {sender}, {store}',
   refresh_ready: 'Your refreshed price is ready and held for 24 hours: {page_url}',
   refresh_moved: null,
-  appt_booked: "Hey {first_name}, it's {sender} from {store}. You're booked: {appt_type}, {appt_time}. {appt_location}. Need another time? {reschedule_url}",
+  appt_booked: "Hey {first_name}, this is {sender} from {store}. You're booked: {appt_type}, {appt_time}. {appt_location}. Need another time? {reschedule_url}",
   visit_3d: 'See you {appt_time} at the studio, {first_name}. Need another time? {reschedule_url}',
   visit_24h: 'See you tomorrow, {appt_time}. {appt_location}. Need another time? {reschedule_url}',
   visit_2h: '{sender} is pulling pieces for you. {appt_location}. See you at {appt_time}.',
@@ -243,7 +243,7 @@ export const DEFAULT_TEMPLATES = {
   appt_cancelled: 'Got it, want to pick another time? {reschedule_url}',
   order_ready: 'Your {piece} is ready for pick up! Order {order_no}. Reply to set a time.',
   picked_up: null,
-  review_request: "Hey {first_name}, it's {sender} from {store}. Hope you're loving the {piece}! If you have a minute, an honest Google review helps us a lot: {review_link}",
+  review_request: "Hey {first_name}, this is {sender} from {store}. Hope you're loving the {piece}! If you have a minute, an honest Google review helps us a lot: {review_link}",
 };
 // Ostali kanali po koraku (28.11.2026, Ognjen: "primjeri poruka, šta se kada šalje, oznake za kanale"). Mejl je predlog za
 // GHL workflow (kupac bez SMS pristanka dobija mejl; GHL sam dodaje link za odjavu). task = zadatak / obavještenje za radnju.
@@ -281,11 +281,11 @@ export const TEMPLATE_VARS = ['first_name', 'piece', 'page_url', 'price', 'offer
 export function renderTemplate(tpl, vars) {
   let t = String(tpl || '').replace(/\{([a-z_]+)\}/g, (m, k) => (k in vars ? String(vars[k] ?? '') : m));
   t = t.replace(/[ \t]+/g, ' ').replace(/ ([.,!?])/g, '$1').replace(/\.\s*\./g, '.').trim();
-  // Ime pošiljaoca isto kao ime radnje: "it's District from District" -> "it's District".
+  // Ime pošiljaoca isto kao ime radnje: "this is District from District" -> "this is District".
   // Potpis "{sender}, {store}" kad je ime pošiljaoca isto kao radnja: samo jednom.
   const st = String(vars.store || '').trim();
   if (st && String(vars.sender || '').trim() === st) t = t.split(`${st}, ${st}`).join(st);
-  return t.replace(/\b(it's|It's) (.{1,40}?) from \2\b/, '$1 $2').trim();
+  return t.replace(/\b(it's|It's|this is|This is) (.{1,80}?) from \2(?=$|[\s.,!?])/, '$1 $2').trim();
 }
 export const exampleVars = (store = 'Your Store') => ({
   first_name: 'Ava', piece: 'grillz', page_url: 'https://jewelrylead.com/p/abc123', price: '$1,850', offer_expires: 'Mon, Dec 1, 5:00 PM', appt_type: 'Studio visit',

@@ -37,7 +37,7 @@ ok(await verifyQuoSignature(sec, hd({ 'webhook-id': 'msg_1', 'webhook-timestamp'
 ok(!(await verifyQuoSignature(sec, hd({ 'webhook-id': 'msg_1', 'webhook-timestamp': ts0, 'webhook-signature': sig0 }), '{"a":2}', now0)), 'potpis: izmijenjeno tijelo odbijeno');
 ok(!(await verifyQuoSignature(sec, hd({ 'webhook-id': 'msg_1', 'webhook-timestamp': ts0, 'webhook-signature': sig0 }), '{"a":1}', now0 + 6 * 60_000)), 'potpis: stariji od 5 min odbijen');
 ok(renderTemplate(DEFAULT_TEMPLATES.visit_2h, { sender: 'District', appt_location: '1550 Larimer St', appt_time: 'Tue 11:00 AM' }) === 'District is pulling pieces for you. 1550 Larimer St. See you at Tue 11:00 AM.', 'šablon: zamjene');
-ok(renderTemplate(DEFAULT_TEMPLATES.offer_unopened, { first_name: 'Ava', sender: 'District', store: 'District', piece: 'grillz', page_url: 'https://x/p/1' }) === "Hey Ava, it's District. Did you get a chance to see your grillz design? It's here: https://x/p/1", 'šablon: ime pošiljaoca isto kao radnja se ne ponavlja');
+ok(renderTemplate(DEFAULT_TEMPLATES.offer_unopened, { first_name: 'Ava', sender: 'District', store: 'District', piece: 'grillz', page_url: 'https://x/p/1' }) === "Hey Ava, this is District. Did you get a chance to see your grillz design? It's here: https://x/p/1", 'šablon: ime pošiljaoca isto kao radnja se ne ponavlja');
 ok(Object.keys(EVENTS).every((k) => STEP_CONTENT[k] && (STEP_CONTENT[k].email || STEP_CONTENT[k].task)) && Object.values(STEP_CONTENT).every((c) => !c.email || (c.email[0].length <= 80 && c.email[1].includes('{first_name}'))), 'svaki korak ima primjer mejla ili zadatka');
 ok(renderTemplate(STEP_CONTENT.offer_closeout.email[1], { first_name: 'Ava', sender: 'District', store: 'District', piece: 'grillz' }).endsWith('\n\nDistrict') && renderTemplate(DEFAULT_TEMPLATES.offer_closeout, { sender: 'Enrique', store: 'District', piece: 'grillz' }).endsWith('Enrique, District'), 'potpis: ime radnje se ne ponavlja');
 ok(!Object.entries(DEFAULT_TEMPLATES).some(([k, v]) => v && v.length > 320) && Object.keys(DEFAULT_TEMPLATES).sort().join() === Object.keys(EVENTS).sort().join(), 'svaki događaj ima ključ u šablonima (internalni null), nijedan tekst predug');
@@ -185,7 +185,7 @@ await sleep(1500);
 await sweep(Date.now() + 90_000);
 const m1 = (await quo()).messages.findLast((m) => m.to[0] === '+13035550198');
 ok(!!m1 && m1.from === 'PNmain00001', `Quo: poruka poslata sa izabranog broja (${m1?.content?.slice(0, 60)})`);
-ok(m1 && /^Hey Bea, it's Enrique from WF A \w+\. You're booked: Studio visit, .+\. WF A Jewelers, 1550 Larimer St.* Need another time\? http.+\/p\/.+#appts Reply STOP to opt out\.$/.test(m1.content) && !/[{}]/.test(m1.content), 'tekst poruke: zamjene tačne, ime pošiljaoca, prva poruka nosi "Reply STOP"');
+ok(m1 && /^Hey Bea, this is Enrique from WF A \w+\. You're booked: Studio visit, .+\. WF A Jewelers, 1550 Larimer St.* Need another time\? http.+\/p\/.+#appts Reply STOP to opt out\.$/.test(m1.content) && !/[{}]/.test(m1.content), 'tekst poruke: zamjene tačne, ime pošiljaoca, prva poruka nosi "Reply STOP"');
 v = (await A.wf()).body;
 const hq = histFor(v, 'appt_booked').find((h) => h.name === 'Bea Quo');
 ok(hq && hq.channel === 'quo' && hq.status === 'sent' && hq.target === '+1 ••• ••• 0198' && hq.body === m1.content, 'istorija: kanal quo, maskiran broj, tekst');
@@ -241,7 +241,7 @@ v = (await A.wf()).body;
 const un = histFor(v, 'offer_unopened');
 ok(un.some((h) => h.name === 'Dan Silent' && h.status === 'sent' && h.channel === 'quo') && !un.some((h) => h.name === 'Cleo Reply'), 'odgovor kupca: njegovi offer događaji staju, ostali kupci i dalje dobijaju');
 const mDan = (await quo()).messages.findLast((m) => m.to[0] === '+13035550196');
-ok(mDan && /^Hey Dan, it's Enrique from WF A \w+\. Did you get a chance to see your grillz design\? It's here: http.+\/p\/.+ Reply STOP to opt out\.$/.test(mDan.content), 'offer_unopened: tekst iz šablona');
+ok(mDan && /^Hey Dan, this is Enrique from WF A \w+\. Did you get a chance to see your grillz design\? It's here: http.+\/p\/.+ Reply STOP to opt out\.$/.test(mDan.content), 'offer_unopened: tekst iz šablona');
 
 // ---------- 6. Probna poruka ----------
 const before = (await quo()).messages.length;

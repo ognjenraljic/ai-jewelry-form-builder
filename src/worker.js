@@ -2574,7 +2574,9 @@ async function workflowsView(env, client, origin) {
   const hist = (await env.DB.prepare(`SELECT e.id, e.ev, e.tag, e.at, e.status, e.error, e.channel, e.target, e.body, e.acked_at, e.lead_id, l.name, l.email, l.lead_no
       FROM ghl_events e LEFT JOIN leads l ON l.id = e.lead_id WHERE e.client_id = ? ORDER BY e.at DESC LIMIT 100`).bind(client.id).all()).results;
   const hookUrl = g.hookKey ? `${origin}/api/hooks/ghl/${g.hookKey}` : '';
-  const store = d.ghl?.storeName || client.name;
+  // Ime radnje kao u pravim porukama (storeOf: brand forme), ne interno ime klijenta u adminu.
+  const brandRow = await env.DB.prepare(`SELECT data FROM forms WHERE client_id = ? ORDER BY rowid LIMIT 1`).bind(client.id).first().catch(() => null);
+  const store = parseJson(brandRow?.data).brand?.name || d.ghl?.storeName || client.name;
   return {
     automation: st,
     channel: st.texts,
