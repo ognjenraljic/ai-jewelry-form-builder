@@ -21,11 +21,29 @@ Click a step to open its panel: when it is sent, which consent it needs, an on/o
 
 ---
 
+## Connections card
+
+At the top of the Workflows tab. Green (**Working**) only appears when the portal has seen it work:
+
+| Connection | How the portal knows |
+|---|---|
+| GoHighLevel | The token works |
+| Phone number in GoHighLevel | The number list from GoHighLevel (needs View Phone Numbers) |
+| Google Calendar | Bookings actually arrive in the GoHighLevel calendar. Two-way sync with Google is not visible through the API: check Settings → Calendars → Connections |
+| Google Meet | A video booking got a Meet link. That also proves Google is connected in GoHighLevel |
+| Quo | Connected, number chosen, replies and delivery receipts on |
+| Text registration (A2P) | Through Quo: Quo texts are delivering. Through GoHighLevel: not visible through the API, check Settings → Phone Numbers → Trust Center |
+| Gmail | Not visible through the API: check Settings → Email Services |
+
+The Quo app inside GoHighLevel (call and text sync) is not visible through the API either.
+
+---
+
 ## Part 1: GoHighLevel (both channels need this)
 
 ### 1. Token scope
-Settings → Private Integrations → your JewelryLead token → Edit → add the scope **View Workflows** → Save. The token itself stays the same; if GHL shows a new one, paste it in the portal (Forms → GoHighLevel).
-In the Workflows tab, the GoHighLevel card should then show **View Workflows scope: OK**. This is how the portal knows which workflows are published.
+Settings → Private Integrations → your JewelryLead token → Edit → add the scopes **View Workflows** and **View Phone Numbers** → Save. The token itself stays the same; if GHL shows a new one, paste it in the portal (Forms → GoHighLevel).
+In the Workflows tab, the GoHighLevel card should then show **View Workflows scope: OK**. This is how the portal knows which workflows are published. With View Phone Numbers, the Connections card shows the GoHighLevel phone number.
 
 ### 2. Name each workflow exactly as its tag
 The portal matches workflows by name. Name each one exactly as its tag, for example `jl offer 24h left`. The full list of tags is in the GHL workflows guide from November 27 (21 tags).
@@ -87,7 +105,7 @@ Texts to customers go out from District's existing Quo number, the one customers
 
 | Who | What | Where |
 |---|---|---|
-| Enrique / GHL admin | View Workflows scope on the token | GHL → Settings → Private Integrations |
+| Enrique / GHL admin | View Workflows and View Phone Numbers scopes on the token | GHL → Settings → Private Integrations |
 | Enrique / GHL admin | Name each workflow as its tag, add the final webhook with `event` / `tag`, three-branch text step | GHL → Automation → Workflows |
 | Enrique (Quo Owner) | Quo API key, credits, A2P approved in Quo | Quo → Settings |
 | Us or Enrique | Connect Quo, pick the number, sender name, review link, test, switch to Quo, turn on Automations | Portal → Workflows |

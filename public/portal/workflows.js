@@ -138,6 +138,8 @@ function head(d) {
 const CONN_PILL = { ok: 'Working', warn: 'Set up', bad: 'Needs attention', off: 'Not connected', manual: 'Check in GoHighLevel' };
 const CONN_ICON = { ghl: '<i class="wf-mono">HL</i>', quo: '<i class="wf-mono">Q</i>', phone: ICON.phone, calendar: ICON.cal, meet: ICON.video, gmail: ICON.mail2, a2p: ICON.shield };
 const fmtShort = (t) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+// +13035550100 -> +1 303 555 0100 (ostale vrijednosti ostaju kakve jesu).
+const fmtPhone = (v) => (/^\+1\d{10}$/.test(String(v || '')) ? String(v).replace(/^\+1(\d{3})(\d{3})(\d{4})$/, '+1 $1 $2 $3') : v);
 function connectionsCard(d) {
   const rows = d.connections || [];
   if (!rows.length) return '';
@@ -145,10 +147,10 @@ function connectionsCard(d) {
     <div class="wf-conn-top"><h3>Connections</h3><p>What is connected for texts, email, calendar and calls. Green means we have seen it work.</p></div>
     <ul class="wf-conn-grid">${rows.map((r) => {
       const open = W.conn === r.key;
-      const value = r.value || (r.at && (r.key === 'calendar' || r.key === 'meet') ? `Last: ${fmtShort(r.at)}` : '');
-      return `<li><button type="button" class="wf-ct is-${C.esc(r.state)} ${open ? 'is-open' : ''}" data-wf="conn" data-k="${C.esc(r.key)}" aria-expanded="${open}" aria-label="${C.esc(`${r.label}: ${CONN_PILL[r.state]}`)}">
+      const value = fmtPhone(r.value) || (r.at && (r.key === 'calendar' || r.key === 'meet') ? `Last: ${fmtShort(r.at)}` : '');
+      return `<li data-k="${C.esc(r.key)}"><button type="button" class="wf-ct is-${C.esc(r.state)} ${open ? 'is-open' : ''}" data-wf="conn" data-k="${C.esc(r.key)}" aria-expanded="${open}" aria-label="${C.esc(`${r.label}: ${CONN_PILL[r.state]}`)}">
         <span class="wf-ct-top"><span class="wf-ct-ic">${CONN_ICON[r.key] || ''}</span><b>${C.esc(r.label)}</b></span>
-        <span class="wf-ct-st"><i class="wf-dot" aria-hidden="true"></i><span class="wf-cpill">${CONN_PILL[r.state]}</span></span>
+        <span class="wf-ct-st"><span class="wf-cpill">${CONN_PILL[r.state]}</span></span>
         ${value ? `<span class="wf-ct-val">${C.esc(value)}</span>` : ''}
         <span class="wf-ct-det ${open ? '' : 'is-clamp'}">${C.esc(r.detail)}</span>
       </button></li>`;

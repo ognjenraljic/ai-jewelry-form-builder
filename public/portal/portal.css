@@ -1759,3 +1759,4 @@ button.dbar.future { opacity: .35; cursor: default; }
 .wf-copyhint { margin: 10px 0 6px; }
 .wf-copyrow { margin-top: 0; justify-content: flex-start; }
 .wf-cp .wf-pre { word-break: normal; overflow-wrap: break-word; }
+.wf-conn-grid li[data-k="quo"] { grid-column: 1 / -1; }
