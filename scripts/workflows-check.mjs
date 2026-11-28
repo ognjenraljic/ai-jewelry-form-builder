@@ -77,6 +77,7 @@ async function book(lead, kind, skip = 0) {
 const stepsOf = (v) => v.flows.flatMap((f) => f.lanes.flatMap((l) => l.steps));
 const stepOf = (v, ev) => stepsOf(v).find((s) => s.ev === ev);
 const histFor = (v, ev) => v.history.filter((h) => h.ev === ev);
+const cn = (v, k) => v.connections?.find((x) => x.key === k);
 
 // ---------- 1. Ništa povezano: nema lažnog "live" ----------
 const A = await mkClient('WF A');
@@ -90,6 +91,9 @@ v = r.body;
 ok(r.status === 200 && v.automation.on && v.automation.since > 0, 'glavni prekidač uključen (since postavljen)');
 ok(stepsOf(v).every((s) => s.state === 'not_connected') && v.flows.every((f) => f.state === 'not_connected'), 'uključeno a ništa povezano: svi koraci "not_connected", nijedan "live"');
 ok(!stepsOf(v).some((s) => ['live', 'published', 'waiting'].includes(s.state)), 'nema lažnog live / waiting bez veze');
+ok(v.connections?.length === 7 && ['ghl', 'phone', 'calendar', 'meet', 'gmail', 'a2p', 'quo'].every((k) => cn(v, k)), 'Connections: sedam redova');
+ok(['ghl', 'phone', 'calendar', 'meet', 'quo'].every((k) => cn(v, k).state === 'off'), 'Connections bez GHL-a i Quo-a: GHL redovi i Quo "off"');
+ok(cn(v, 'gmail').state === 'manual' && cn(v, 'a2p').state === 'manual' && !v.connections.some((x) => ['gmail', 'a2p'].includes(x.key) && x.state === 'ok'), 'Connections: gmail i a2p nikad "ok" bez dokaza');
 
 // ---------- 2. Provjera ulaza ----------
 ok((await A.put({ texts: 'sms' })).status === 400, 'PUT: nepoznat kanal 400');
@@ -112,6 +116,10 @@ ok(g.connected && g.enabled && g.hookUrl, 'GHL povezan, webhook adresa napravlje
 await fetch(`${BASE}/api/portal/ghl/fields`, { method: 'POST', headers: A.C, body: '{}' });
 v = (await A.wf()).body;
 ok(v.ghl.connected && v.ghl.enabled && v.ghl.hook && v.ghl.wfScope === 'ok', 'tab: GHL povezan, ack webhook adresa spremna, View Workflows ok');
+ok(cn(v, 'ghl').state === 'ok' && cn(v, 'phone').state === 'ok' && cn(v, 'phone').value === '+1 303 555 0142' && /Texts and calls/.test(cn(v, 'phone').detail), 'Connections: GHL ok, telefon ok sa brojem +1 303 555 0142');
+ok(cn(v, 'calendar').state === 'warn' && cn(v, 'meet').state === 'off' && /Two-way sync/.test(cn(v, 'calendar').detail), 'Connections: kalendar "warn" prije prvog termina (uz napomenu o dvosmjernom sinhu), Meet "off" dok je isključen u Bookings');
+await fetch(`${BASE}/api/portal/booking`, { method: 'PUT', headers: A.C, body: JSON.stringify({ settings: { enabled: true, tz: 'America/Denver', kinds: { online: { on: true, minutes: 10, video: '', meet: true }, visit: { on: true, minutes: 30 } } } }) });
+{ const vm = (await A.wf()).body; ok(cn(vm, 'meet').state === 'warn' && /Set on the calendar/.test(cn(vm, 'meet').detail), `Connections: Meet uključen i postavljen na kalendaru, "warn" do prvog videa (${cn(vm, 'meet').state})`); }
 ok(stepOf(v, 'appt_booked').state === 'published' && stepOf(v, 'visit_24h').state === 'waiting' && stepOf(v, 'offer_24h').state === 'waiting', 'objavljen workflow je "published", nacrt i nepostojeći "waiting"');
 ok(v.flows.find((f) => f.key === 'appts').state === 'waiting' && v.flows.find((f) => f.key === 'offer').state === 'waiting', 'tokovi: waiting (nema potvrde)');
 ok(!stepsOf(v).some((s) => s.state === 'live'), 'još nijedan korak nije live');
@@ -136,8 +144,19 @@ const a1 = await ack({ contact_id: contactId, customData: { event: 'jl_ack', tag
 v = (await A.wf()).body;
 ok(a1.status === 200 && a1.body.ack === true && stepOf(v, 'appt_booked').state === 'live' && stepOf(v, 'appt_booked').ackAt > 0, 'ack webhook: korak postaje "live"');
 ok(histFor(v, 'appt_booked')[0].ackedAt > 0, 'ack: red u istoriji dobija acked_at');
+ok(cn(v, 'calendar').state === 'ok' && cn(v, 'calendar').at > 0, 'Connections: studio termin stigao u GHL kalendar, kalendar "ok" sa datumom');
+{
+  // Online video termin sa Meet linkom (mock pravi link kad ima domaćina)
+  const slots = (await fetch(`${BASE}/api/page/${LA1.key}/slots?kind=online`).then(j)).body.days.flatMap((d) => d.slots);
+  const vb = await fetch(`${BASE}/api/page/${LA1.key}/book`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'online', via: 'video', start: slots.filter((x) => x > Date.now() + 30 * HR)[0] || slots[0] }) }).then(j);
+  await sleep(1500);
+  await sweep(Date.now() + 70_000);
+  const vm = (await A.wf()).body;
+  ok(vb.status === 200 && cn(vm, 'meet').state === 'ok' && cn(vm, 'meet').at > 0, `Connections: video termin sa Meet linkom, Meet "ok" (${vb.status} ${vb.body?.error || ''} ${cn(vm, 'meet').state})`);
+}
 ok(v.flows.find((f) => f.key === 'appts').state === 'partial' && stepOf(v, 'visit_24h').state === 'waiting', 'tok Appointments "partial" (jedan live), ostali waiting');
 ok(/^pit-|Bearer/.test(JSON.stringify(v)) === false && !JSON.stringify(v).includes('pit-local'), 'odgovor ne sadrži token');
+ok(cn(v, 'gmail').state === 'manual' && cn(v, 'a2p').state === 'manual' && cn(v, 'quo').state === 'off', 'Connections: gmail "manual", a2p "manual" na GHL kanalu, Quo "off" prije povezivanja');
 
 // ---------- 4. Quo: connect, broj, prebacivanje ----------
 r = await A.post('connect', { key: `quo-test-key-${tag}7890` });
@@ -151,6 +170,7 @@ v = r.body;
 const qs = await quo();
 const wh = Object.values(qs.webhooks).find((w) => w.url.endsWith(new URL(v.quo.webhookUrl).pathname));
 ok(r.status === 200 && v.quo.ready && v.quo.from === '+13035550100' && v.quo.webhook && !v.quo.webhookError, 'broj izabran, webhook napravljen preko API-ja');
+ok(cn(v, 'quo').state === 'ok' && cn(v, 'quo').value === '+13035550100' && !JSON.stringify(v.connections).includes(`quo-test-key-${tag}`) && !JSON.stringify(v.connections).includes('pit-local'), 'Connections: Quo "ok" poslije broja i webhooka, bez ključeva u odgovoru');
 ok(wh && wh.url.endsWith(new URL(v.quo.webhookUrl).pathname) && wh.resourceIds[0] === 'PNmain00001' && wh.events.includes('message.received') && qs.calls.some((c) => c.path === '/webhooks' && c.version === '2026-03-30'), 'webhook: adresa, broj, događaji, Quo-Api-Version');
 r = await A.put({ texts: 'quo', reviewLink: 'https://g.page/r/abc123', sender: 'Enrique' });
 v = r.body;
@@ -194,6 +214,7 @@ const delivered = { id: 'EVd', type: 'message.delivered', data: { resource: { id
 ok((await emit(delivered)).status === 200, 'webhook: delivered prihvaćen');
 v = (await A.wf()).body;
 ok(histFor(v, 'appt_booked').find((h) => h.name === 'Bea Quo').ackedAt > 0, 'delivered: red u istoriji dobija potvrdu isporuke');
+ok(cn(v, 'a2p').state === 'ok' && /delivering/.test(cn(v, 'a2p').detail), 'Connections: a2p "ok" tek kad je Quo poruka isporučena');
 // STOP -> opt-out: sljedeći događaj za isti broj se ne šalje
 ok((await emit(inbound('+13035550198', 'STOP'))).status === 200, 'webhook: STOP prihvaćen');
 const bk3 = await book(LA2, 'online');
@@ -262,6 +283,7 @@ v = (await B.wf()).body;
 const f5 = histFor(v, 'offer_unopened').find((h) => h.name === 'Fay A2P');
 ok(f5?.status === 'failed' && /A2P/.test(f5.error) && /A2P/.test(v.quo.lastError?.msg || ''), `A2P: failed sa jasnom porukom i greškom na Quo kartici (${f5?.error?.slice(0, 50)})`);
 ok(stepOf(v, 'offer_unopened').state === 'error' && v.flows.find((f) => f.key === 'offer').state === 'error', 'korak i tok su "error" kad zadnji pokušaj padne');
+ok(cn(v, 'a2p').state === 'bad' && /A2P/.test(cn(v, 'a2p').detail) && cn(v, 'quo').state === 'bad', 'Connections: A2P greška daje a2p i Quo "bad"');
 // review link
 const wfLink = await B.put({ reviewLink: 'https://g.page/r/xyz' });
 ok(wfLink.status === 200 && wfLink.body.automation.reviewLink === 'https://g.page/r/xyz', 'review link za Quo');
@@ -303,6 +325,20 @@ await D.put({ on: true });
 v = (await D.wf()).body;
 ok(v.ghl.wfScope === 'missing' && stepOf(v, 'offer_24h').state === 'waiting', 'bez View Workflows dozvole: wfScope "missing", koraci i dalje rade (waiting)');
 await fetch(`${GHL}/_wf_fail?code=0`);
+// Telefoni: fali dozvola, prazna lista
+await fetch(`${GHL}/_fail?phones=scope`);
+const E = await mkClient('WF E');
+await fetch(`${BASE}/api/portal/ghl`, { method: 'PUT', headers: E.C, body: JSON.stringify({ token: 'pit-local-test-token-1234567890', locationId: 'LOC1234567890ab', enabled: true }) }).then(j);
+v = (await E.wf()).body;
+ok(cn(v, 'phone').state === 'warn' && /View Phone Numbers/.test(cn(v, 'phone').detail) && cn(v, 'ghl').state === 'ok', 'Connections: bez View Phone Numbers dozvole telefon traži dozvolu, bez lažnog "ok"');
+await fetch(`${GHL}/_fail?phones=&nophones=1`);
+const F = await mkClient('WF F');
+await fetch(`${BASE}/api/portal/ghl`, { method: 'PUT', headers: F.C, body: JSON.stringify({ token: 'pit-local-test-token-1234567890', locationId: 'LOC1234567890ab', enabled: true }) }).then(j);
+v = (await F.wf()).body;
+ok(cn(v, 'phone').state === 'warn' && /No number yet/.test(cn(v, 'phone').detail), 'Connections: prazna lista brojeva "warn" sa uputom');
+await fetch(`${GHL}/_fail?phones=&nophones=0`);
+const vva = await fetch(`${BASE}/api/portal/workflows`, { headers: VA }).then(j);
+ok(vva.status === 200 && Array.isArray(vva.body.connections) && vva.body.connections.length === 7, 'Connections: view-as čita karticu');
 // Disconnect vraća kanal na GHL
 r = await A.post('disconnect');
 ok(r.status === 200 && !r.body.quo.connected && r.body.channel === 'ghl', 'Quo disconnect: kanal se vraća na GoHighLevel');

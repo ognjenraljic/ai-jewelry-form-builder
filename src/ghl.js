@@ -375,6 +375,21 @@ export function hookPayload(b) {
   };
 }
 
+// ---------- Kartica Connections (28.11.2026) ----------
+// Telefonski brojevi sub-accounta (dozvola View Phone Numbers): [{ number, name, sms, voice, isDefault }].
+export async function ghlPhoneNumbers(token, locationId, fetchFn = fetch) {
+  const d = await ghlCall(token, 'GET', `/phone-system/numbers/location/${encodeURIComponent(locationId)}`, null, fetchFn);
+  const list = d.data?.numbers || d.numbers || [];
+  return list.map((n) => ({ number: String(n.phoneNumber || n.number || ''), name: String(n.friendlyName || '').slice(0, 60), sms: n.capabilities?.sms === true, voice: n.capabilities?.voice === true, isDefault: n.isDefaultNumber === true })).filter((n) => n.number).slice(0, 20);
+}
+// Da li kalendar ima Google Meet kao mjesto sastanka (kalendar ili član tima); stara polja kao rezerva.
+export async function ghlCalendarMeet(token, calendarId, fetchFn = fetch) {
+  const d = await ghlCall(token, 'GET', `/calendars/${encodeURIComponent(calendarId)}`, null, fetchFn, GHL_CAL_VERSION);
+  const c = d.calendar || d;
+  const confs = [...(c.locationConfigurations || []), ...(c.teamMembers || []).flatMap((m) => m.locationConfigurations || [])];
+  return confs.some((x) => x?.kind === 'google_conference') || c.meetingLocationType === 'gmeet' || (c.teamMembers || []).some((m) => m.meetingLocationType === 'gmeet');
+}
+
 // Lista workflowa sub-accounta (dozvola View Workflows): [{ id, name, status }].
 export async function ghlWorkflows(token, locationId, fetchFn = fetch) {
   const d = await ghlCall(token, 'GET', `/workflows/?locationId=${encodeURIComponent(locationId)}`, null, fetchFn);

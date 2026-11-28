@@ -3,7 +3,7 @@
 // Stanje stiže sa servera (GET /api/portal/workflows); "Live" se ne izmišlja: GHL mora potvrditi (ack webhook), Quo mora vratiti 2xx.
 let C = null; // { api, esc, readOnly, rerender, app, P }
 const W = {
-  data: null, loading: false, error: '', sel: null, group: 'all', status: 'all', shown: 25, open: '', flash: null, busy: '',
+  data: null, loading: false, error: '', sel: null, conn: '', group: 'all', status: 'all', shown: 25, open: '', flash: null, busy: '',
   view: {}, drafts: {}, keyDraft: '', testDraft: '', secretDraft: '', timer: 0,
 };
 
@@ -15,6 +15,11 @@ const ICON = {
   msg: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5h16v10.5H10l-4.5 3.5V16H4z"/></svg>',
   task: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
   copy: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8"/></svg>',
+  phone: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 4h3l1.5 4-2 1.3a10 10 0 0 0 5.7 5.7L16 13l4 1.5v3a2 2 0 0 1-2 2A14 14 0 0 1 4.500 6a2 2 0 0 1 2-2z"/></svg>',
+  cal: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14.500" rx="2.500"/><path d="M4 10h16M8.500 3.500v4M15.500 3.500v4"/></svg>',
+  video: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.500" y="6.500" width="12" height="11" rx="2.500"/><path d="M15.500 10.500l5-3v9l-5-3"/></svg>',
+  mail2: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.500" y="5.500" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></svg>',
+  shield: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.500l7 2.500v5.500c0 4.500-3 7.500-7 9-4-1.500-7-4.500-7-9V6z"/><path d="M9 12l2.200 2.200L15.500 10"/></svg>',
   close: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
 };
 
@@ -105,6 +110,7 @@ export function workflowsView() {
   return `<section class="wf ${ro() ? 'is-ro' : ''}">
     ${head(d)}
     ${W.flash ? `<p class="wf-flash is-${W.flash.kind}" role="status">${C.esc(W.flash.text)}</p>` : ''}
+    ${connectionsCard(d)}
     ${channelCard(d)}
     ${d.flows.map((f) => flowCard(f, d)).join('')}
     ${historyCard(d)}
@@ -125,6 +131,29 @@ function head(d) {
       <div class="${c.failed30 ? 'is-bad' : ''}"><small>Failed, 30 days</small><b>${c.failed30}</b></div>
       <div><small>Control group, 30 days</small><b>${c.holdout30}</b></div>
     </div>`;
+}
+
+// ---------- Connections ----------
+// Samo ono što smo vidjeli da radi je zeleno; ostalo je pošteno "Check in GoHighLevel" sa uputom.
+const CONN_PILL = { ok: 'Working', warn: 'Set up', bad: 'Needs attention', off: 'Not connected', manual: 'Check in GoHighLevel' };
+const CONN_ICON = { ghl: '<i class="wf-mono">HL</i>', quo: '<i class="wf-mono">Q</i>', phone: ICON.phone, calendar: ICON.cal, meet: ICON.video, gmail: ICON.mail2, a2p: ICON.shield };
+const fmtShort = (t) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+function connectionsCard(d) {
+  const rows = d.connections || [];
+  if (!rows.length) return '';
+  return `<div class="wf-card wf-conn">
+    <div class="wf-conn-top"><h3>Connections</h3><p>What is connected for texts, email, calendar and calls. Green means we have seen it work.</p></div>
+    <ul class="wf-conn-grid">${rows.map((r) => {
+      const open = W.conn === r.key;
+      const value = r.value || (r.at && (r.key === 'calendar' || r.key === 'meet') ? `Last: ${fmtShort(r.at)}` : '');
+      return `<li><button type="button" class="wf-ct is-${C.esc(r.state)} ${open ? 'is-open' : ''}" data-wf="conn" data-k="${C.esc(r.key)}" aria-expanded="${open}" aria-label="${C.esc(`${r.label}: ${CONN_PILL[r.state]}`)}">
+        <span class="wf-ct-top"><span class="wf-ct-ic">${CONN_ICON[r.key] || ''}</span><b>${C.esc(r.label)}</b></span>
+        <span class="wf-ct-st"><i class="wf-dot" aria-hidden="true"></i><span class="wf-cpill">${CONN_PILL[r.state]}</span></span>
+        ${value ? `<span class="wf-ct-val">${C.esc(value)}</span>` : ''}
+        <span class="wf-ct-det ${open ? '' : 'is-clamp'}">${C.esc(r.detail)}</span>
+      </button></li>`;
+    }).join('')}</ul>
+  </div>`;
 }
 
 function channelCard(d) {
@@ -294,6 +323,7 @@ function onClick(e) {
   const a = t.dataset.wf;
   const d = W.data;
   if (a === 'node') { W.sel = t.dataset.ev; W.flash = null; C.rerender(); setTimeout(() => C.app.querySelector('.wf-panel .wf-x')?.focus(), 30); return; }
+  if (a === 'conn') { W.conn = W.conn === t.dataset.k ? '' : t.dataset.k; C.rerender(); return; }
   if (a === 'close') { W.sel = null; C.rerender(); return; }
   if (a === 'reload') { load(); return; }
   if (a === 'copy') { copy(t); return; }

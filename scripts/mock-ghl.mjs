@@ -11,7 +11,7 @@ createServer(async (req, res) => {
   const body = raw ? JSON.parse(raw) : null;
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/_state') return send(res, 200, S);
-  if (url.pathname === '/_fail') { S.failAppt = url.searchParams.get('appt') || ''; return send(res, 200, { failAppt: S.failAppt }); }
+  if (url.pathname === '/_fail') { S.failAppt = url.searchParams.get('appt') || ''; if (url.searchParams.has('phones')) S.failPhones = url.searchParams.get('phones') || ''; if (url.searchParams.has('nophones')) S.noPhones = url.searchParams.get('nophones') === '1'; if (url.searchParams.has('nomeet')) S.noMeet = url.searchParams.get('nomeet') === '1'; return send(res, 200, { failAppt: S.failAppt, failPhones: S.failPhones, noPhones: S.noPhones, noMeet: S.noMeet }); }
   if (req.method === 'POST' && url.pathname === '/_appt') { Object.assign(S.appointments[body.id] || {}, body.patch); return send(res, 200, S.appointments[body.id] || {}); }
   // Workflowi za tab Workflows: POST /_wf { name, status } dodaje ili mijenja; /_wf_fail?code=403 vraća grešku za listu.
   if (req.method === 'POST' && url.pathname === '/_wf') { const w = S.workflows.find((x) => x.name === body.name); if (w) Object.assign(w, body); else S.workflows.push({ id: `wf${++seq}`, status: 'draft', ...body }); return send(res, 200, { workflows: S.workflows }); }
@@ -34,7 +34,9 @@ createServer(async (req, res) => {
     }
     return send(res, 200, { ...out, traceId: 't' });
   }
-  if (req.method === 'GET' && (m = url.pathname.match(/^\/calendars\/([^/]+)$/))) return send(res, 200, { calendar: { id: m[1], teamMembers: [{ userId: 'userOwner001' }] } });
+  if (req.method === 'GET' && (m = url.pathname.match(/^\/calendars\/([^/]+)$/))) return send(res, 200, { calendar: { id: m[1], teamMembers: [{ userId: 'userOwner001' }], ...(S.noMeet ? {} : { locationConfigurations: [{ kind: 'google_conference' }] }) } });
+  // Telefonski brojevi (View Phone Numbers): /_fail?phones=scope → 401; /_fail?nophones=1 → prazna lista.
+  if (req.method === 'GET' && (m = url.pathname.match(/^\/phone-system\/numbers\/location\/([^/]+)$/))) return S.failPhones === 'scope' ? send(res, 401, { statusCode: 401, message: 'The token is not authorized for this scope.' }) : send(res, 200, { data: { numbers: S.noPhones ? [] : [{ phoneNumber: '+13035550142', friendlyName: 'Main line', capabilities: { voice: true, sms: true, mms: true }, isDefaultNumber: true }] } });
   // /_fail?appt=scope → 401 bez dozvole; /_fail?appt=host → 422 dok zahtjev nema assignedUserId (pa prolazi sa domaćinom).
   if (req.method === 'POST' && url.pathname === '/calendars/events/appointments' && S.failAppt === 'scope') return send(res, 401, { statusCode: 401, message: 'The token is not authorized for this scope.' });
   if (req.method === 'POST' && url.pathname === '/calendars/events/appointments' && S.failAppt === 'host' && !body.assignedUserId) return send(res, 422, { statusCode: 422, message: ['assignedUserId is required for this calendar'] });

@@ -20,7 +20,7 @@ import { sealPortalToken, openPortalToken, activePortalSession } from './portal-
 import { areaOf } from '../public/area-codes.js';
 import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE, oppName, ghlRenameOpp, guessOrderStages, ghlUsers, ghlPushOrder, ghlPushOrderStage, ghlReadOrderStage, prodReady, ORDER_KEYS,
   ghlCalendars, ghlFreeSlots, ghlBookAppointment, ghlCancelAppointment, ghlAddNote, ghlEnsureContact, ghlSetAddress, ghlSendSms, hookPayload,
-  ghlEnsureFields, ghlSetFields, ghlFireTag, ghlSetApptStatus, ghlGetAppointment, ghlWorkflows, ghlRemoveTags, sealSecret, openSecret } from './ghl.js';
+  ghlEnsureFields, ghlSetFields, ghlFireTag, ghlSetApptStatus, ghlGetAppointment, ghlWorkflows, ghlPhoneNumbers, ghlCalendarMeet, ghlRemoveTags, sealSecret, openSecret } from './ghl.js';
 import { EVENTS, FIELDS, autoSettings, inHoldout, offerEvents, apptEvents, reviewEvents, dueNow, STEP_INFO, FLOWS, DEFAULT_TEMPLATES, STEP_CONTENT, sendWindow, TEMPLATE_VARS, renderTemplate, exampleVars, cleanReviewLink, cleanTemplate } from './automations.js';
 import { QUO_BASE, sealQuoKey, openQuoKey, quoNumbers, quoSend, quoCreateWebhook, quoDeleteWebhook, toE164, isUsNumber, maskPhone, STOP_WORDS, START_WORDS, verifyQuoSignature } from './quo.js';
 import { KINDS, KIND_LABEL, TIMEZONES, bookingSettings, cleanBooking, kindsOn, nativeSlots, ghlSlotsToDays, zonedToUtc, zonedYmd, addDays, whenText, icsFor, cleanFulfillment, fulfillmentText, depositLink } from './booking.js';
@@ -2415,6 +2415,96 @@ async function refreshWf(env, client, d) {
   return wf;
 }
 
+// Kartica Connections (28.11.2026): telefonski brojevi i Meet na kalendaru iz GHL-a, keš 10 min u clients.data.ghl.conn.
+// Svaki dio ima svoju grešku: 401/403 = 'missing' (fali dozvola), ostalo 'error'; greška ne ruši tab.
+async function refreshConn(env, client, d) {
+  const g = d.ghl || {};
+  if (g.conn?.at && Date.now() - g.conn.at < WF_TTL) return g.conn;
+  const conf = await ghlConfig(env, client);
+  if (!conf) return g.conn || null;
+  const f = ghlFetch(env);
+  const errOf = (e) => (e.status === 401 || e.status === 403 ? 'missing' : 'error');
+  const run = async () => {
+    const [ph, mt] = await Promise.all([
+      ghlPhoneNumbers(conf.token, g.locationId, f).then((list) => ({ list, err: null }), (e) => ({ list: g.conn?.phones?.list || [], err: errOf(e) })),
+      g.calendars?.online ? ghlCalendarMeet(conf.token, g.calendars.online, f).then((set) => ({ set, err: null }), (e) => ({ set: null, err: errOf(e) })) : { set: null, err: null },
+    ]);
+    return { at: Date.now(), phones: ph, meet: mt };
+  };
+  let conn;
+  try { conn = await Promise.race([run(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))]); }
+  catch { return g.conn || null; }
+  await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.ghl.conn', json(?)) WHERE id = ?`).bind(JSON.stringify(conn), client.id).run().catch(() => {});
+  return conn;
+}
+const prettyPhone = (n) => { const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(n || ''); return m ? `+1 ${m[1]} ${m[2]} ${m[3]}` : n || ''; };
+// Redovi kartice Connections. Pravilo: "ok" samo uz dokaz; što GHL API ne otkriva je "manual" sa uputom gdje provjeriti.
+async function connectionsView(env, client, d, { ghlConnected, ghlOn, conn, st, now }) {
+  const g = d.ghl || {};
+  const q = d.quo || {};
+  const kinds = bookingSettings(d.booking).kinds;
+  const rows = [];
+  const add = (key, label, state, value, detail, at = null) => rows.push({ key, label, state, value: value || '', detail: detail || '', at });
+  // GoHighLevel
+  const gErr = g.lastError && g.lastError.at > now - 864e5 && g.lastError.at > (Number(g.lastOk) || 0) ? g.lastError : null;
+  if (!ghlConnected) add('ghl', 'GoHighLevel', 'off', '', 'Not connected. Connect your sub-account in Forms, then GoHighLevel.');
+  else if (gErr) add('ghl', 'GoHighLevel', 'bad', '', `The last call to GoHighLevel failed: ${gErr.msg || 'unknown error'}`, gErr.at);
+  else if (!g.enabled) add('ghl', 'GoHighLevel', 'warn', '', 'The token is saved but the connection is turned off in Forms, then GoHighLevel.');
+  else add('ghl', 'GoHighLevel', 'ok', '', 'Connected. Leads, appointments and workflow tags go to your sub-account.', Number(g.lastOk) || null);
+  // Telefon u GHL-u
+  if (!ghlOn) add('phone', 'Phone number in GoHighLevel', 'off', '', 'Connect GoHighLevel first.');
+  else if (!conn?.phones) add('phone', 'Phone number in GoHighLevel', 'manual', '', 'Not checked yet. Check Settings → Phone Numbers in GoHighLevel.');
+  else if (conn.phones.err === 'missing') add('phone', 'Phone number in GoHighLevel', 'warn', '', 'Add the View Phone Numbers scope to your token so we can see your number. Or check Settings → Phone Numbers in GoHighLevel.');
+  else if (conn.phones.err) add('phone', 'Phone number in GoHighLevel', 'warn', '', 'GoHighLevel did not answer. Check Settings → Phone Numbers in GoHighLevel.');
+  else if (!conn.phones.list.length) add('phone', 'Phone number in GoHighLevel', 'warn', '', "No number yet. Buy one or port Quo's number in Settings → Phone Numbers.");
+  else {
+    const list = conn.phones.list;
+    const main = list.find((n) => n.sms && n.isDefault) || list.find((n) => n.sms) || list.find((n) => n.isDefault) || list[0];
+    const more = list.length - 1;
+    if (main.sms) add('phone', 'Phone number in GoHighLevel', 'ok', prettyPhone(main.number), `${main.voice ? 'Texts and calls' : 'Texts'}${more ? `, +${more} more` : ''}.`, conn.at);
+    else add('phone', 'Phone number in GoHighLevel', 'warn', prettyPhone(main.number), 'This number cannot send texts. Check Settings → Phone Numbers in GoHighLevel.', conn.at);
+  }
+  // A2P
+  const quoText = st.texts === 'quo' && !!(q.key && (q.fromId || q.from));
+  const a2pErr = q.lastError && /A2P|0206400/i.test(q.lastError.msg || '') ? q.lastError : null;
+  const qDelivered = quoText ? await env.DB.prepare(`SELECT MAX(acked_at) AS at FROM ghl_events WHERE client_id = ? AND channel = 'quo' AND status = 'sent' AND acked_at IS NOT NULL AND acked_at > ?`).bind(client.id, now - 30 * 864e5).first() : null;
+  const A2P_HELP = 'Not visible through the GoHighLevel API. Check Settings → Phone Numbers → Trust Center: Brand and Campaign should be Approved.';
+  if (a2pErr) add('a2p', 'Text registration (A2P 10DLC)', 'bad', '', `Quo reported: ${a2pErr.msg}. Texts are blocked until the registration is approved.`, a2pErr.at);
+  else if (quoText && qDelivered?.at) add('a2p', 'Text registration (A2P 10DLC)', 'ok', '', 'Quo texts are delivering.', qDelivered.at);
+  else add('a2p', 'Text registration (A2P 10DLC)', 'manual', '', A2P_HELP);
+  // Termini u GHL kalendaru: dokaz iz tabele appointments (zadnjih 60 dana)
+  const appts = (await env.DB.prepare(`SELECT kind, via, created_at, json_extract(ghl, '$.eventId') AS eventId, json_extract(ghl, '$.error') AS err, json_extract(ghl, '$.meet') AS meet, json_extract(ghl, '$.meetMissing') AS mm, json_extract(ghl, '$.at') AS syncAt
+    FROM appointments WHERE client_id = ? AND created_at > ? AND ghl IS NOT NULL ORDER BY created_at DESC LIMIT 200`).bind(client.id, now - 60 * 864e5).all()).results;
+  const SYNC_NOTE = ' Two-way sync with Google Calendar is set in GoHighLevel (Settings → Calendars → Connections) and is not visible through the API.';
+  const lastTry = appts.find((a) => a.eventId || a.err);
+  const picked = Object.values(g.calendars || {}).some(Boolean);
+  if (!ghlOn) add('calendar', 'Google Calendar', 'off', '', `Connect GoHighLevel first.${SYNC_NOTE}`);
+  else if (lastTry?.err) add('calendar', 'Google Calendar', 'bad', '', `The last booking did not reach your GoHighLevel calendar: ${String(lastTry.err).slice(0, 160)}${SYNC_NOTE}`, lastTry.syncAt || lastTry.created_at);
+  else if (lastTry) add('calendar', 'Google Calendar', 'ok', '', `Bookings reach your GoHighLevel calendar.${SYNC_NOTE}`, lastTry.syncAt || lastTry.created_at);
+  else if (picked) add('calendar', 'Google Calendar', 'warn', '', `Calendars are chosen, no booking has reached them yet. Confirmed with the first booking.${SYNC_NOTE}`);
+  else add('calendar', 'Google Calendar', 'off', '', `Pick calendars in Forms → GoHighLevel.${SYNC_NOTE}`);
+  // Google Meet
+  const lastMeet = appts.find((a) => a.kind === 'online' && a.via === 'video' && (a.meet || a.mm));
+  if (!ghlOn) add('meet', 'Google Meet', 'off', '', 'Connect GoHighLevel first.');
+  else if (kinds.online.meet !== true) add('meet', 'Google Meet', 'off', '', 'Meet links are turned off in Bookings.');
+  else if (lastMeet?.mm && !lastMeet.meet) add('meet', 'Google Meet', 'bad', '', 'GoHighLevel did not create a Meet link. Connect Google in Settings → Integrations and set the calendar\'s meeting location to Google Meet.', lastMeet.syncAt || lastMeet.created_at);
+  else if (lastMeet) add('meet', 'Google Meet', 'ok', '', 'Meet links are being created. This also shows Google is connected in GoHighLevel.', lastMeet.syncAt || lastMeet.created_at);
+  else if (!g.calendars?.online) add('meet', 'Google Meet', 'off', '', 'Pick an online calendar in Forms → GoHighLevel.');
+  else if (conn?.meet?.set === true) add('meet', 'Google Meet', 'warn', '', 'Set on the calendar. Confirmed with the first video booking.');
+  else if (conn?.meet?.set === false) add('meet', 'Google Meet', 'warn', '', 'Set the meeting location of your online calendar to Google Meet.');
+  else add('meet', 'Google Meet', 'warn', '', conn?.meet?.err === 'missing' ? 'We cannot read the calendar. Check that its meeting location is Google Meet.' : 'Not checked yet. Confirmed with the first video booking.');
+  // Gmail: GHL API ga ne otkriva
+  add('gmail', 'Gmail', 'manual', '', 'Not visible through the GoHighLevel API. Check Settings → Email Services (or Conversations → Email): Gmail / Google Workspace should show Connected.');
+  // Quo
+  const QUO_APP = ' The Quo app inside GoHighLevel (call and text sync) is not visible through the API.';
+  if (!q.key) add('quo', 'Quo', 'off', '', `Optional: texts from your Quo number until it is ported.${QUO_APP}`);
+  else if (q.lastError) add('quo', 'Quo', 'bad', q.from || '', `${q.lastError.msg || 'The last text failed.'}${QUO_APP}`, q.lastError.at);
+  else if (!(q.fromId || q.from)) add('quo', 'Quo', 'warn', '', `Connected, but no number is chosen yet.${QUO_APP}`);
+  else if (!q.webhookId) add('quo', 'Quo', 'warn', q.from || '', `Number chosen, but replies and delivery receipts are off.${QUO_APP}`);
+  else add('quo', 'Quo', 'ok', q.from || '', `Connected, number chosen, replies and delivery receipts on.${QUO_APP}`, Number(q.lastOk) || null);
+  return rows;
+}
+
 const STATE_RANK = { error: 0, not_connected: 1, waiting: 2, published: 3, live: 4 };
 async function workflowsView(env, client, origin) {
   const d = parseJson(client.data);
@@ -2425,7 +2515,7 @@ async function workflowsView(env, client, origin) {
   const ghlConnected = !!(g.token && g.locationId);
   const ghlOn = g.enabled === true && ghlConnected;
   const quoReady = !!(q.key && (q.fromId || q.from));
-  const wf = ghlOn ? await refreshWf(env, client, d) : g.wf || null;
+  const [wf, conn] = ghlOn ? await Promise.all([refreshWf(env, client, d), refreshConn(env, client, d)]) : [g.wf || null, g.conn || null];
   const rows = (await env.DB.prepare(`SELECT ev, channel, status, at, acked_at, error FROM ghl_events WHERE client_id = ? AND at > ? AND ev != 'test' ORDER BY at DESC LIMIT 5000`).bind(client.id, now - 30 * 864e5).all()).results;
   const agg = {};
   const counts = { sent7: 0, sent30: 0, failed30: 0, holdout30: 0 };
@@ -2494,6 +2584,7 @@ async function workflowsView(env, client, origin) {
       webhook: !!q.webhookId, webhookError: q.webhookError || null, webhookUrl: q.hookKey ? `${origin}/api/hooks/quo/${q.hookKey}` : '', lastOk: q.lastOk || null, lastError: q.lastError || null,
     },
     flows,
+    connections: await connectionsView(env, client, d, { ghlConnected, ghlOn, conn, st, now }),
     history: hist.map((r) => ({
       id: r.id, ev: r.ev, tag: r.tag, at: r.at, status: r.status, error: r.error || null, channel: r.channel === 'quo' ? 'quo' : 'ghl', target: r.target || '', body: r.body || '', ackedAt: r.acked_at || null,
       name: r.name || '', email: r.email || '', ref: leadRef(r.lead_no), step: r.ev === 'test' ? 'Test message' : STEP_INFO[r.ev]?.name || r.ev, group: EVENTS[r.ev]?.[1] || '',
