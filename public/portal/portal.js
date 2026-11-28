@@ -2110,7 +2110,7 @@ function floatNotif() {
   const n = P.notif;
   const gone = new Set([...(n?.dismissed || []), ...(P.ntGone || [])].map(String));
   const list = (n?.items || []).filter((x) => x.at > (n.seenAt || 0) && !gone.has(String(x.id)));
-  if (!list.length || P.tab === 'notifications') { box.innerHTML = ''; box.hidden = true; return; }
+  if (!list.length || P.tab === 'notifications' || P.tab === 'workflows') { box.innerHTML = ''; box.hidden = true; return; }
   box.hidden = false;
   const max = window.matchMedia('(max-width: 640px)').matches ? 2 : 4;
   box.innerHTML = list.slice(0, max).map((x) => {
