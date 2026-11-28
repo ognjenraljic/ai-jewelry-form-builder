@@ -1797,3 +1797,5 @@ button.dbar.future { opacity: .35; cursor: default; }
 .qsd-box pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; max-height: 200px; overflow: auto; }
 .qsd-from { margin: 0 0 16px; font-weight: 600; }
 .qsd .jl-actions { display: flex; gap: 10px; justify-content: flex-end; }
+button.pill.to-approve { cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 700; }
+button.pill.to-approve:hover { background: rgba(240, 162, 59, .26); }

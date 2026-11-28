@@ -1412,7 +1412,7 @@ function leadsView(resultsOnly = false) {
       <article class="lead has-calc${P.busy ? ' busy' : ''}" data-find="${esc([l.name, l.email, l.phone, l.ref, l.ref?.replace(/^L-0*/, ''), l.order?.no].filter(Boolean).join(' ').toLowerCase())}">
         <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}${pageBox(l)}</div>
         <div>
-          <div class="lead-top"><h2>${esc(l.name)}</h2>${l.ref ? `<span class="lead-ref" title="Lead ID: search it here or in GoHighLevel">${esc(l.ref)}${copyBtn(l.ref, 'lead ID')}</span>` : ''}${l.quoteSend?.toApprove ? '<span class="pill to-approve" title="Open the quote below and tap Approve &amp; send">To approve</span>' : ''}<span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
+          <div class="lead-top"><h2>${esc(l.name)}</h2>${l.ref ? `<span class="lead-ref" title="Lead ID: search it here or in GoHighLevel">${esc(l.ref)}${copyBtn(l.ref, 'lead ID')}</span>` : ''}${l.quoteSend?.toApprove ? `<button type="button" class="pill to-approve" data-act="approve-open" data-qk="${esc(l.id)}|p">To approve</button>` : ''}<span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
           <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span>${areaHint(l.phone)}${smsHint(l.sms)}</div>
           ${replyLine(l)}
           ${bookingLine(l)}
@@ -1859,6 +1859,12 @@ app.addEventListener('click', async (e) => {
   if (t.dataset?.act === 'price-reset') { const key = t.closest('.qprice')?.dataset.qk; const q = Q[key]; if (q) { const e = estimate(PR(), q.spec); if (e.total != null) priceLive(key, Math.round(e.total)); priceCommit(key); } return; }
   if (t.dataset?.act === 'quote-gen') { quoteGenerate(t.dataset.qk); return; }
   if (t.dataset?.act === 'quote-send') { quoteSend(t.dataset.qk); return; }
+  // Oznaka "To approve" otvara Estimated price karticu i dovodi do dugmeta Approve & send (28.11.2026).
+  if (t.dataset?.act === 'approve-open') {
+    const box = app.querySelector(`details[data-qbox="${CSS.escape(t.dataset.qk)}"]`);
+    if (box) { box.open = true; if (Q[t.dataset.qk]) Q[t.dataset.qk].boxOpen = true; setTimeout(() => { const b = box.querySelector('[data-act="quote-send"]'); (b || box).scrollIntoView({ behavior: 'smooth', block: 'center' }); b?.focus({ preventScroll: true }); }, 60); }
+    return;
+  }
   if (t.dataset?.act === 'quote-copy') {
     const id = t.dataset.qk;
     const l = P.leads.find((x) => x.id === qkLead(id));
