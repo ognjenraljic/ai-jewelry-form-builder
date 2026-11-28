@@ -245,12 +245,46 @@ export const DEFAULT_TEMPLATES = {
   picked_up: null,
   review_request: "Hey {first_name}, it's {sender} from {store}. Hope you're loving the {piece}! If you have a minute, an honest Google review helps us a lot: {review_link}",
 };
+// Ostali kanali po koraku (28.11.2026, Ognjen: "primjeri poruka, šta se kada šalje, oznake za kanale"). Mejl je predlog za
+// GHL workflow (kupac bez SMS pristanka dobija mejl; GHL sam dodaje link za odjavu). task = zadatak / obavještenje za radnju.
+const sig = '\n\n{sender}, {store}';
+export const STEP_CONTENT = {
+  deposit_click: { email: ['Your {piece} deposit', "Hi {first_name},\n\nI saw you started the deposit for your {piece}. If anything held you up, just reply here. I can hold it with a smaller deposit or set up a quick call.\n\nYour design: {page_url}" + sig], task: 'Call or text {first_name}: opened the deposit for the {piece} and did not pay. The text goes 2 hours later only if they still have not paid.' },
+  offer_unopened: { email: ['Your {piece} design is ready', 'Hi {first_name},\n\nYour {piece} design and price are ready: {page_url}\n\nTake a look when you have a minute. Questions? Just reply.' + sig] },
+  offer_saved: { email: ['Your {piece} design is saved', 'Hi {first_name},\n\nYour {piece} design is saved here: {page_url}\n\nYour price is held until {offer_expires}. Questions? Just reply.' + sig] },
+  offer_24h: { email: ['Your {piece} price is held until {offer_expires}', 'Hi {first_name},\n\nYour {piece} is on hold until {offer_expires}. Want me to walk you through it on a quick 10-minute call? Reply with a good time, or book one on your page: {page_url}' + sig] },
+  offer_final: { email: ['Last hours on your {piece} price', "Hi {first_name},\n\nYour {piece} price is held until {offer_expires}. After that I re-quote at that day's gold price, which can go up or down.\n\nYour design: {page_url}" + sig] },
+  offer_expired: { email: ['Your price hold ended', "Hi {first_name},\n\nThe price hold on your {piece} ended. Want today's price? Tap \"Request a refreshed quote\" on your page: {page_url}" + sig] },
+  offer_closeout: { email: ['Keep your {piece} design on file?', 'Hi {first_name},\n\nShould I keep your {piece} design on file, or close it out for now? Either is totally fine, just reply.' + sig] },
+  refresh_ready: { email: ['Your refreshed price is ready', 'Hi {first_name},\n\nYour refreshed price for the {piece} is ready and held for 24 hours: {page_url}' + sig] },
+  refresh_moved: { task: 'Metal moved: send {first_name} a new price for the {piece}. They also get a notification in the portal.' },
+  appt_booked: { email: ["You're booked: {appt_type}, {appt_time}", "Hi {first_name},\n\nYou're booked: {appt_type}, {appt_time}.\n{appt_location}\n\nNeed another time? {reschedule_url}" + sig] },
+  visit_3d: { email: ['See you {appt_time}', 'Hi {first_name},\n\nLooking forward to seeing you at the studio, {appt_time}.\n{appt_location}\n\nNeed another time? {reschedule_url}' + sig] },
+  visit_24h: { email: ['See you tomorrow at {store}', 'Hi {first_name},\n\nSee you tomorrow, {appt_time}.\n{appt_location}\n\nNeed another time? {reschedule_url}' + sig] },
+  visit_2h: { email: ['See you at {appt_time}', "Hi {first_name},\n\n{sender} is pulling pieces for you. See you at {appt_time}.\n{appt_location}" + sig] },
+  call_1h: { email: ['Your consultation is in 1 hour', 'Hi {first_name},\n\nYour consultation with {store} is in 1 hour ({appt_time}).\n{appt_location}' + sig] },
+  call_10m: { email: ['Starting in 10 minutes', 'Hi {first_name},\n\nWe start in 10 minutes. {meet_link}' + sig] },
+  appt_noshow: { email: ['We missed you today', 'Hi {first_name},\n\nWe missed you today, no worries. Want to pick another time? {reschedule_url}' + sig] },
+  appt_showed: { email: ['Your {piece}, as we discussed', "Hi {first_name},\n\nGreat meeting you. Here's your {piece} with the price: {page_url}\n\nI'm holding it for you." + sig] },
+  appt_cancelled: { email: ['Want to pick another time?', 'Hi {first_name},\n\nGot it, your appointment is cancelled. Want to pick another time? {reschedule_url}' + sig] },
+  order_ready: { email: ['Your {piece} is ready for pick up', 'Hi {first_name},\n\nYour {piece} is ready for pick up! Order {order_no}.\n\nReply to set a time that works for you.' + sig] },
+  picked_up: { email: ['Thank you, {first_name}', 'Hi {first_name},\n\nThank you for picking up your {piece}. Enjoy it, and if it ever needs a touch-up, just reply here.' + sig], task: 'Optional: send {first_name} the reveal clip of their {piece}.' },
+  review_request: { email: ["How's your {piece}?", "Hi {first_name},\n\nHope you're loving the {piece}! If you have a minute, an honest Google review helps us a lot: {review_link}" + sig] },
+};
+// Kad poruka smije izaći (po kupčevom satu); podsjetnici za termin idu tačno na vrijeme.
+export function sendWindow(ev) {
+  const w = WINDOW[ev];
+  return w === 'day' ? "10 am to 7 pm, customer's time" : w === 'wide' ? "9 am to 9 pm, customer's time" : ev === 'refresh_moved' ? 'Right away' : 'Exactly on time';
+}
 export const TEMPLATE_VARS = ['first_name', 'piece', 'page_url', 'price', 'offer_expires', 'appt_type', 'appt_time', 'appt_location', 'meet_link', 'reschedule_url', 'order_no', 'store', 'review_link', 'sender'];
 // Zamjena {var}; nepoznata promjenljiva ostaje, prazna vrijednost nestaje a razmaci se sređuju.
 export function renderTemplate(tpl, vars) {
   let t = String(tpl || '').replace(/\{([a-z_]+)\}/g, (m, k) => (k in vars ? String(vars[k] ?? '') : m));
   t = t.replace(/[ \t]+/g, ' ').replace(/ ([.,!?])/g, '$1').replace(/\.\s*\./g, '.').trim();
   // Ime pošiljaoca isto kao ime radnje: "it's District from District" -> "it's District".
+  // Potpis "{sender}, {store}" kad je ime pošiljaoca isto kao radnja: samo jednom.
+  const st = String(vars.store || '').trim();
+  if (st && String(vars.sender || '').trim() === st) t = t.split(`${st}, ${st}`).join(st);
   return t.replace(/\b(it's|It's) (.{1,40}?) from \2\b/, '$1 $2').trim();
 }
 export const exampleVars = (store = 'Your Store') => ({

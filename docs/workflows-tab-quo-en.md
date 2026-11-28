@@ -13,7 +13,9 @@ Portal → **Workflows**. It covers the three flows (Quote follow-up, Appointmen
 - **Live** (green, pulsing): the step has actually run. In GoHighLevel that means the workflow sent its "done" webhook. In Quo it means a text went out.
 - **Error** (red): the last attempt failed. Click the step to see why.
 
-Click a step to open its panel: when it is sent, which consent it needs, an on/off switch for that step, and, when texts go through Quo, the editable text with a preview. Below the flows is the **History**: every message, when it went out, to whom (masked number), through which channel (GoHighLevel or Quo), the text itself, and whether it was delivered, skipped (for example no SMS consent) or failed.
+Every step shows its **channels**: **SMS** (with "Quo" when texts go through Quo), **Email** (for customers without text consent, from the GoHighLevel workflow) and **Task** (a task or notification for the team). Each flow has a **Diagram / Messages** switch: Messages lists every step in order with when it goes out, the allowed hours (for example "10 am to 7 pm, customer's time"), the text message and the email subject, filled in with example details.
+
+Click a step to open its panel: when it is sent, which consent it needs, an on/off switch for that step, the text message (editable when texts go through Quo), the suggested email (subject and body) and the task text. For GoHighLevel, every text has a copy button that already uses the GoHighLevel contact fields (`{{contact.jl_piece}}` and so on), ready to paste into the Send SMS, Send Email or Create Task step. Below the flows is the **History**: every message, when it went out, to whom (masked number), through which channel (GoHighLevel or Quo), the text itself, and whether it was delivered, skipped (for example no SMS consent) or failed.
 
 **Nothing is shown as Live until it really runs.** Right now everything is off or waiting. It turns Live on its own once you finish the steps below.
 

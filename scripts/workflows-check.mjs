@@ -3,7 +3,7 @@
 //   wrangler dev --port 8823 --test-scheduled --var GHL_BASE:http://127.0.0.1:8909 --var QUO_BASE:http://127.0.0.1:8913 ...
 //   BASE=http://127.0.0.1:8823 GHL=http://127.0.0.1:8909 QUO=http://127.0.0.1:8913 node scripts/workflows-check.mjs
 import { readFileSync } from 'node:fs';
-import { localHour, DEFAULT_TEMPLATES, EVENTS, renderTemplate, autoSettings, offerEvents } from '../src/automations.js';
+import { localHour, DEFAULT_TEMPLATES, EVENTS, STEP_CONTENT, renderTemplate, autoSettings, offerEvents } from '../src/automations.js';
 import { toE164, maskPhone, quoSignature, verifyQuoSignature } from '../src/quo.js';
 import { offerTimeline } from '../src/offer.js';
 import { SUGGESTED_PRICING } from '../public/pricing.js';
@@ -38,6 +38,8 @@ ok(!(await verifyQuoSignature(sec, hd({ 'webhook-id': 'msg_1', 'webhook-timestam
 ok(!(await verifyQuoSignature(sec, hd({ 'webhook-id': 'msg_1', 'webhook-timestamp': ts0, 'webhook-signature': sig0 }), '{"a":1}', now0 + 6 * 60_000)), 'potpis: stariji od 5 min odbijen');
 ok(renderTemplate(DEFAULT_TEMPLATES.visit_2h, { sender: 'District', appt_location: '1550 Larimer St', appt_time: 'Tue 11:00 AM' }) === 'District is pulling pieces for you. 1550 Larimer St. See you at Tue 11:00 AM.', 'šablon: zamjene');
 ok(renderTemplate(DEFAULT_TEMPLATES.offer_unopened, { first_name: 'Ava', sender: 'District', store: 'District', piece: 'grillz', page_url: 'https://x/p/1' }) === "Hey Ava, it's District. Did you get a chance to see your grillz design? It's here: https://x/p/1", 'šablon: ime pošiljaoca isto kao radnja se ne ponavlja');
+ok(Object.keys(EVENTS).every((k) => STEP_CONTENT[k] && (STEP_CONTENT[k].email || STEP_CONTENT[k].task)) && Object.values(STEP_CONTENT).every((c) => !c.email || (c.email[0].length <= 80 && c.email[1].includes('{first_name}'))), 'svaki korak ima primjer mejla ili zadatka');
+ok(renderTemplate(STEP_CONTENT.offer_closeout.email[1], { first_name: 'Ava', sender: 'District', store: 'District', piece: 'grillz' }).endsWith('\n\nDistrict') && renderTemplate(DEFAULT_TEMPLATES.offer_closeout, { sender: 'Enrique', store: 'District', piece: 'grillz' }).endsWith('Enrique, District'), 'potpis: ime radnje se ne ponavlja');
 ok(!Object.entries(DEFAULT_TEMPLATES).some(([k, v]) => v && v.length > 320) && Object.keys(DEFAULT_TEMPLATES).sort().join() === Object.keys(EVENTS).sort().join(), 'svaki događaj ima ključ u šablonima (internalni null), nijedan tekst predug');
 const T0x = Date.parse('2026-11-27T17:00:00Z');
 const tlx = offerTimeline({ pricing: {}, quotes: {}, lead: { createdAt: T0x } }, T0x);
@@ -70,7 +72,7 @@ async function book(lead, kind, skip = 0) {
   const slots = (await fetch(`${BASE}/api/page/${lead.key}/slots?kind=${kind}`).then(j)).body.days.flatMap((d) => d.slots);
   const start = slots.filter((s) => s > Date.now() + 30 * HR)[skip] || slots[skip];
   const r = await fetch(`${BASE}/api/page/${lead.key}/book`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind, start, ...(kind === 'online' ? { via: 'phone' } : {}) }) }).then(j);
-  return { status: r.status, start };
+  return { status: r.status, start, error: r.body?.error };
 }
 const stepsOf = (v) => v.flows.flatMap((f) => f.lanes.flatMap((l) => l.steps));
 const stepOf = (v, ev) => stepsOf(v).find((s) => s.ev === ev);
@@ -80,6 +82,7 @@ const histFor = (v, ev) => v.history.filter((h) => h.ev === ev);
 const A = await mkClient('WF A');
 let v = (await A.wf()).body;
 ok(v.flows.length === 3 && v.flows.map((f) => f.key).join() === 'offer,appts,reviews', 'tab: tri toka');
+{ const st = v.flows.flatMap((f) => f.lanes.flatMap((l) => l.steps)); ok(st.every((x) => x.window && ('email' in x) && ('task' in x)) && st.find((x) => x.ev === 'deposit_click').task && st.find((x) => x.ev === 'refresh_moved').email === null && st.find((x) => x.ev === 'offer_24h').email.subject, 'tab: koraci nose prozor slanja, mejl i zadatak'); }
 ok(stepsOf(v).length >= 21 && stepsOf(v).every((s) => s.state === 'off') && v.flows.every((f) => f.state === 'off'), 'automations isključene: svi koraci i tokovi "off"');
 ok(v.ghl.connected === false && v.quo.connected === false && v.channel === 'ghl', 'ništa povezano, kanal GoHighLevel');
 let r = await A.put({ on: true, holdout: 0 });
@@ -116,7 +119,7 @@ ok(!stepsOf(v).some((s) => s.state === 'live'), 'još nijedan korak nije live');
 // termin -> tag -> ack
 const LA1 = await mkLead(A, { name: 'Ava Auto', phone: '303 555 0199' });
 const bk = await book(LA1, 'visit');
-ok(bk.status === 200, 'studio zakazan (GHL kanal)');
+ok(bk.status === 200, `studio zakazan (GHL kanal)${bk.status === 200 ? '' : ` ${bk.status} ${bk.error} ${bk.start}`}`);
 await sleep(1500);
 await sweep(Date.now() + 60_000);
 const tg = (await ghl()).tagLog.filter((x) => x.op === 'add').map((x) => x.tags[0]);
@@ -157,7 +160,7 @@ ok(stepOf(v, 'appt_booked').channel === 'quo' && stepOf(v, 'appt_booked').state 
 // zakazan termin: SMS preko Quo-a, tag kontakta
 const LA2 = await mkLead(A, { name: 'Bea Quo', phone: '303 555 0198' });
 const bk2 = await book(LA2, 'visit', 1);
-ok(bk2.status === 200, 'drugi studio termin (Quo kanal)');
+ok(bk2.status === 200, `drugi studio termin (Quo kanal)${bk2.status === 200 ? '' : ` ${bk2.status} ${bk2.error}`}`);
 await sleep(1500);
 await sweep(Date.now() + 90_000);
 const m1 = (await quo()).messages.findLast((m) => m.to[0] === '+13035550198');

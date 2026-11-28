@@ -21,7 +21,7 @@ import { areaOf } from '../public/area-codes.js';
 import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE, oppName, ghlRenameOpp, guessOrderStages, ghlUsers, ghlPushOrder, ghlPushOrderStage, ghlReadOrderStage, prodReady, ORDER_KEYS,
   ghlCalendars, ghlFreeSlots, ghlBookAppointment, ghlCancelAppointment, ghlAddNote, ghlEnsureContact, ghlSetAddress, ghlSendSms, hookPayload,
   ghlEnsureFields, ghlSetFields, ghlFireTag, ghlSetApptStatus, ghlGetAppointment, ghlWorkflows, ghlRemoveTags, sealSecret, openSecret } from './ghl.js';
-import { EVENTS, FIELDS, autoSettings, inHoldout, offerEvents, apptEvents, reviewEvents, dueNow, STEP_INFO, FLOWS, DEFAULT_TEMPLATES, TEMPLATE_VARS, renderTemplate, exampleVars, cleanReviewLink, cleanTemplate } from './automations.js';
+import { EVENTS, FIELDS, autoSettings, inHoldout, offerEvents, apptEvents, reviewEvents, dueNow, STEP_INFO, FLOWS, DEFAULT_TEMPLATES, STEP_CONTENT, sendWindow, TEMPLATE_VARS, renderTemplate, exampleVars, cleanReviewLink, cleanTemplate } from './automations.js';
 import { QUO_BASE, sealQuoKey, openQuoKey, quoNumbers, quoSend, quoCreateWebhook, quoDeleteWebhook, toE164, isUsNumber, maskPhone, STOP_WORDS, START_WORDS, verifyQuoSignature } from './quo.js';
 import { KINDS, KIND_LABEL, TIMEZONES, bookingSettings, cleanBooking, kindsOn, nativeSlots, ghlSlotsToDays, zonedToUtc, zonedYmd, addDays, whenText, icsFor, cleanFulfillment, fulfillmentText, depositLink } from './booking.js';
 import { offerTimeline, offerSettings, metalMoved } from './offer.js';
@@ -2465,6 +2465,7 @@ async function workflowsView(env, client, origin) {
     return {
       ev, tag, group, name: info.name, when: info.when, desc, state, hint, channel, needsMkt: !!info.mkt, hasText: !!DEFAULT_TEMPLATES[ev],
       sent7: a.sent7, sent30: a.sent30, failed30: a.failed30, lastAt: a.lastAt || null, ackAt: ackAt || null, workflow: wfFor(tag)?.status || null,
+      email: STEP_CONTENT[ev]?.email ? { subject: STEP_CONTENT[ev].email[0], body: STEP_CONTENT[ev].email[1] } : null, task: STEP_CONTENT[ev]?.task || null, window: sendWindow(ev),
       disabled: st.disabled[ev] === true, template: DEFAULT_TEMPLATES[ev] ? st.templates[ev] || DEFAULT_TEMPLATES[ev] : null, defaultTemplate: DEFAULT_TEMPLATES[ev] || null, isDefaultTemplate: !st.templates[ev],
     };
   };

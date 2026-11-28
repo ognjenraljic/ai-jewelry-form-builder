@@ -1681,3 +1681,59 @@ button.dbar.future { opacity: .35; cursor: default; }
 @keyframes wf-pulse { 0% { transform: scale(.85); opacity: .55; } 100% { transform: scale(1.35); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .wf-node.is-live .wf-ic::after, .wf-ln .flow { animation: none; } }
 @media (max-width: 820px) { .wf-node { flex: none; } .wf-link { flex: none; width: 2px; min-width: 0; height: 22px; margin: 0 0 0 30px; } }
+
+/* Oznake kanala i poruke po koraku (28.11.2026) */
+.wf { --wf-sms: #35d0c4; --wf-mail: #7aa7ff; --wf-task: #f0c27a; }
+.wf-chs { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; margin-top: 3px; }
+.wf-ch { display: inline-flex; align-items: center; gap: 4px; font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: .04em; padding: 2px 7px 2px 6px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--ink-soft); background: var(--bg); white-space: nowrap; }
+.wf-ch svg { flex: none; }
+.wf-ch.is-sms { color: var(--wf-sms); border-color: color-mix(in srgb, var(--wf-sms) 40%, var(--line)); }
+.wf-ch.is-email { color: var(--wf-mail); border-color: color-mix(in srgb, var(--wf-mail) 40%, var(--line)); }
+.wf-ch.is-task { color: var(--wf-task); border-color: color-mix(in srgb, var(--wf-task) 40%, var(--line)); }
+.wf-node.is-off .wf-ch, .wf-node.is-not_connected .wf-ch { opacity: .6; }
+.wf-dl .wf-chs { justify-content: flex-start; margin-top: 0; }
+.wf-win { display: block; color: var(--ink-faint); font-size: 12px; margin-top: 2px; }
+.wf-seg-s { margin-left: 4px; }
+.wf-seg-s button { padding: 5px 12px; font-size: 12px; }
+.wf-msgs { list-style: none; margin: 0; padding: 0 0 0 14px; display: grid; gap: 8px; border-left: 1px dashed var(--line-strong); }
+.wf-msgs li { position: relative; }
+.wf-msgs li::before { content: ''; position: absolute; left: -19px; top: 20px; width: 9px; height: 9px; border-radius: 50%; background: var(--panel); border: 1.5px solid var(--line-strong); }
+.wf-msgs li.is-live::before { background: var(--wf-live); border-color: var(--wf-live); box-shadow: 0 0 0 4px color-mix(in srgb, var(--wf-live) 18%, transparent); }
+.wf-msgs li.is-published::before { border-color: var(--wf-pub); }
+.wf-msgs li.is-error::before { border-color: var(--wf-bad); background: var(--wf-bad); }
+.wf-mrow { all: unset; box-sizing: border-box; cursor: pointer; width: 100%; display: grid; grid-template-columns: minmax(150px, 210px) 1fr; gap: 16px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg); transition: border-color .2s, transform .2s; }
+.wf-mrow:hover, .wf-mrow:focus-visible { border-color: var(--line-strong); transform: translateX(2px); }
+.wf-mrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.wf-mwhen { display: grid; gap: 2px; align-content: start; }
+.wf-mwhen b { font-size: 13.5px; }
+.wf-mwhen small { color: var(--ink-faint); font-size: 12px; line-height: 1.35; }
+.wf-mwhen .wf-st { margin-top: 4px; font-size: 11px; color: var(--ink-faint); }
+.wf-msgs li.is-live .wf-mwhen .wf-st { color: var(--wf-live); }
+.wf-mbody { display: grid; gap: 7px; min-width: 0; justify-items: start; }
+.wf-mbody .wf-chs { justify-content: flex-start; margin: 0; }
+.wf-bub, .wf-mail, .wf-task { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: var(--ink-soft); overflow-wrap: anywhere; }
+.wf-bub i, .wf-mail i, .wf-task i { flex: none; margin-top: 3px; font-style: normal; }
+.wf-bub { padding: 8px 12px; border-radius: 14px 14px 14px 4px; background: color-mix(in srgb, var(--wf-sms) 9%, var(--surface)); color: var(--ink); max-width: 62ch; }
+.wf-bub i { color: var(--wf-sms); }
+.wf-mail i { color: var(--wf-mail); }
+.wf-mail b { font-weight: 600; color: var(--ink); }
+.wf-task i { color: var(--wf-task); }
+.wf-cp { position: relative; }
+.wf-cp .wf-copy { position: absolute; top: 8px; right: 8px; }
+.wf-cp .wf-pre { padding-right: 40px; }
+.wf-msg-top h4 svg { vertical-align: -2px; margin-right: 4px; }
+.wf-msg-top h4 small { font-weight: 500; color: var(--ink-faint); font-size: 12px; margin-left: 4px; }
+.wf-mailcard { border-radius: 12px; border: 1px solid var(--line); background: var(--bg); overflow: hidden; }
+.wf-mailhead { display: grid; gap: 2px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--wf-mail) 6%, var(--bg)); }
+.wf-mailhead small { font-size: 11px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: .06em; }
+.wf-mailhead b { font-size: 14px; }
+.wf-mailcard p { margin: 0; padding: 12px 14px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wf-copyrow { align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.wf-copyrow .btn svg { vertical-align: -2px; margin-right: 3px; }
+@media (max-width: 820px) {
+  .wf-mrow { grid-template-columns: 1fr; gap: 8px; }
+  .wf-seg-s { margin-left: 0; }
+}
+.wf-copyhint { margin: 10px 0 6px; }
+.wf-copyrow { margin-top: 0; justify-content: flex-start; }
+.wf-cp .wf-pre { word-break: normal; overflow-wrap: break-word; }

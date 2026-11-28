@@ -4,13 +4,16 @@
 let C = null; // { api, esc, readOnly, rerender, app, P }
 const W = {
   data: null, loading: false, error: '', sel: null, group: 'all', status: 'all', shown: 25, open: '', flash: null, busy: '',
-  drafts: {}, keyDraft: '', testDraft: '', secretDraft: '', timer: 0,
+  view: {}, drafts: {}, keyDraft: '', testDraft: '', secretDraft: '', timer: 0,
 };
 
 const STATE_LABEL = { live: 'Live', published: 'Published', waiting: 'Waiting', not_connected: 'Not connected', error: 'Error', off: 'Off' };
 const ICON = {
   sms: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5h16v10.5H10l-4.5 3.5V16H4z"/></svg>',
   bell: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 10a6 6 0 0 1 12 0c0 5.5 2 7 2 7H4s2-1.5 2-7z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
+  mail: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/></svg>',
+  msg: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5h16v10.5H10l-4.5 3.5V16H4z"/></svg>',
+  task: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
   copy: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8"/></svg>',
   close: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
 };
@@ -66,6 +69,9 @@ const vars = (d) => {
 function render(tpl, v) {
   let t = String(tpl || '').replace(/\{([a-z_]+)\}/g, (m, k) => (k in v ? String(v[k] ?? '') : m));
   t = t.replace(/[ \t]+/g, ' ').replace(/ ([.,!?])/g, '$1').replace(/\.\s*\./g, '.').trim();
+  // Potpis "{sender}, {store}" kad je ime pošiljaoca isto kao radnja: samo jednom.
+  const st = String(v.store || '').trim();
+  if (st && String(v.sender || '').trim() === st) t = t.split(`${st}, ${st}`).join(st);
   return t.replace(/\b(it's|It's) (.{1,40}?) from \2\b/, '$1 $2').trim();
 }
 const segments = (n) => (n <= 160 ? 1 : Math.ceil(n / 153));
@@ -79,6 +85,16 @@ const flowPill = (f, d) => {
   }[f.state] || ['off', f.state];
   return `<span class="wf-pill is-${m[0]}">${m[1]}</span>`;
 };
+// Oznake kanala koraka: SMS (Quo ili GHL), Email (GHL workflow), Task (zadatak / obavještenje za radnju).
+const chans = (s) => [
+  s.hasText && ['sms', ICON.msg, s.channel === 'quo' ? 'SMS · Quo' : 'SMS'],
+  s.email && ['email', ICON.mail, 'Email'],
+  s.task && ['task', ICON.task, 'Task'],
+].filter(Boolean);
+const badges = (s) => `<span class="wf-chs">${chans(s).map(([k, ic, t]) => `<i class="wf-ch is-${k}">${ic}${C.esc(t)}</i>`).join('')}</span>`;
+// Isti tekst sa poljima GoHighLevel kontakta, spreman za lijepljenje u workflow.
+const GHL_FIELD = { first_name: '{{contact.first_name}}', piece: '{{contact.jl_piece}}', page_url: '{{contact.jl_page_url}}', price: '{{contact.jl_price}}', offer_expires: '{{contact.jl_offer_expires}}', appt_type: '{{contact.jl_appt_type}}', appt_time: '{{contact.jl_appt_time}}', appt_location: '{{contact.jl_appt_location}}', meet_link: '{{contact.jl_meet_link}}', reschedule_url: '{{contact.jl_reschedule_url}}', order_no: '{{contact.jl_order_no}}' };
+const forGhl = (t, d) => String(t || '').replace(/\{([a-z_]+)\}/g, (m, k) => GHL_FIELD[k] || (k === 'store' ? d.meta.store : k === 'sender' ? d.automation.sender || d.meta.store : k === 'review_link' ? d.automation.reviewLink || '[your Google review link]' : m));
 const chanLabel = (s) => (s.channel === 'quo' ? 'SMS · Quo' : s.channel === 'internal' ? 'Internal' : 'GHL workflow');
 
 // ---------- Prikaz ----------
@@ -162,16 +178,37 @@ function link(state) {
 function node(s) {
   return `<button type="button" class="wf-node is-${s.state} ${W.sel === s.ev ? 'is-sel' : ''}" data-wf="node" data-ev="${C.esc(s.ev)}" aria-label="${C.esc(`${s.name}: ${STATE_LABEL[s.state]}`)}">
     <span class="wf-ic">${s.hasText && s.channel !== 'internal' ? ICON.sms : ICON.bell}</span>
-    <span class="wf-nt"><b>${C.esc(s.name)}</b><small>${C.esc(s.when)}</small><em>${C.esc(chanLabel(s))}</em><span class="wf-meta"><span class="wf-st">${STATE_LABEL[s.state]}</span>${s.sent30 ? `<span class="wf-n">${s.sent30} sent</span>` : ''}</span></span>
+    <span class="wf-nt"><b>${C.esc(s.name)}</b><small>${C.esc(s.when)}</small>${badges(s)}<span class="wf-meta"><span class="wf-st">${STATE_LABEL[s.state]}</span>${s.sent30 ? `<span class="wf-n">${s.sent30} sent</span>` : ''}</span></span>
   </button>`;
 }
 function flowCard(f, d) {
   const total = new Set(f.lanes.flatMap((l) => l.steps.filter((s) => s.state !== 'off').map((s) => s.ev))).size;
   const live = new Set(f.lanes.flatMap((l) => l.steps.filter((s) => s.state === 'live').map((s) => s.ev))).size;
+  const msgs = W.view[f.key] === 'messages';
   return `<div class="wf-card wf-flow is-${f.state}">
-    <div class="wf-flow-top"><h3>${C.esc(f.title)}</h3>${flowPill(f, d)}<span class="wf-sub">${total ? `${live} of ${plural(total, 'step')} live` : 'All steps off'}</span></div>
-    ${f.lanes.map((l) => `<div class="wf-lane-wrap"><p class="wf-lane-label">${C.esc(l.label)}</p><div class="wf-lane">${l.steps.map((s, i) => `${i ? link(s.state === 'live' ? 'live' : s.state === 'off' ? 'off' : 'idle') : ''}${node(s)}`).join('')}</div></div>`).join('')}
+    <div class="wf-flow-top"><h3>${C.esc(f.title)}</h3>${flowPill(f, d)}<span class="wf-sub">${total ? `${live} of ${plural(total, 'step')} live` : 'All steps off'}</span>
+      <div class="wf-seg wf-seg-s" role="group" aria-label="${C.esc(f.title)} view"><button type="button" class="${msgs ? '' : 'on'}" data-wf="fview" data-k="${C.esc(f.key)}" data-v="diagram" aria-pressed="${!msgs}">Diagram</button><button type="button" class="${msgs ? 'on' : ''}" data-wf="fview" data-k="${C.esc(f.key)}" data-v="messages" aria-pressed="${msgs}">Messages</button></div></div>
+    ${msgs ? messagesView(f, d) : f.lanes.map((l) => `<div class="wf-lane-wrap"><p class="wf-lane-label">${C.esc(l.label)}</p><div class="wf-lane">${l.steps.map((s, i) => `${i ? link(s.state === 'live' ? 'live' : s.state === 'off' ? 'off' : 'idle') : ''}${node(s)}`).join('')}</div></div>`).join('')}
   </div>`;
+}
+
+// Sve poruke toka redom: kada, kanali i tekst sa primjerom (korak koji se ponavlja u više traka prikazuje se jednom).
+function messagesView(f, d) {
+  const seen = new Set();
+  const v = vars(d);
+  return f.lanes.map((l) => {
+    const steps = l.steps.filter((s) => !seen.has(s.ev) && seen.add(s.ev));
+    if (!steps.length) return '';
+    return `<div class="wf-lane-wrap"><p class="wf-lane-label">${C.esc(l.label)}</p><ol class="wf-msgs">${steps.map((s) => `<li class="is-${s.state}">
+      <button type="button" class="wf-mrow" data-wf="node" data-ev="${C.esc(s.ev)}">
+        <span class="wf-mwhen"><b>${C.esc(s.name)}</b><small>${C.esc(s.when)}</small><small>${C.esc(s.window)}</small><span class="wf-st">${STATE_LABEL[s.state]}</span></span>
+        <span class="wf-mbody">${badges(s)}
+          ${s.hasText ? `<span class="wf-bub"><i>${ICON.msg}</i>${C.esc(render(s.template, v))}</span>` : ''}
+          ${s.email ? `<span class="wf-mail"><i>${ICON.mail}</i><b>${C.esc(render(s.email.subject, v))}</b></span>` : ''}
+          ${s.task ? `<span class="wf-task"><i>${ICON.task}</i>${C.esc(render(s.task, v))}</span>` : ''}
+        </span>
+      </button></li>`).join('')}</ol></div>`;
+  }).join('');
 }
 
 // ---------- Panel koraka ----------
@@ -190,16 +227,27 @@ function panel(d) {
     <header><div><small>${C.esc(chanLabel(s))}</small><h3>${C.esc(s.name)}</h3></div><button type="button" class="wf-x" data-wf="close" aria-label="Close">${ICON.close}</button></header>
     <div class="wf-pbody">
       <div class="wf-pstate is-${s.state}"><b>${STATE_LABEL[s.state]}</b><span>${C.esc(stateText || '')}</span></div>
-      <dl class="wf-dl"><dt>When it is sent</dt><dd>${C.esc(s.desc)}</dd><dt>Consent</dt><dd>${C.esc(consent)}</dd></dl>
+      <dl class="wf-dl"><dt>When it is sent</dt><dd>${C.esc(s.desc)}<small class="wf-win">${C.esc(s.window)}</small></dd><dt>Channels</dt><dd>${badges(s)}</dd><dt>Consent</dt><dd>${C.esc(consent)}</dd></dl>
       <label class="wf-step-on"><span><b>This step is on</b><small>Turn it off to stop this message for everyone.</small></span>${sw(!s.disabled, `data-wf="step" data-ev="${C.esc(s.ev)}"`, `Turn ${s.name} on or off`)}</label>
       ${s.hasText ? `<div class="wf-msg">
         <div class="wf-msg-top"><h4>${quoText ? 'Text message' : 'Suggested text for your GoHighLevel workflow'}</h4>${quoText ? `<button type="button" class="wf-link-btn" data-wf="tpl-reset" data-ev="${C.esc(s.ev)}" ${(s.isDefaultTemplate && W.drafts[s.ev] == null) || ro() ? 'disabled' : ''}>Reset to default</button>` : ''}</div>
         ${quoText ? `<textarea class="in" rows="5" maxlength="600" data-wf-tpl="${C.esc(s.ev)}" ${dis()}>${C.esc(draft)}</textarea>
           <div class="wf-chips" aria-label="Insert a detail">${d.meta.templateVars.map((v) => `<button type="button" data-wf="chip" data-v="${C.esc(v)}" ${dis()}>${C.esc(v.replace(/_/g, ' '))}</button>`).join('')}</div>`
-        : `<pre class="wf-pre">${C.esc(s.template)}</pre><p class="wf-help">Use the fields from Forms, then GoHighLevel. Switch to Quo above to send this text from our side.</p>`}
+        : `<div class="wf-cp"><pre class="wf-pre">${C.esc(forGhl(s.template, d))}</pre>${copyBtn(forGhl(s.template, d), 'text for GoHighLevel')}</div><p class="wf-help">Ready to paste into the Send SMS step, with the GoHighLevel contact fields. Switch to Quo above to send this text from our side.</p>`}
         <div class="wf-prev"><small>Preview with example details</small><p data-wf-prev>${C.esc(preview)}</p><small data-wf-count>${preview.length} characters, ${plural(segments(preview.length), 'segment')}${s.ev !== 'review_request' && quoText ? '. The first text a customer ever gets also ends with "Reply STOP to opt out."' : ''}</small></div>
         ${quoText ? `<div class="wf-row"><button type="button" class="btn primary" data-wf="tpl-save" data-ev="${C.esc(s.ev)}" ${ro() || W.busy ? 'disabled' : ''}>Save message</button>${s.ev === 'review_request' && !a.reviewLink ? '<span class="wf-warn-s">Add your Google review link in the Quo card first.</span>' : ''}</div>` : ''}
       </div>` : ''}
+      ${s.email ? `<div class="wf-msg wf-emailbox">
+        <div class="wf-msg-top"><h4>${ICON.mail} Email <small>for customers without text consent</small></h4></div>
+        <div class="wf-mailcard"><div class="wf-mailhead"><small>Subject</small><b>${C.esc(render(s.email.subject, vars(d)))}</b></div><p>${C.esc(render(s.email.body, vars(d)))}</p></div>
+        <p class="wf-help wf-copyhint">Copy into the Send Email step in GoHighLevel:</p><div class="wf-row wf-copyrow">
+          <button type="button" class="btn small" data-wf="copy" data-v="${C.esc(forGhl(s.email.subject, d))}">${ICON.copy} Subject</button>
+          <button type="button" class="btn small" data-wf="copy" data-v="${C.esc(forGhl(s.email.body, d))}">${ICON.copy} Body</button></div>
+        <p class="wf-help">Emails always go out from your GoHighLevel workflow. GoHighLevel adds the unsubscribe link.</p>
+      </div>` : ''}
+      ${s.task ? `<div class="wf-msg"><div class="wf-msg-top"><h4>${ICON.task} Task for your team</h4></div>
+        <div class="wf-cp"><pre class="wf-pre">${C.esc(forGhl(s.task, d))}</pre>${copyBtn(forGhl(s.task, d), 'task text')}</div>
+        <p class="wf-help">In GoHighLevel: Create Task (and Internal Notification) in this workflow.</p></div>` : ''}
       ${s.channel !== 'quo' ? `<div class="wf-gh"><h4>GoHighLevel workflow</h4>
         <ul class="wf-kv"><li><span>Starts on tag</span><code>${C.esc(s.tag)}</code>${copyBtn(s.tag, 'tag')}</li>
         <li><span>Workflow name</span><code>${C.esc(s.tag)}</code>${copyBtn(s.tag, 'workflow name')}</li>
@@ -249,6 +297,7 @@ function onClick(e) {
   if (a === 'close') { W.sel = null; C.rerender(); return; }
   if (a === 'reload') { load(); return; }
   if (a === 'copy') { copy(t); return; }
+  if (a === 'fview') { W.view[t.dataset.k] = t.dataset.v; C.rerender(); return; }
   if (a === 'fg') { W.group = t.dataset.v; W.shown = 25; C.rerender(); return; }
   if (a === 'fs') { W.status = t.dataset.v; W.shown = 25; C.rerender(); return; }
   if (a === 'more') { W.shown += 25; C.rerender(); return; }
