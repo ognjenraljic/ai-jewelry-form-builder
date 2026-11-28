@@ -100,6 +100,9 @@ const badges = (s) => `<span class="wf-chs">${chans(s).map(([k, ic, t]) => `<i c
 // Isti tekst sa poljima GoHighLevel kontakta, spreman za lijepljenje u workflow.
 const GHL_FIELD = { first_name: '{{contact.first_name}}', piece: '{{contact.jl_piece}}', page_url: '{{contact.jl_page_url}}', price: '{{contact.jl_price}}', offer_expires: '{{contact.jl_offer_expires}}', appt_type: '{{contact.jl_appt_type}}', appt_time: '{{contact.jl_appt_time}}', appt_location: '{{contact.jl_appt_location}}', meet_link: '{{contact.jl_meet_link}}', reschedule_url: '{{contact.jl_reschedule_url}}', order_no: '{{contact.jl_order_no}}' };
 const forGhl = (t, d) => String(t || '').replace(/\{([a-z_]+)\}/g, (m, k) => GHL_FIELD[k] || (k === 'store' ? d.meta.store : k === 'sender' ? d.automation.sender || d.meta.store : k === 'review_link' ? d.automation.reviewLink || '[your Google review link]' : m));
+// Ugašen korak (npr. Automations off) i dalje pokazuje stanje GHL workflowa, da se postavka provjeri prije paljenja.
+const stLabel = (s) => (s.state === 'off' && s.channel !== 'quo' && s.workflow ? `Off · ${s.workflow === 'published' ? 'published in GHL' : 'draft in GHL'}` : STATE_LABEL[s.state]);
+const stCls = (s) => (s.state === 'off' && s.workflow === 'published' && s.channel !== 'quo' ? ' is-pub' : '');
 const chanLabel = (s) => (s.channel === 'quo' ? 'SMS · Quo' : s.channel === 'internal' ? 'Internal' : 'GHL workflow');
 
 // ---------- Prikaz ----------
@@ -209,7 +212,7 @@ function link(state) {
 function node(s) {
   return `<button type="button" class="wf-node is-${s.state} ${W.sel === s.ev ? 'is-sel' : ''}" data-wf="node" data-ev="${C.esc(s.ev)}" aria-label="${C.esc(`${s.name}: ${STATE_LABEL[s.state]}`)}">
     <span class="wf-ic">${s.hasText && s.channel !== 'internal' ? ICON.sms : ICON.bell}</span>
-    <span class="wf-nt"><b>${C.esc(s.name)}</b><small>${C.esc(s.when)}</small>${badges(s)}<span class="wf-meta"><span class="wf-st">${STATE_LABEL[s.state]}</span>${s.sent30 ? `<span class="wf-n">${s.sent30} sent</span>` : ''}</span></span>
+    <span class="wf-nt"><b>${C.esc(s.name)}</b><small>${C.esc(s.when)}</small>${badges(s)}<span class="wf-meta"><span class="wf-st${stCls(s)}">${C.esc(stLabel(s))}</span>${s.sent30 ? `<span class="wf-n">${s.sent30} sent</span>` : ''}</span></span>
   </button>`;
 }
 function flowCard(f, d) {
@@ -232,7 +235,7 @@ function messagesView(f, d) {
     if (!steps.length) return '';
     return `<div class="wf-lane-wrap"><p class="wf-lane-label">${C.esc(l.label)}</p><ol class="wf-msgs">${steps.map((s) => `<li class="is-${s.state}">
       <button type="button" class="wf-mrow" data-wf="node" data-ev="${C.esc(s.ev)}">
-        <span class="wf-mwhen"><b>${C.esc(s.name)}</b><small>${C.esc(s.when)}</small><small>${C.esc(s.window)}</small><span class="wf-st">${STATE_LABEL[s.state]}</span></span>
+        <span class="wf-mwhen"><b>${C.esc(s.name)}</b><small>${C.esc(s.when)}</small><small>${C.esc(s.window)}</small><span class="wf-st${stCls(s)}">${C.esc(stLabel(s))}</span></span>
         <span class="wf-mbody">${badges(s)}
           ${s.hasText ? `<span class="wf-bub"><i>${ICON.msg}</i>${C.esc(render(s.template, v))}</span>` : ''}
           ${s.email ? `<span class="wf-mail"><i>${ICON.mail}</i><b>${C.esc(render(s.email.subject, v))}</b></span>` : ''}
@@ -252,7 +255,7 @@ function panel(d) {
   const preview = s.hasText ? render(draft, vars(d)) : '';
   const consent = !s.hasText ? 'No customer text. This step only tells your GoHighLevel workflow.' : s.needsMkt ? 'Customer consent: marketing texts.' : 'Customer consent: texts about their request.';
   const recent = d.history.filter((h) => h.ev === s.ev).slice(0, 10);
-  const stateText = { live: s.channel === 'quo' ? 'Live. Texts for this step are going out through Quo.' : `Live. GoHighLevel confirmed this workflow${s.ackAt ? ` on ${fmtDay(s.ackAt)}` : ''}.`, published: 'Published in GoHighLevel. It turns Live after its first run reaches the ack webhook.', waiting: s.hint, not_connected: s.hint, error: s.hint, off: s.hint }[s.state];
+  const stateText = { live: s.channel === 'quo' ? 'Live. Texts for this step are going out through Quo.' : `Live. GoHighLevel confirmed this workflow${s.ackAt ? ` on ${fmtDay(s.ackAt)}` : ''}.`, published: 'Published in GoHighLevel. It turns Live after its first run reaches the ack webhook.', waiting: s.hint, not_connected: s.hint, error: s.hint, off: s.workflow === 'published' && s.channel !== 'quo' ? `${s.hint} The GoHighLevel workflow is published and ready.` : s.workflow && s.channel !== 'quo' ? `${s.hint} The GoHighLevel workflow exists but is not published yet.` : s.hint }[s.state];
   return `<div class="wf-scrim" data-wf="close"></div>
   <aside class="wf-panel" role="dialog" aria-label="${C.esc(s.name)}" aria-modal="true">
     <header><div><small>${C.esc(chanLabel(s))}</small><h3>${C.esc(s.name)}</h3></div><button type="button" class="wf-x" data-wf="close" aria-label="Close">${ICON.close}</button></header>
