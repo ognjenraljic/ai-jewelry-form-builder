@@ -29,6 +29,12 @@ export function initWorkflows(ctx) {
   C.app.addEventListener('input', onInput);
   C.app.addEventListener('change', onChange);
   C.app.addEventListener('keydown', (e) => { if (e.key === 'Escape' && C.P.tab === 'workflows' && W.sel) { W.sel = null; C.rerender(); } });
+  // Bogat hover na koraku (28.11.2026, Ognjen: "na hover da iskoči popup sa svim info, kad se dešava i koji je sadržaj").
+  C.app.addEventListener('mouseover', (e) => { const n = e.target.closest?.('.wf-node'); if (n && C.P.tab === 'workflows' && matchMedia('(hover: hover)').matches) tipShow(n); });
+  C.app.addEventListener('mouseout', (e) => { const n = e.target.closest?.('.wf-node'); if (n && !n.contains(e.relatedTarget)) tipHide(); });
+  C.app.addEventListener('focusin', (e) => { const n = e.target.closest?.('.wf-node'); if (n && C.P.tab === 'workflows') tipShow(n); else tipHide(); });
+  C.app.addEventListener('click', tipHide, true);
+  addEventListener('scroll', tipHide, { passive: true });
   // Osvježavanje svakih 60 s dok je tab otvoren i vidljiv, ali ne dok zlatar nešto upisuje.
   W.timer = setInterval(() => {
     if (C.P.tab !== 'workflows' || document.visibilityState !== 'visible' || W.loading || W.busy) return;
@@ -248,6 +254,37 @@ function messagesView(f, d) {
       </button></li>`).join('')}</ol></div>`;
   }).join('');
 }
+
+// ---------- Hover kartica koraka ----------
+let tipEl = null;
+function tipHtml(s, d) {
+  const v = vars(d);
+  const st = s.state === 'off' && s.channel !== 'quo' && s.workflow ? stLabel(s) : STATE_LABEL[s.state];
+  return `<div class="wf-tip-top"><b>${C.esc(s.name)}</b><span class="wf-tip-st is-${C.esc(s.state)}${stCls(s)}">${C.esc(st)}</span></div>
+    <p class="wf-tip-when">${C.esc(s.desc)}</p>
+    <p class="wf-tip-win">${C.esc(s.window)}${s.hasText ? ` · ${s.needsMkt ? 'needs marketing text consent' : 'needs text consent'}` : ''}</p>
+    ${badges(s)}
+    ${s.hasText ? `<div class="wf-tip-sec"><small>Text</small><p class="wf-bub">${C.esc(render(s.template, v))}</p></div>` : ''}
+    ${s.email ? `<div class="wf-tip-sec"><small>Email</small><p class="wf-tip-subj">${C.esc(render(s.email.subject, v))}</p><p class="wf-tip-body">${C.esc(render(s.email.body, v))}</p></div>` : ''}
+    ${s.task ? `<div class="wf-tip-sec"><small>Task for your team</small><p>${C.esc(render(s.task, v))}</p></div>` : ''}
+    <p class="wf-tip-foot">Example details. Click the step to edit or copy.</p>`;
+}
+function tipShow(n) {
+  const d = W.data;
+  const s = d && findStep(d, n.dataset.ev);
+  if (!s || W.sel) return;
+  if (!tipEl) { tipEl = document.createElement('div'); tipEl.className = 'wf-tip'; tipEl.setAttribute('role', 'tooltip'); document.body.appendChild(tipEl); }
+  tipEl.innerHTML = tipHtml(s, d);
+  tipEl.classList.add('on');
+  const r = n.getBoundingClientRect();
+  const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  let left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8);
+  let top = r.bottom + 8;
+  if (top + h > innerHeight - 8) top = Math.max(8, r.top - h - 8);
+  tipEl.style.left = `${left}px`;
+  tipEl.style.top = `${top}px`;
+}
+function tipHide() { tipEl?.classList.remove('on'); }
 
 // ---------- Panel koraka ----------
 function panel(d) {
