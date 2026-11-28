@@ -2,7 +2,7 @@
 // Pamti kontakte, tagove, bilješke i opportunity-je; GET /_state vraća sve što je stiglo. Token mora biti "pit-...".
 import { createServer } from 'node:http';
 const port = Number(process.argv[2]) || 8897;
-const S = { contacts: {}, opportunities: {}, calls: [], appointments: {}, messages: [], fields: [], tagLog: [] };
+const S = { contacts: {}, opportunities: {}, calls: [], appointments: {}, messages: [], fields: [], tagLog: [], workflows: [] };
 let seq = 0;
 const send = (res, status, data) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(data)); };
 createServer(async (req, res) => {
@@ -13,12 +13,16 @@ createServer(async (req, res) => {
   if (url.pathname === '/_state') return send(res, 200, S);
   if (url.pathname === '/_fail') { S.failAppt = url.searchParams.get('appt') || ''; return send(res, 200, { failAppt: S.failAppt }); }
   if (req.method === 'POST' && url.pathname === '/_appt') { Object.assign(S.appointments[body.id] || {}, body.patch); return send(res, 200, S.appointments[body.id] || {}); }
+  // Workflowi za tab Workflows: POST /_wf { name, status } dodaje ili mijenja; /_wf_fail?code=403 vraća grešku za listu.
+  if (req.method === 'POST' && url.pathname === '/_wf') { const w = S.workflows.find((x) => x.name === body.name); if (w) Object.assign(w, body); else S.workflows.push({ id: `wf${++seq}`, status: 'draft', ...body }); return send(res, 200, { workflows: S.workflows }); }
+  if (url.pathname === '/_wf_fail') { S.wfFail = Number(url.searchParams.get('code')) || 0; return send(res, 200, { wfFail: S.wfFail }); }
   S.calls.push({ method: req.method, path: url.pathname, version: req.headers.version });
   if (!/^Bearer pit-/.test(req.headers.authorization || '')) return send(res, 401, { message: 'Invalid token' });
   // Kalendari i poruke (25.11.2026) idu na 2021-04-15, kao pravi GHL.
   const calPath = /^\/(calendars|conversations)\//.test(url.pathname);
   if (req.headers.version !== (calPath ? '2021-04-15' : '2021-07-28')) return send(res, 400, { message: 'version header was not found' });
   let m;
+  if (req.method === 'GET' && url.pathname === '/workflows/') return S.wfFail ? send(res, S.wfFail, { message: 'The token is not authorized for this scope.' }) : send(res, 200, { workflows: S.workflows });
   if (req.method === 'GET' && url.pathname === '/calendars/') return send(res, 200, { calendars: [{ id: 'calOnline01', name: 'Online consultation', slotDuration: 10, isActive: true }, { id: 'calVisit001', name: 'Studio visit', slotDuration: 30, isActive: true }] });
   if (req.method === 'GET' && (m = url.pathname.match(/^\/calendars\/([^/]+)\/free-slots$/))) {
     // Svaki dan 11:00 i 11:30 i 15:00 po zoni radnje (UTC-7 za Denver zimi), dva dana unaprijed od startDate.

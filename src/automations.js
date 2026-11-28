@@ -13,7 +13,7 @@ const M = 60_000;
 const H = 60 * M;
 const D = 24 * H;
 
-export const AUTO_DEFAULTS = { on: false, offer: true, appts: true, reviews: true, holdout: 10, reviewDays: 1, grillzReviewDays: 3 };
+export const AUTO_DEFAULTS = { on: false, offer: true, appts: true, reviews: true, holdout: 10, reviewDays: 1, grillzReviewDays: 3, texts: 'ghl' };
 
 // Događaj -> [tag u GHL-u, grupa, kada (za portal i uputstvo)]. Imena tagova se ne mijenjaju: na njih su vezani workflowi.
 export const EVENTS = {
@@ -57,15 +57,25 @@ export const FIELDS = [
   ['jl_occasion_date', 'JL Occasion Date'],
 ];
 
+// Postavke (clients.data.automation; stari zapis ghl.auto se čita dok novi ne postoji). Sve što dođe spolja se čisti ovdje.
 export function autoSettings(raw) {
   const a = raw && typeof raw === 'object' ? raw : {};
   const int = (v, lo, hi, d) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Math.round(Number(v)))) : d);
+  const templates = {};
+  for (const [k, v] of Object.entries(a.templates && typeof a.templates === 'object' ? a.templates : {})) if (k in DEFAULT_TEMPLATES && DEFAULT_TEMPLATES[k] && cleanTemplate(v)) templates[k] = String(v).trim();
+  const disabled = {};
+  for (const [k, v] of Object.entries(a.disabled && typeof a.disabled === 'object' ? a.disabled : {})) if (k in EVENTS && v === true) disabled[k] = true;
   return {
     on: a.on === true, since: Number(a.since) || 0, offer: a.offer !== false, appts: a.appts !== false, reviews: a.reviews !== false,
     holdout: [0, 10, 20].includes(Number(a.holdout)) ? Number(a.holdout) : AUTO_DEFAULTS.holdout,
     reviewDays: int(a.reviewDays, 0, 14, AUTO_DEFAULTS.reviewDays), grillzReviewDays: int(a.grillzReviewDays, 0, 14, AUTO_DEFAULTS.grillzReviewDays),
+    texts: a.texts === 'quo' ? 'quo' : 'ghl', reviewLink: cleanReviewLink(a.reviewLink) || '', sender: /^[^<>]{1,40}$/.test(String(a.sender || '').trim()) ? String(a.sender).trim() : '',
+    templates, disabled,
   };
 }
+export const cleanReviewLink = (v) => { const t = String(v || '').trim(); return /^https:\/\/[^\s<>"']{4,280}$/.test(t) ? t : ''; };
+// Tekst poruke: do 600 znakova, bez < i >.
+export const cleanTemplate = (v) => { const t = String(v ?? '').trim(); return t.length > 0 && t.length <= 600 && !/[<>]/.test(t) ? t : ''; };
 
 // Kontrolna grupa (istraživanje: jedini način da se zna stvarni efekat podsjetnika): stalno ista za isti lead.
 export function inHoldout(leadId, pct) {
@@ -90,6 +100,8 @@ export function offerEvents(s) {
   const out = [];
   const tl = s.tl;
   if (!tl || s.closed || s.paid) return out;
+  // Kupac je odgovorio (SMS preko Quo-a) poslije početka ponude: razgovor je počeo, automatske poruke staju.
+  if (s.replied && s.replied >= tl.from) return out;
   const set = tl.settings || {};
   const from = tl.from;
   const hours = Number(set.hours) || 0;
@@ -169,3 +181,80 @@ export function dayStart(ymd, tz) {
 export function dueNow(list, { now = Date.now(), since = 0, tz = 'UTC', done = () => false } = {}) {
   return list.filter((e) => e.at != null && Number.isFinite(e.at) && e.at >= since && now >= e.at && now <= e.until && inWindow(e.ev, now, tz) && !done(e.key));
 }
+
+// ---------- Prikaz toka u portalu i tekstovi poruka (28.11.2026, tab Workflows) ----------
+// Kratki nazivi koraka i kada se šalju (za dijagram). needsMkt = prodajna poruka: traži pristanak na marketinške poruke.
+export const STEP_INFO = {
+  deposit_click: { name: 'Deposit click', when: '20 min after the click', mkt: true },
+  offer_unopened: { name: 'Not opened', when: '4 h after quote', mkt: false },
+  offer_saved: { name: 'Opened, no deposit', when: '4 h after quote', mkt: true },
+  offer_24h: { name: '24 h left', when: '24 h before the hold ends', mkt: true },
+  offer_final: { name: 'Final hours', when: '6 h before the hold ends', mkt: true },
+  offer_expired: { name: 'Hold ended', when: 'When the hold ends', mkt: true },
+  offer_closeout: { name: 'Closeout', when: '6 days after the hold ended', mkt: true },
+  refresh_ready: { name: 'Refreshed price', when: 'When their new price unlocks', mkt: true },
+  refresh_moved: { name: 'Metal moved', when: 'You send the new price', mkt: false },
+  appt_booked: { name: 'Booked', when: 'Right after booking', mkt: false },
+  visit_3d: { name: 'Studio visit −3 days', when: '3 days before', mkt: false },
+  visit_24h: { name: 'Studio visit −24 h', when: '24 h before', mkt: false },
+  visit_2h: { name: 'Studio visit −2 h', when: '2 h before', mkt: false },
+  call_1h: { name: 'Consultation −1 h', when: '1 h before', mkt: false },
+  call_10m: { name: 'Consultation −10 min', when: '10 min before', mkt: false },
+  appt_noshow: { name: 'No-show', when: 'When marked No-show', mkt: false },
+  appt_showed: { name: 'Done, no deposit', when: '2 h after marked Done', mkt: true },
+  appt_cancelled: { name: 'Cancelled', when: 'When cancelled', mkt: false },
+  order_ready: { name: 'Order ready', when: 'Ready for pick up', mkt: false },
+  picked_up: { name: 'Picked up', when: 'When marked Picked up', mkt: false },
+  review_request: { name: 'Review request', when: 'Day after pick up', mkt: false },
+};
+export const FLOWS = [
+  { key: 'offer', title: 'Quote follow-ups', lanes: [
+    { label: 'After the quote', evs: ['offer_unopened', 'offer_saved', 'offer_24h', 'offer_final', 'offer_expired', 'offer_closeout'] },
+    { label: 'Along the way', evs: ['deposit_click', 'refresh_ready', 'refresh_moved'] },
+  ] },
+  { key: 'appts', title: 'Appointments', lanes: [
+    { label: 'Studio visit', evs: ['appt_booked', 'visit_3d', 'visit_24h', 'visit_2h'] },
+    { label: 'Online consultation', evs: ['appt_booked', 'call_1h', 'call_10m'] },
+    { label: 'After the appointment', evs: ['appt_noshow', 'appt_showed', 'appt_cancelled'] },
+  ] },
+  { key: 'reviews', title: 'Pick up & review', lanes: [
+    { label: 'Order to review', evs: ['order_ready', 'picked_up', 'review_request'] },
+  ] },
+];
+// Tekstovi za SMS preko Quo-a (iz docs/ghl-workflows-en.md, sekcija 6). null = nema SMS teksta (interni / zahvala u GHL-u).
+export const DEFAULT_TEMPLATES = {
+  deposit_click: "Hi {first_name}, it's {sender} from {store}. I saw you opened the deposit for your {piece}. Anything I can help with? I can hold it with a smaller deposit or set up a quick call.",
+  offer_unopened: "Hey {first_name}, it's {sender} from {store}. Did you get a chance to see your {piece} design? It's here: {page_url}",
+  offer_saved: 'Hey {first_name}, your {piece} design is saved here: {page_url} Price held until {offer_expires}. Questions? Just reply.',
+  offer_24h: '{first_name}, {sender} here. Your {piece} is on hold until {offer_expires}. Want me to walk you through it on a quick 10-min call? {page_url}',
+  offer_final: "Last few hours on your {piece} price. After that I re-quote at that day's gold price, which can go up or down. {page_url}",
+  offer_expired: "Your price hold ended. Want today's price? Tap 'Request a refreshed quote' on your page: {page_url}",
+  offer_closeout: 'Should I keep your {piece} design on file, or close it out for now? Either is totally fine. {sender}, {store}',
+  refresh_ready: 'Your refreshed price is ready and held for 24 hours: {page_url}',
+  refresh_moved: null,
+  appt_booked: "Hey {first_name}, it's {sender} from {store}. You're booked: {appt_type}, {appt_time}. {appt_location}. Need another time? {reschedule_url}",
+  visit_3d: 'See you {appt_time} at the studio, {first_name}. Need another time? {reschedule_url}',
+  visit_24h: 'See you tomorrow, {appt_time}. {appt_location}. Need another time? {reschedule_url}',
+  visit_2h: '{sender} is pulling pieces for you. {appt_location}. See you at {appt_time}.',
+  call_1h: 'Your consultation with {store} is in 1 hour ({appt_time}). {appt_location}',
+  call_10m: 'Calling you in 10 minutes, save this number so you pick up. {meet_link}',
+  appt_noshow: 'We missed you today, no worries. Want to pick another time? {reschedule_url}',
+  appt_showed: "Great meeting you, {first_name}. Here's your {piece} with the price: {page_url} I'm holding it for you.",
+  appt_cancelled: 'Got it, want to pick another time? {reschedule_url}',
+  order_ready: 'Your {piece} is ready for pick up! Order {order_no}. Reply to set a time.',
+  picked_up: null,
+  review_request: "Hey {first_name}, it's {sender} from {store}. Hope you're loving the {piece}! If you have a minute, an honest Google review helps us a lot: {review_link}",
+};
+export const TEMPLATE_VARS = ['first_name', 'piece', 'page_url', 'price', 'offer_expires', 'appt_type', 'appt_time', 'appt_location', 'meet_link', 'reschedule_url', 'order_no', 'store', 'review_link', 'sender'];
+// Zamjena {var}; nepoznata promjenljiva ostaje, prazna vrijednost nestaje a razmaci se sređuju.
+export function renderTemplate(tpl, vars) {
+  let t = String(tpl || '').replace(/\{([a-z_]+)\}/g, (m, k) => (k in vars ? String(vars[k] ?? '') : m));
+  t = t.replace(/[ \t]+/g, ' ').replace(/ ([.,!?])/g, '$1').replace(/\.\s*\./g, '.').trim();
+  // Ime pošiljaoca isto kao ime radnje: "it's District from District" -> "it's District".
+  return t.replace(/\b(it's|It's) (.{1,40}?) from \2\b/, '$1 $2').trim();
+}
+export const exampleVars = (store = 'Your Store') => ({
+  first_name: 'Ava', piece: 'grillz', page_url: 'https://jewelrylead.com/p/abc123', price: '$1,850', offer_expires: 'Mon, Dec 1, 5:00 PM', appt_type: 'Studio visit',
+  appt_time: 'Tue, Dec 2, 11:00 AM', appt_location: '1550 Larimer St, Denver', meet_link: '', reschedule_url: 'https://jewelrylead.com/p/abc123#appts', order_no: 'DJ-7K4Q9',
+  store, review_link: 'https://g.page/r/your-review-link', sender: store,
+});

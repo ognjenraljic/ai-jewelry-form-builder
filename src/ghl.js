@@ -28,17 +28,20 @@ async function aes(env) {
   const material = await crypto.subtle.digest('SHA-256', enc.encode(`JewelryLead/ghl-token/v1:${secret}`));
   return crypto.subtle.importKey('raw', material, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
-export async function sealGhlToken(env, clientId, token) {
+// Opšte: ad vezuje šifrat za klijenta i namjenu (ghl:<id>, quo:<id>), pa se ne može prenijeti drugdje.
+export async function sealSecret(env, ad, text) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(`ghl:${clientId}`) }, await aes(env), enc.encode(token));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(ad) }, await aes(env), enc.encode(text));
   return `v1.${b64(iv)}.${b64(ct)}`;
 }
-export async function openGhlToken(env, clientId, sealed) {
+export async function openSecret(env, ad, sealed) {
   const [v, iv, ct] = String(sealed || '').split('.');
   if (v !== 'v1' || !iv || !ct) return '';
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv), additionalData: enc.encode(`ghl:${clientId}`) }, await aes(env), unb64(ct));
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv), additionalData: enc.encode(ad) }, await aes(env), unb64(ct));
   return new TextDecoder().decode(pt);
 }
+export const sealGhlToken = (env, clientId, token) => sealSecret(env, `ghl:${clientId}`, token);
+export const openGhlToken = (env, clientId, sealed) => openSecret(env, `ghl:${clientId}`, sealed);
 
 // Podešavanje bez tokena (ide u portal): šta je upisano i da li je uključeno.
 export function ghlPublic(g) {
@@ -367,7 +370,15 @@ export function hookPayload(b) {
     phone: str(b.phone, b.contact?.phone, cd.phone),
     amount: num(cd.amount, b.amount, b.payment?.total_amount, b.payment?.amount, b.order?.amount, b.invoice?.total, b.transaction?.amount),
     ref: str(cd.reference, cd.ref, b.payment?.transaction_id, b.transaction?.id, b.order?.id).slice(0, 80),
+    // Potvrda iz GHL workflowa (jl_ack): tag workflowa koji je stvarno radio.
+    tag: str(cd.tag, b.tag).toLowerCase().replace(/\s+/g, ' ').slice(0, 60),
   };
+}
+
+// Lista workflowa sub-accounta (dozvola View Workflows): [{ id, name, status }].
+export async function ghlWorkflows(token, locationId, fetchFn = fetch) {
+  const d = await ghlCall(token, 'GET', `/workflows/?locationId=${encodeURIComponent(locationId)}`, null, fetchFn);
+  return (d.workflows || []).map((w) => ({ id: String(w.id || ''), name: String(w.name || '').slice(0, 120), status: String(w.status || '').toLowerCase() }));
 }
 
 // ---------- Workflowi: polja kontakta i tagovi događaja (27.11.2026, vidi src/automations.js) ----------

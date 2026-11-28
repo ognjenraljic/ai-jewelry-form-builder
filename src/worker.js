@@ -20,8 +20,9 @@ import { sealPortalToken, openPortalToken, activePortalSession } from './portal-
 import { areaOf } from '../public/area-codes.js';
 import { ghlPublic, sealGhlToken, openGhlToken, validLocationId, validPit, ghlPipelines, guessStages, ghlPushLead, ghlPushStatus, ghlPushTags, GHL_STATUSES, GHL_BASE, oppName, ghlRenameOpp, guessOrderStages, ghlUsers, ghlPushOrder, ghlPushOrderStage, ghlReadOrderStage, prodReady, ORDER_KEYS,
   ghlCalendars, ghlFreeSlots, ghlBookAppointment, ghlCancelAppointment, ghlAddNote, ghlEnsureContact, ghlSetAddress, ghlSendSms, hookPayload,
-  ghlEnsureFields, ghlSetFields, ghlFireTag, ghlSetApptStatus, ghlGetAppointment } from './ghl.js';
-import { EVENTS, FIELDS, autoSettings, inHoldout, offerEvents, apptEvents, reviewEvents, dueNow } from './automations.js';
+  ghlEnsureFields, ghlSetFields, ghlFireTag, ghlSetApptStatus, ghlGetAppointment, ghlWorkflows, ghlRemoveTags, sealSecret, openSecret } from './ghl.js';
+import { EVENTS, FIELDS, autoSettings, inHoldout, offerEvents, apptEvents, reviewEvents, dueNow, STEP_INFO, FLOWS, DEFAULT_TEMPLATES, TEMPLATE_VARS, renderTemplate, exampleVars, cleanReviewLink, cleanTemplate } from './automations.js';
+import { QUO_BASE, sealQuoKey, openQuoKey, quoNumbers, quoSend, quoCreateWebhook, quoDeleteWebhook, toE164, isUsNumber, maskPhone, STOP_WORDS, START_WORDS, verifyQuoSignature } from './quo.js';
 import { KINDS, KIND_LABEL, TIMEZONES, bookingSettings, cleanBooking, kindsOn, nativeSlots, ghlSlotsToDays, zonedToUtc, zonedYmd, addDays, whenText, icsFor, cleanFulfillment, fulfillmentText, depositLink } from './booking.js';
 import { offerTimeline, offerSettings, metalMoved } from './offer.js';
 import { ORDER_STAGES, LAST_STAGE, orderPrefix, newOrderNo, normalizeOrderNo, orderView, nextOrder, parseOrder, leadRef, parseLeadRef } from './orders.js';
@@ -143,7 +144,7 @@ async function route(request, env, ctx, url) {
     if (!(await isAdmin(request, env))) return json({ error: 'Not allowed.' }, 403);
     const at = env.DEV_MODE === '1' ? Number(url.searchParams.get('at')) || Date.now() : Date.now();
     await storeSweep(env, at);
-    await ghlAutoSweep(env, at);
+    await autoSweep(env, at);
     return json({ ok: true, at });
   }
   if (p === '/api/admin/metals/sweep' && request.method === 'POST') return (await isAdmin(request, env)) ? json(await metalSweep(env, Number(url.searchParams.get('at')) || Date.now())) : json({ error: 'Not allowed.' }, 403);
@@ -180,6 +181,7 @@ async function route(request, env, ctx, url) {
   // A2P (25.11.2026): Privacy Policy i Terms radnje koja nema svoje linkove u formi.
   if ((m = p.match(/^\/legal\/([a-z0-9][a-z0-9-]{0,39})\/(privacy|terms)$/)) && read) return legalPage(request, env, m[1], m[2]);
   if ((m = p.match(/^\/api\/hooks\/ghl\/([a-z0-9]{32})$/)) && request.method === 'POST') return ghlHook(request, env, ctx, m[1]);
+  if ((m = p.match(/^\/api\/hooks\/quo\/([a-z0-9]{32})$/)) && request.method === 'POST') return quoHook(request, env, ctx, m[1]);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/renders$/)) && request.method === 'POST') return createRender(request, env, m[1], ctx);
   if ((m = p.match(/^\/api\/leads\/([\w-]+)\/check$/)) && request.method === 'POST') return teethCheckRoute(request, env, m[1], ctx);
   if (p === '/api/demo-requests' && request.method === 'POST') return createDemoRequest(request, env);
@@ -371,7 +373,7 @@ async function catchUp(env) {
   await storeSweep(env).catch((e) => console.error('store sweep', e.message));
   await refitSweep(env, ORIGIN.replace(/\/$/, '')).catch((e) => console.error('refit sweep', e.message));
   await ghlApptPoll(env).catch((e) => console.error('ghl appt poll', e.message));
-  await ghlAutoSweep(env).catch((e) => console.error('ghl auto sweep', e.message));
+  await autoSweep(env).catch((e) => console.error('auto sweep', e.message));
   if (pikaOn(env)) {
     const need = (await env.DB.prepare(`SELECT l.* FROM leads l JOIN renders r ON r.lead_id = l.id AND r.n = 1 AND r.kind IS NULL AND r.status = 'ok' AND (r.checking IS NULL)
         WHERE l.created_at > ? AND r.created_at < ? AND NOT EXISTS (SELECT 1 FROM films f WHERE f.lead_id = l.id) ORDER BY l.created_at LIMIT ${CATCHUP_FILMS}`).bind(now - 864e5, now - 60_000).all()).results;
@@ -1636,7 +1638,7 @@ async function portalApi(request, env, p, secure, ctx) {
       })),
       stats: { leads: stats?.leads || 0, renders: stats?.renders || 0, recent: stats?.recent || 0, films: gen?.films || 0, renderMs: Math.round(gen?.render_ms || 0), filmMs: Math.round(gen?.film_ms || 0) },
       pricing: d.pricing || null,
-      ghl: ghlPublic(d.ghl),
+      ghl: { ...ghlPublic(d.ghl), auto: autoOf(d) },
       market,
       // Izbori formi koje kalkulator cijene treba (natpisi), po formi.
       formSpecs: Object.fromEntries(formRows.filter((r) => !r.archived_at).map((r) => [r.id, pricingSpec(forms[r.id])])),
@@ -2060,6 +2062,8 @@ async function portalApi(request, env, p, secure, ctx) {
   if (p === '/api/portal/stats' && request.method === 'GET') return json(await portalStats(env, client));
   // GoHighLevel podešavanje (24.11.2026). Kao cijene, smije ga mijenjati i admin u pregledu klijenta (Ognjen ga postavlja).
   if (p.startsWith('/api/portal/ghl')) return portalGhl(request, env, p, client, ctx);
+  // Tab Workflows (28.11.2026): stanje tokova, kanal za SMS (GoHighLevel ili Quo), istorija slanja. Admin pregled samo čita.
+  if (p === '/api/portal/workflows' || p.startsWith('/api/portal/quo/')) return portalWorkflows(request, env, ctx, client, sess, p);
   // Obavještenja (24.11.2026): novi upiti, kupac otvorio stranicu, Deposit/Appointment, automatske poruke, greške slanja.
   if (p === '/api/portal/notifications' && request.method === 'GET') return json(await portalNotifications(env, client));
   // Plutajuća obavještenja (27.11.2026): X na jednom skida ga sa ekrana (pamti se za radnju, na svim uređajima).
@@ -2391,6 +2395,289 @@ async function ghlSweep(env) {
       ORDER BY COALESCE(json_extract(l.ghl_order, '$.polledAt'), 0) LIMIT 25`).bind(Date.now() - 3 * 864e5).all()).results;
   for (const r of poll) await ghlOrderPoll(env, r).catch(() => null);
 }
+// ---------- Tab Workflows u portalu (28.11.2026) ----------
+const WF_TTL = 10 * 60_000;
+// Lista workflowa iz GHL-a (View Workflows), keš 10 min u clients.data.ghl.wf; greška ne ruši ništa.
+async function refreshWf(env, client, d) {
+  const g = d.ghl || {};
+  if (g.wf?.at && Date.now() - g.wf.at < WF_TTL) return g.wf;
+  const conf = await ghlConfig(env, client);
+  if (!conf) return g.wf || null;
+  let wf;
+  try {
+    const list = await Promise.race([ghlWorkflows(conf.token, g.locationId, ghlFetch(env)), new Promise((_, rej) => setTimeout(() => rej(Object.assign(new Error('timeout'), { status: 0 })), 3000))]);
+    wf = { at: Date.now(), list: list.slice(0, 300), err: null };
+  } catch (e) {
+    if (e.message === 'timeout') return g.wf || null;
+    wf = { at: Date.now(), list: g.wf?.list || [], err: e.status === 401 || e.status === 403 ? 'missing' : 'error' };
+  }
+  await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.ghl.wf', json(?)) WHERE id = ?`).bind(JSON.stringify(wf), client.id).run().catch(() => {});
+  return wf;
+}
+
+const STATE_RANK = { error: 0, not_connected: 1, waiting: 2, published: 3, live: 4 };
+async function workflowsView(env, client, origin) {
+  const d = parseJson(client.data);
+  const st = autoOf(d);
+  const g = d.ghl || {};
+  const q = d.quo || {};
+  const now = Date.now();
+  const ghlConnected = !!(g.token && g.locationId);
+  const ghlOn = g.enabled === true && ghlConnected;
+  const quoReady = !!(q.key && (q.fromId || q.from));
+  const wf = ghlOn ? await refreshWf(env, client, d) : g.wf || null;
+  const rows = (await env.DB.prepare(`SELECT ev, channel, status, at, acked_at, error FROM ghl_events WHERE client_id = ? AND at > ? AND ev != 'test' ORDER BY at DESC LIMIT 5000`).bind(client.id, now - 30 * 864e5).all()).results;
+  const agg = {};
+  const counts = { sent7: 0, sent30: 0, failed30: 0, holdout30: 0 };
+  for (const r of rows) {
+    const a = (agg[r.ev] ||= { sent7: 0, sent30: 0, failed30: 0, lastAt: 0, last: { ghl: null, quo: null } });
+    const ch = r.channel === 'quo' ? 'quo' : 'ghl';
+    if (r.status === 'sent') { a.sent30++; counts.sent30++; if (r.at > now - 7 * 864e5) { a.sent7++; counts.sent7++; } }
+    if (r.status === 'failed') { a.failed30++; counts.failed30++; }
+    if (r.status === 'holdout') counts.holdout30++;
+    if (r.status === 'sent' || r.status === 'failed') { a.lastAt = Math.max(a.lastAt, r.at); if (!a.last[ch]) a.last[ch] = r; }
+  }
+  const wfFor = (tag) => (wf?.list || []).find((w) => w.name.toLowerCase().includes(tag));
+  const groupOn = (grp) => st[grp] !== false;
+  const stepOf = (ev) => {
+    const [tag, group, desc] = EVENTS[ev];
+    const info = STEP_INFO[ev];
+    const a = agg[ev] || { sent7: 0, sent30: 0, failed30: 0, lastAt: 0, last: {} };
+    const channel = ev === 'refresh_moved' ? 'internal' : DEFAULT_TEMPLATES[ev] && st.texts === 'quo' ? 'quo' : 'ghl';
+    const last = channel === 'quo' ? a.last.quo : a.last.ghl;
+    const ackAt = Number(g.acks?.[tag]) || 0;
+    let state;
+    let hint;
+    if (!st.on || !groupOn(group) || st.disabled[ev]) {
+      state = 'off';
+      hint = !st.on ? 'Automations are off.' : !groupOn(group) ? 'This group of messages is turned off.' : 'This step is turned off.';
+    } else if (channel === 'quo') {
+      if (!quoReady) { state = 'not_connected'; hint = 'Connect Quo and pick your number in the channel card.'; }
+      else if (last?.status === 'failed' && last.at > now - 7 * 864e5) { state = 'error'; hint = last.error || 'The last text did not go out.'; }
+      else if (last?.status === 'sent' && !q.lastError) { state = 'live'; hint = 'Texts for this step are going out through Quo.'; }
+      else { state = 'waiting'; hint = q.lastError ? `Quo reported a problem: ${q.lastError.msg || ''}` : 'Ready. This step turns Live after its first text goes out through Quo.'; }
+    } else if (!ghlOn) {
+      state = 'not_connected'; hint = 'Connect GoHighLevel in Forms, then GoHighLevel.';
+    } else if (last?.status === 'failed' && last.at > now - 7 * 864e5) { state = 'error'; hint = last.error || 'The last send failed.'; }
+    else if (ackAt > now - 30 * 864e5) { state = 'live'; hint = 'GoHighLevel confirmed this workflow ran.'; }
+    else if (wfFor(tag)?.status === 'published') { state = 'published'; hint = 'The workflow is published. It turns Live after its first run reaches the ack webhook.'; }
+    else { state = 'waiting'; hint = `Publish a GoHighLevel workflow named "${tag}" and end it with the ack webhook step.`; }
+    return {
+      ev, tag, group, name: info.name, when: info.when, desc, state, hint, channel, needsMkt: !!info.mkt, hasText: !!DEFAULT_TEMPLATES[ev],
+      sent7: a.sent7, sent30: a.sent30, failed30: a.failed30, lastAt: a.lastAt || null, ackAt: ackAt || null, workflow: wfFor(tag)?.status || null,
+      disabled: st.disabled[ev] === true, template: DEFAULT_TEMPLATES[ev] ? st.templates[ev] || DEFAULT_TEMPLATES[ev] : null, defaultTemplate: DEFAULT_TEMPLATES[ev] || null, isDefaultTemplate: !st.templates[ev],
+    };
+  };
+  const flows = FLOWS.map((fl) => {
+    const lanes = fl.lanes.map((ln) => ({ label: ln.label, steps: ln.evs.map(stepOf) }));
+    const uniq = new Map();
+    for (const ln of lanes) for (const s of ln.steps) uniq.set(s.ev, s);
+    const active = [...uniq.values()].filter((s) => s.state !== 'off');
+    let state = 'off';
+    if (active.length) {
+      const live = active.filter((s) => s.state === 'live').length;
+      state = live === active.length ? 'live' : live ? 'partial' : active.map((s) => s.state).sort((x, y) => STATE_RANK[x] - STATE_RANK[y])[0];
+    }
+    return { key: fl.key, title: fl.title, state, lanes };
+  });
+  const hist = (await env.DB.prepare(`SELECT e.id, e.ev, e.tag, e.at, e.status, e.error, e.channel, e.target, e.body, e.acked_at, e.lead_id, l.name, l.email, l.lead_no
+      FROM ghl_events e LEFT JOIN leads l ON l.id = e.lead_id WHERE e.client_id = ? ORDER BY e.at DESC LIMIT 100`).bind(client.id).all()).results;
+  const hookUrl = g.hookKey ? `${origin}/api/hooks/ghl/${g.hookKey}` : '';
+  const store = d.ghl?.storeName || client.name;
+  return {
+    automation: st,
+    channel: st.texts,
+    ghl: { connected: ghlConnected, enabled: g.enabled === true, hook: !!g.hookKey, hookUrl, wfScope: !ghlOn ? 'unknown' : !wf ? 'unknown' : wf.err === 'missing' ? 'missing' : wf.err ? 'error' : 'ok', wfAt: wf?.at || null },
+    quo: {
+      connected: !!q.key, ready: quoReady, from: q.from || '', fromId: q.fromId || '', fromName: q.fromName || '', keyHint: q.keyHint || '', numbers: Array.isArray(q.numbers) ? q.numbers : [],
+      webhook: !!q.webhookId, webhookError: q.webhookError || null, webhookUrl: q.hookKey ? `${origin}/api/hooks/quo/${q.hookKey}` : '', lastOk: q.lastOk || null, lastError: q.lastError || null,
+    },
+    flows,
+    history: hist.map((r) => ({
+      id: r.id, ev: r.ev, tag: r.tag, at: r.at, status: r.status, error: r.error || null, channel: r.channel === 'quo' ? 'quo' : 'ghl', target: r.target || '', body: r.body || '', ackedAt: r.acked_at || null,
+      name: r.name || '', email: r.email || '', ref: leadRef(r.lead_no), step: r.ev === 'test' ? 'Test message' : STEP_INFO[r.ev]?.name || r.ev, group: EVENTS[r.ev]?.[1] || '',
+    })),
+    counts,
+    meta: { templateVars: TEMPLATE_VARS, example: exampleVars(store), store, now },
+  };
+}
+
+async function portalWorkflows(request, env, ctx, client, sess, p) {
+  const d = parseJson(client.data);
+  const origin = new URL(request.url).origin;
+  const view = async () => json(await workflowsView(env, { ...client, data: (await env.DB.prepare('SELECT data FROM clients WHERE id = ?').bind(client.id).first())?.data || client.data }, origin));
+  if (p === '/api/portal/workflows' && request.method === 'GET') return view();
+  if (request.method !== 'PUT' && request.method !== 'POST') return json({ error: 'Not found' }, 404);
+  if (sess.kind === 'view-as') return json({ error: 'Admin view is read-only.' }, 403);
+  const b = await request.json().catch(() => ({}));
+  const bad = (msg) => json({ error: msg }, 400);
+  const saveQuo = (q) => env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.quo', json(?)) WHERE id = ?`).bind(JSON.stringify(q), client.id).run();
+  const q = { ...(d.quo || {}) };
+
+  if (p === '/api/portal/workflows' && request.method === 'PUT') {
+    const was = autoOf(d);
+    const next = { ...was, templates: { ...was.templates }, disabled: { ...was.disabled } };
+    for (const k of ['on', 'offer', 'appts', 'reviews']) if (k in b) { if (typeof b[k] !== 'boolean') return bad(`"${k}" must be true or false.`); next[k] = b[k]; }
+    if ('holdout' in b) { if (![0, 10, 20].includes(Number(b.holdout))) return bad('Control group can be 0, 10 or 20 percent.'); next.holdout = Number(b.holdout); }
+    for (const k of ['reviewDays', 'grillzReviewDays']) if (k in b) { const n = Number(b[k]); if (!Number.isInteger(n) || n < 0 || n > 14) return bad('Review days must be between 0 and 14.'); next[k] = n; }
+    if ('texts' in b) {
+      if (!['ghl', 'quo'].includes(b.texts)) return bad('Texts can go through GoHighLevel or Quo.');
+      if (b.texts === 'quo' && !(q.key && (q.fromId || q.from))) return bad('Connect Quo and pick your number first.');
+      next.texts = b.texts;
+    }
+    if ('reviewLink' in b) { const v = String(b.reviewLink || '').trim(); if (v && !cleanReviewLink(v)) return bad('The review link must start with https://.'); next.reviewLink = v; }
+    if ('sender' in b) { const v = String(b.sender || '').trim(); if (v.length > 40 || /[<>]/.test(v)) return bad('The name is up to 40 characters, no < or >.'); next.sender = v; }
+    if (b.templates && typeof b.templates === 'object') {
+      for (const [k, v] of Object.entries(b.templates)) {
+        if (!DEFAULT_TEMPLATES[k]) return bad(`Step "${k}" has no text message.`);
+        if (v == null || String(v).trim() === '') { delete next.templates[k]; continue; }
+        if (!cleanTemplate(v)) return bad('A message is up to 600 characters, no < or >.');
+        next.templates[k] = String(v).trim();
+      }
+    }
+    if (b.disabled && typeof b.disabled === 'object') {
+      for (const [k, v] of Object.entries(b.disabled)) {
+        if (!(k in EVENTS)) return bad(`Unknown step "${k}".`);
+        if (v === true) next.disabled[k] = true; else delete next.disabled[k];
+      }
+    }
+    const out = autoSettings(next);
+    out.since = was.since;
+    if (out.on && !was.on) out.since = Date.now();
+    await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.automation', json(?)) WHERE id = ?`).bind(JSON.stringify(out), client.id).run();
+    if (was.texts === 'quo' && out.texts === 'ghl') ctx?.waitUntil?.(quoTagClear(env, client).catch((e) => console.error('quo tag clear', e.message)));
+    return view();
+  }
+
+  // Quo: ključ, broj, webhook, probna poruka.
+  if (p === '/api/portal/quo/connect' && request.method === 'POST') {
+    const key = String(b.key || '').trim();
+    if (!/^[A-Za-z0-9._~+/=-]{10,200}$/.test(key)) return bad('That does not look like a Quo API key. Copy it from Quo, Settings, API.');
+    let numbers;
+    try { numbers = await quoNumbers(key, quoFetch(env)); } catch (e) { return bad(e.message); }
+    if (!numbers.length) return bad('Quo accepted the key but this workspace has no phone numbers yet.');
+    const keep = q.fromId && numbers.some((n) => n.id === q.fromId) ? { from: q.from, fromId: q.fromId, fromName: q.fromName } : {};
+    await saveQuo({ ...q, ...keep, key: await sealQuoKey(env, client.id, key), keyHint: `…${key.slice(-4)}`, numbers, hookKey: q.hookKey || rid(32), lastError: null });
+    return view();
+  }
+  if (!q.key) return bad('Connect Quo first.');
+  const key = await openQuoKey(env, client.id, q.key).catch(() => '');
+  if (!key) return bad('Connect Quo again: the saved key cannot be read.');
+  const f = quoFetch(env);
+  const hookUrl = `${origin}/api/hooks/quo/${q.hookKey}`;
+  // Webhook preko API-ja: poruke kupaca (STOP, odgovori) i potvrde isporuke za izabrani broj. Pad ne blokira slanje.
+  const makeHook = async (qq) => {
+    if (qq.webhookId) await quoDeleteWebhook(key, qq.webhookId, f).catch((e) => console.error('quo webhook delete', e.message));
+    delete qq.webhookId; delete qq.webhookKey; delete qq.webhookError;
+    try {
+      const w = await quoCreateWebhook(key, hookUrl, qq.fromId, f);
+      qq.webhookId = w.id;
+      qq.webhookKey = await sealSecret(env, `quohook:${client.id}`, w.key);
+    } catch (e) { qq.webhookError = e.message; }
+  };
+  if (p === '/api/portal/quo/number' && request.method === 'POST') {
+    const n = (q.numbers || []).find((x) => x.id === String(b.id || ''));
+    if (!n) return bad('Pick one of the numbers from your Quo workspace.');
+    const changed = q.fromId !== n.id;
+    q.fromId = n.id; q.from = n.number; q.fromName = n.name || '';
+    if (changed || !q.webhookId) await makeHook(q);
+    await saveQuo(q);
+    return view();
+  }
+  if (p === '/api/portal/quo/webhook' && request.method === 'POST') {
+    if (b.secret != null && String(b.secret).trim()) {
+      const sec = String(b.secret).trim();
+      if (!/^whsec_[A-Za-z0-9+/=]{16,200}$/.test(sec)) return bad('The signing secret starts with whsec_.');
+      q.webhookKey = await sealSecret(env, `quohook:${client.id}`, sec);
+      delete q.webhookError;
+    } else {
+      if (!q.fromId) return bad('Pick your Quo number first.');
+      await makeHook(q);
+    }
+    await saveQuo(q);
+    return view();
+  }
+  if (p === '/api/portal/quo/disconnect' && request.method === 'POST') {
+    if (q.webhookId) await quoDeleteWebhook(key, q.webhookId, f).catch((e) => console.error('quo webhook delete', e.message));
+    await env.DB.prepare(`UPDATE clients SET data = json_remove(COALESCE(data, '{}'), '$.quo') WHERE id = ?`).bind(client.id).run();
+    const was = autoOf(d);
+    if (was.texts === 'quo') {
+      await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.automation', json(?)) WHERE id = ?`).bind(JSON.stringify({ ...was, texts: 'ghl' }), client.id).run();
+      ctx?.waitUntil?.(quoTagClear(env, client).catch((e) => console.error('quo tag clear', e.message)));
+    }
+    return view();
+  }
+  if (p === '/api/portal/quo/test' && request.method === 'POST') {
+    const to = toE164(b.to);
+    if (!isUsNumber(to)) return bad('Enter a US mobile number, for example 303 555 0142.');
+    if (!(q.fromId || q.from)) return bad('Pick your Quo number first.');
+    const n = (await env.DB.prepare(`SELECT COUNT(*) AS n FROM ghl_events WHERE client_id = ? AND ev = 'test' AND at > ?`).bind(client.id, Date.now() - 3600_000).first())?.n || 0;
+    if (n >= 10) return json({ error: 'Too many test messages. Try again in an hour.' }, 429);
+    const store = d.ghl?.storeName || client.name;
+    const id = `test:${rid(12)}`;
+    const text = `This is a test from JewelryLead for ${store}.`;
+    try {
+      const out = await quoSend(key, q.fromId || q.from, to, text, f);
+      await env.DB.prepare(`INSERT INTO ghl_events (id, client_id, ev, at, status, tries, channel, target, body, ext_id) VALUES (?, ?, 'test', ?, 'sent', 1, 'quo', ?, ?, ?)`).bind(id, client.id, Date.now(), maskPhone(to), text, out.id || null).run();
+      await quoNote(env, client.id, true);
+    } catch (e) {
+      await env.DB.prepare(`INSERT INTO ghl_events (id, client_id, ev, at, status, error, tries, channel, target, body) VALUES (?, ?, 'test', ?, 'failed', ?, 1, 'quo', ?, ?)`).bind(id, client.id, Date.now(), e.message.slice(0, 300), maskPhone(to), text).run();
+      if (!['0202400', '0203400', '0201400'].includes(e.code)) await quoNote(env, client.id, false, e.message);
+      return bad(e.message);
+    }
+    return view();
+  }
+  return json({ error: 'Not found' }, 404);
+}
+
+// SMS je vraćen na GoHighLevel: tag "jl texts via quo" se skida sa kontakata (GHL workflow opet šalje SMS).
+async function quoTagClear(env, client) {
+  const conf = await ghlConfig(env, client);
+  if (!conf) return;
+  const rows = (await env.DB.prepare(`SELECT l.id, json_extract(l.ghl, '$.contactId') AS cid FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND json_extract(l.ghl, '$.quoTag') = 1 LIMIT 300`).bind(client.id).all()).results;
+  for (const r of rows) {
+    if (r.cid) await ghlRemoveTags(conf.token, r.cid, [QUO_TAG], ghlFetch(env)).catch(() => null);
+    await env.DB.prepare(`UPDATE leads SET ghl = json_set(ghl, '$.quoTag', 0) WHERE id = ?`).bind(r.id).run();
+  }
+}
+
+// Webhook iz Quo-a: potpis (Standard Webhooks), odgovori kupaca (STOP / START / razgovor) i potvrde isporuke.
+async function quoHook(request, env, ctx, hookKey) {
+  const client = await env.DB.prepare(`SELECT id, name, data FROM clients WHERE json_extract(data, '$.quo.hookKey') = ?`).bind(hookKey).first();
+  if (!client) return json({ error: 'Not found' }, 404);
+  const raw = await request.text();
+  if (raw.length > 200_000) return json({ error: 'Too large' }, 413);
+  const q = parseJson(client.data).quo || {};
+  const secret = q.webhookKey ? await openSecret(env, `quohook:${client.id}`, q.webhookKey).catch(() => '') : '';
+  if (!(await verifyQuoSignature(secret, request.headers, raw))) return json({ error: 'Bad signature' }, 401);
+  const ev = parseJson(raw);
+  const res = ev.data?.resource || {};
+  const cx = ev.data?.context || {};
+  const now = Date.now();
+  if (ev.type === 'message.delivered') {
+    await env.DB.prepare('UPDATE ghl_events SET acked_at = ? WHERE client_id = ? AND ext_id = ?').bind(now, client.id, String(res.id || '')).run();
+  } else if (ev.type === 'message.failed' || ev.type === 'message.undelivered') {
+    // tries = 3: sweep ga ne pokušava ponovo (poruka je već otišla kod Quo-a, nije stigla do kupca).
+    await env.DB.prepare(`UPDATE ghl_events SET status = 'failed', tries = 3, error = ? WHERE client_id = ? AND ext_id = ?`).bind('The carrier did not deliver this text.', client.id, String(res.id || '')).run();
+  } else if (ev.type === 'message.received') {
+    const from = toE164(cx.senderIdentifier);
+    const word = String(res.text || '').toUpperCase().replace(/[^A-Z]/g, '');
+    const cands = from ? (await env.DB.prepare(`SELECT l.id, l.phone FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.phone IS NOT NULL ORDER BY l.created_at DESC LIMIT 1000`).bind(client.id).all()).results : [];
+    const lead = cands.find((c) => digits10(c.phone) === digits10(from)) || null;
+    if (from && STOP_WORDS.includes(word)) {
+      await env.DB.prepare('INSERT OR REPLACE INTO sms_optouts (client_id, phone, at, source) VALUES (?, ?, ?, ?)').bind(client.id, from, now, 'reply').run();
+      if (lead) await logEvent(env, lead.id, 'sms_optout', { via: 'quo' });
+    } else if (from && START_WORDS.includes(word)) {
+      await env.DB.prepare('DELETE FROM sms_optouts WHERE client_id = ? AND phone = ?').bind(client.id, from).run();
+      if (lead) await logEvent(env, lead.id, 'sms_optin', { via: 'quo' });
+    } else if (lead) {
+      await env.DB.prepare(`UPDATE leads SET page = json_set(COALESCE(page, '{}'), '$.repliedAt', ?) WHERE id = ?`).bind(now, lead.id).run();
+      await logEvent(env, lead.id, 'customer_replied', { via: 'quo' });
+    }
+  }
+  return json({ ok: true });
+}
+
 async function portalGhl(request, env, p, client, ctx) {
   let d = {};
   try { d = JSON.parse(client.data || '{}') || {}; } catch {}
@@ -2414,7 +2701,7 @@ async function portalGhl(request, env, p, client, ctx) {
   // Zadnji događaji poslati GHL workflowima (Automations u portalu).
   const events = async () => (await env.DB.prepare(`SELECT e.ev, e.tag, e.at, e.status, e.error, l.name, l.lead_no FROM ghl_events e LEFT JOIN leads l ON l.id = e.lead_id
       WHERE e.client_id = ? ORDER BY e.at DESC LIMIT 40`).bind(client.id).all().catch(() => ({ results: [] }))).results.map((r) => ({ ev: r.ev, tag: r.tag, at: r.at, status: r.status, error: r.error || null, name: r.name || '', ref: leadRef(r.lead_no) }));
-  const pub = async (g) => ({ ...ghlPublic(g), hookUrl: hookUrl(g), counts: await counts(), events: await events(), eventDefs: EVENTS, fieldDefs: FIELDS });
+  const pub = async (g) => ({ ...ghlPublic(g), auto: autoOf(d), hookUrl: hookUrl(g), counts: await counts(), events: await events(), eventDefs: EVENTS, fieldDefs: FIELDS });
   if (p === '/api/portal/ghl' && request.method === 'GET') return json(await pub(cur));
   // Token iz polja (ako je upisan) ili sačuvani.
   const tokenFrom = async () => (b.token ? String(b.token).trim() : await openGhlToken(env, client.id, cur.token).catch(() => ''));
@@ -2506,15 +2793,18 @@ async function portalGhl(request, env, p, client, ctx) {
     if (b.hook === 'rotate') next.hookKey = rid(32);
     if (!next.enabled) next.backfill = false;
     // Automations (27.11.2026): događaji za GHL workflowe. Uključenje važi od sada (stari leadovi ne dobijaju zaostale poruke).
+    // Od 28.11.2026 postavke žive u clients.data.automation (tab Workflows); ova kartica piše u isto mjesto.
+    let autoNext = null;
     if (b.auto && typeof b.auto === 'object') {
-      const was = autoSettings(cur.auto);
+      const was = autoOf(d);
       const a = autoSettings({ ...was, ...b.auto, since: was.since });
       if (a.on && !was.on) a.since = Date.now();
-      next.auto = a;
+      autoNext = a;
     }
     // Uključenje važi samo za nove leadove (stari se ne šalju naknadno, cron gleda zadnja 24 h).
     if (next.enabled && !cur.enabled) next.enabledAt = Date.now();
     await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.ghl', json(?)) WHERE id = ?`).bind(JSON.stringify(next), client.id).run();
+    if (autoNext) { await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.automation', json(?)) WHERE id = ?`).bind(JSON.stringify(autoNext), client.id).run(); d.automation = autoNext; }
     return json(await pub(next));
   }
   return json({ error: 'Not found' }, 404);
@@ -3774,6 +4064,8 @@ async function ghlHook(request, env, ctx, hookKey) {
   if (raw.length > 200_000) return json({ error: 'Too large' }, 413);
   const pl = hookPayload(parseJson(raw));
   const note = (patch) => env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.ghl.lastHook', json(?)) WHERE id = ?`).bind(JSON.stringify({ at: Date.now(), ...patch }), client.id).run().catch(() => {});
+  // Potvrda da je GHL workflow stvarno radio (28.11.2026): zadnji korak workflowa šalje event "jl_ack" i svoj tag.
+  if (pl.event === 'jl_ack') return ghlAck(env, client, pl, note);
   if (!/deposit|payment|paid|order|invoice/.test(pl.event)) { await note({ matched: false, ignored: pl.event }); return json({ ok: true, ignored: true }); }
   const base = `SELECT l.id, l.name, l.email, l.phone, l.page_key, l.deposit, l.lead_no, l.ghl, l.answers, l.consent FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND l.archived_at IS NULL`;
   let lead = null;
@@ -3993,17 +4285,57 @@ async function autoFields(env, row, { tl, appt, storeTz, origin = ORIGIN_BASE } 
   return v;
 }
 
-async function ghlAutoSweep(env, now = Date.now()) {
-  const clients = (await env.DB.prepare(`SELECT id, name, data FROM clients WHERE json_extract(data, '$.ghl.enabled') = 1 AND json_extract(data, '$.ghl.auto.on') = 1`).all()).results;
-  for (const c of clients) await ghlAutoClient(env, c, now).catch((e) => console.error('ghl auto', c.id, e.message));
+// ---------- Workflows: slanje događaja (GHL tag i/ili SMS preko Quo-a, 28.11.2026) ----------
+const autoOf = (d) => autoSettings(d?.automation ?? d?.ghl?.auto);
+const TAG_LOWER = new Map(Object.values(EVENTS).map((e) => [e[0].toLowerCase(), e[0]]));
+const QUO_TAG = 'jl texts via quo';
+// Samo lokalno (DEV_MODE): QUO_BASE šalje pozive lažnom Quo serveru (scripts/mock-quo.mjs).
+const quoFetch = (env) => (env.DEV_MODE === '1' && env.QUO_BASE ? (url, init) => fetch(String(url).replace(QUO_BASE, env.QUO_BASE), init) : fetch);
+async function quoConfig(env, client) {
+  const q = parseJson(client.data).quo;
+  if (!q?.key || !(q.fromId || q.from)) return null;
+  const key = await openQuoKey(env, client.id, q.key).catch(() => '');
+  return key ? { key, cfg: q, from: q.fromId || q.from } : null;
+}
+async function quoNote(env, clientId, ok, error) {
+  const q = ok ? `json_set(COALESCE(data, '{}'), '$.quo.lastOk', ?, '$.quo.lastError', json('null'))` : `json_set(COALESCE(data, '{}'), '$.quo.lastError', json(?))`;
+  await env.DB.prepare(`UPDATE clients SET data = ${q} WHERE id = ? AND json_extract(data, '$.quo') IS NOT NULL`)
+    .bind(ok ? Date.now() : JSON.stringify({ at: Date.now(), msg: String(error).slice(0, 200) }), clientId).run().catch(() => {});
+}
+
+// Potvrda iz GHL workflowa (jl_ack): zadnji korak workflowa javlja da je tag stvarno obrađen.
+async function ghlAck(env, client, pl, note) {
+  const tag = TAG_LOWER.get(pl.tag);
+  if (!tag) { await note({ matched: false, ignored: 'jl_ack without a known tag' }); return json({ ok: true, ack: false }); }
+  const now = Date.now();
+  const acks = { ...(parseJson(client.data).ghl?.acks || {}), [tag]: now };
+  await env.DB.prepare(`UPDATE clients SET data = json_set(COALESCE(data, '{}'), '$.ghl.acks', json(?)) WHERE id = ?`).bind(JSON.stringify(acks), client.id).run();
+  // Kupac se nalazi po kontaktu (na leadu ili na terminu, jer lead dobije contactId tek kad završi prvo slanje u GHL) ili po mejlu.
+  let lead = pl.contactId ? await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND json_extract(l.ghl, '$.contactId') = ? ORDER BY l.created_at DESC LIMIT 1`).bind(client.id, pl.contactId).first() : null;
+  if (!lead && pl.contactId) lead = await env.DB.prepare(`SELECT lead_id AS id FROM appointments WHERE client_id = ? AND lead_id IS NOT NULL AND json_extract(ghl, '$.contactId') = ? ORDER BY created_at DESC LIMIT 1`).bind(client.id, pl.contactId).first();
+  if (!lead && pl.email) lead = await env.DB.prepare(`SELECT l.id FROM leads l JOIN forms f ON f.id = l.form_id WHERE f.client_id = ? AND lower(l.email) = ? ORDER BY l.created_at DESC LIMIT 1`).bind(client.id, pl.email).first();
+  if (lead) {
+    await env.DB.prepare(`UPDATE ghl_events SET acked_at = ? WHERE id = (SELECT id FROM ghl_events WHERE client_id = ? AND tag = ? AND lead_id = ? AND at > ? AND acked_at IS NULL AND COALESCE(channel, 'ghl') != 'quo' ORDER BY at DESC LIMIT 1)`)
+      .bind(now, client.id, tag, lead.id, now - 3 * 864e5).run();
+  }
+  await note({ matched: !!lead, ack: tag });
+  return json({ ok: true, ack: true });
+}
+
+async function autoSweep(env, now = Date.now()) {
+  const clients = (await env.DB.prepare(`SELECT id, name, data FROM clients WHERE json_extract(data, '$.automation.on') = 1
+      OR (json_extract(data, '$.automation') IS NULL AND json_extract(data, '$.ghl.enabled') = 1 AND json_extract(data, '$.ghl.auto.on') = 1)`).all()).results;
+  for (const c of clients) await autoClient(env, c, now).catch((e) => console.error('auto', c.id, e.message));
 }
 const AUTO_MAX = 25;
-async function ghlAutoClient(env, client, now) {
-  const conf = await ghlConfig(env, client);
-  if (!conf) return;
-  const st = autoSettings(conf.cfg.auto);
-  if (!st.on) return;
+async function autoClient(env, client, now) {
   const d = parseJson(client.data);
+  const st = autoOf(d);
+  if (!st.on) return;
+  // Kanali: GHL (tag + polja) kad je povezan i uključen; Quo (SMS iz našeg Workera) kad je izabran i povezan.
+  const conf = await ghlConfig(env, client);
+  const quo = st.texts === 'quo' ? await quoConfig(env, client) : null;
+  if (!conf && !quo) return;
   const storeTz = bookingSettings(d.booking).tz;
   const pricing = d.pricing || {};
   const SEL = `SELECT l.*, f.data AS form_data, c.name AS client_name, c.data AS client_data FROM leads l JOIN forms f ON f.id = l.form_id JOIN clients c ON c.id = f.client_id WHERE f.client_id = ? AND l.archived_at IS NULL`;
@@ -4021,7 +4353,7 @@ async function ghlAutoClient(env, client, now) {
       const pg = parseJson(r.page);
       const tl = offerTimeline({ pricing, quotes: parseJson(r.quotes), lead: { createdAt: r.created_at } }, now);
       const clicks = (Array.isArray(pg.actions) ? pg.actions : []).filter((x) => x.action === 'deposit').map((x) => x.at);
-      for (const e of offerEvents({ tl, leadId: r.id, views: pg.views || 0, clicks, paid: !!parseJson(r.deposit).paidAt, booked: withAppt.has(r.id) })) jobs.push({ ...e, lead: r.id, tl, tz: validTz(pg.tz) || storeTz });
+      for (const e of offerEvents({ tl, leadId: r.id, views: pg.views || 0, clicks, paid: !!parseJson(r.deposit).paidAt, booked: withAppt.has(r.id), replied: Number(pg.repliedAt) || 0 })) jobs.push({ ...e, lead: r.id, tl, tz: validTz(pg.tz) || storeTz });
     }
   }
   // Termini (T2-T5, T7).
@@ -4050,36 +4382,97 @@ async function ghlAutoClient(env, client, now) {
   if (!jobs.length) return;
   const seen = new Map((await env.DB.prepare('SELECT id, status, tries FROM ghl_events WHERE client_id = ? AND at > ?').bind(client.id, now - 150 * 864e5).all()).results.map((r) => [r.id, r]));
   const done = (k) => { const x = seen.get(k); return !!x && (x.status !== 'failed' || x.tries >= 3); };
-  const due = jobs.filter((j) => dueNow([j], { now, since, tz: j.tz, done }).length).sort((a, b) => a.at - b.at).slice(0, AUTO_MAX);
+  const due = jobs.filter((j) => !st.disabled[j.ev] && (conf || (quo && DEFAULT_TEMPLATES[j.ev])) && dueNow([j], { now, since, tz: j.tz, done }).length).sort((a, b) => a.at - b.at).slice(0, AUTO_MAX);
   const f = ghlFetch(env);
   for (const j of due) {
     const [tag, group] = EVENTS[j.ev];
     const r = leads.get(j.lead);
+    const viaQuo = !!quo && !!DEFAULT_TEMPLATES[j.ev];
     // Kontrolna grupa: samo ponude; zapis ostaje da se vidi koliko poruka nije poslato i kako su ti kupci prošli.
     const hold = group === 'offer' && j.ev !== 'refresh_moved' && inHoldout(j.lead, st.holdout);
-    const lock = await env.DB.prepare(`INSERT INTO ghl_events (id, client_id, lead_id, appt_id, ev, tag, at, status, tries) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-        ON CONFLICT(id) DO UPDATE SET tries = ghl_events.tries + 1, status = 'sending', at = excluded.at WHERE ghl_events.status = 'failed' AND ghl_events.tries < 3`)
-      .bind(j.key, client.id, j.lead, j.appt?.id || null, j.ev, tag, now, hold ? 'holdout' : 'sending').run();
+    const lock = await env.DB.prepare(`INSERT INTO ghl_events (id, client_id, lead_id, appt_id, ev, tag, at, status, tries, channel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        ON CONFLICT(id) DO UPDATE SET tries = ghl_events.tries + 1, status = 'sending', at = excluded.at, channel = excluded.channel WHERE ghl_events.status = 'failed' AND ghl_events.tries < 3`)
+      .bind(j.key, client.id, j.lead, j.appt?.id || null, j.ev, tag, now, hold ? 'holdout' : 'sending', viaQuo ? 'quo' : 'ghl').run();
     if (!lock.meta?.changes || hold) continue;
     try {
       const sync = parseJson(r.ghl);
-      let contactId = sync.contactId || parseJson(j.appt?.ghl).contactId;
-      if (!contactId) {
-        contactId = await ghlEnsureContact(conf.token, conf.cfg, r, f);
-        await env.DB.prepare(`UPDATE leads SET ghl = json_set(COALESCE(ghl, '{}'), '$.contactId', ?) WHERE id = ? AND json_extract(ghl, '$.contactId') IS NULL`).bind(contactId, r.id).run();
-      }
       const appt = j.appt || (await env.DB.prepare(`SELECT *, json_extract(ghl, '$.meet') AS meet FROM appointments WHERE lead_id = ? AND status = 'booked' AND start_at > ? ORDER BY start_at LIMIT 1`).bind(r.id, now).first());
       const values = await autoFields(env, r, { tl: j.tl || offerTimeline({ pricing, quotes: parseJson(r.quotes), lead: { createdAt: r.created_at } }, now), appt, storeTz });
-      const tz = validTz(parseJson(r.page).tz);
-      await ghlSetFields(conf.token, contactId, conf.cfg.fields, values, tz ? { timezone: tz } : {}, f);
-      await ghlFireTag(conf.token, contactId, tag, f);
-      await env.DB.prepare(`UPDATE ghl_events SET status = 'sent', error = NULL WHERE id = ?`).bind(j.key).run();
+      // SMS preko Quo-a prvi: ako padne, tag se ne šalje (ponovni pokušaj radi oba), a već poslata poruka se ne šalje dvaput.
+      let q = null;
+      if (viaQuo) {
+        q = await autoQuoSend(env, client, quo, st, r, values, j);
+        if (q.status === 'failed') {
+          await env.DB.prepare(`UPDATE ghl_events SET status = 'failed', error = ? WHERE id = ?`).bind(String(q.error).slice(0, 300), j.key).run();
+          continue;
+        }
+      }
+      let ghlDone = false;
+      if (conf) {
+        let contactId = sync.contactId || parseJson(j.appt?.ghl).contactId;
+        if (!contactId) {
+          contactId = await ghlEnsureContact(conf.token, conf.cfg, r, f);
+          await env.DB.prepare(`UPDATE leads SET ghl = json_set(COALESCE(ghl, '{}'), '$.contactId', ?) WHERE id = ? AND json_extract(ghl, '$.contactId') IS NULL`).bind(contactId, r.id).run();
+        }
+        // Dok SMS ide preko Quo-a, kontakt nosi tag koji GHL workflow čita: "SMS samo bez ovog taga, inače mejl".
+        if (quo && !sync.quoTag) {
+          await ghlPushTags(conf.token, { contactId }, [QUO_TAG], f);
+          await env.DB.prepare(`UPDATE leads SET ghl = json_set(COALESCE(ghl, '{}'), '$.quoTag', 1) WHERE id = ?`).bind(r.id).run();
+        }
+        const tz = validTz(parseJson(r.page).tz);
+        await ghlSetFields(conf.token, contactId, conf.cfg.fields, values, tz ? { timezone: tz } : {}, f);
+        await ghlFireTag(conf.token, contactId, tag, f);
+        ghlDone = true;
+      }
+      const sentQuo = q?.status === 'sent';
+      if (!sentQuo && !ghlDone) await env.DB.prepare(`UPDATE ghl_events SET status = 'skipped', error = ? WHERE id = ?`).bind(String(q?.error || 'not sent').slice(0, 300), j.key).run();
+      // Quo preskočio SMS (pristanak, odjava), a GHL tag je otišao (mejl ili workflow): ostaje "sent", razlog se vidi u istoriji.
+      else await env.DB.prepare(`UPDATE ghl_events SET status = 'sent', error = ?, channel = ? WHERE id = ?`).bind(q?.status === 'skipped' ? `Text not sent: ${q.error}` : null, sentQuo ? 'quo' : 'ghl', j.key).run();
     } catch (e) {
       await env.DB.prepare(`UPDATE ghl_events SET status = 'failed', error = ? WHERE id = ?`).bind(String(e.message).slice(0, 300), j.key).run();
-      await ghlNote(env, client.id, false, `Automation ${tag}: ${e.message}`);
+      if (conf) await ghlNote(env, client.id, false, `Automation ${tag}: ${e.message}`);
     }
   }
 }
+
+// Jedna SMS poruka preko Quo-a za događaj. Vraća { status: 'sent' | 'skipped' | 'failed', error }.
+async function autoQuoSend(env, client, quo, st, r, values, j) {
+  const prev = await env.DB.prepare('SELECT ext_id FROM ghl_events WHERE id = ?').bind(j.key).first();
+  if (prev?.ext_id) return { status: 'sent', again: true };
+  const skip = (error) => ({ status: 'skipped', error });
+  const consent = parseJson(r.consent, {});
+  if (STEP_INFO[j.ev].mkt ? !consent.mkt : !consent.sms) return skip('no SMS consent');
+  const to = toE164(r.phone);
+  if (!to) return skip('no phone number');
+  if (await env.DB.prepare('SELECT 1 AS x FROM sms_optouts WHERE client_id = ? AND phone = ?').bind(client.id, to).first()) return skip('opted out of texts');
+  if (j.ev === 'review_request' && !st.reviewLink) return skip('Add your Google review link');
+  const store = storeOf({ form_data: r.form_data, client_data: r.client_data, client_name: r.client_name }).name;
+  const vars = {
+    first_name: String(r.name || '').trim().split(/\s+/)[0] || 'there', piece: values.jl_piece, page_url: values.jl_page_url, price: values.jl_price, offer_expires: values.jl_offer_expires,
+    appt_type: values.jl_appt_type, appt_time: values.jl_appt_time, appt_location: values.jl_appt_location, meet_link: values.jl_meet_link, reschedule_url: values.jl_reschedule_url,
+    order_no: values.jl_order_no, store, review_link: st.reviewLink, sender: st.sender || store,
+  };
+  let text = renderTemplate(st.templates[j.ev] || DEFAULT_TEMPLATES[j.ev], vars);
+  // Prva poruka kupcu u životu nosi uputu za odjavu (A2P), osim ako je tekst već ima.
+  const earlier = await env.DB.prepare(`SELECT 1 AS x FROM ghl_events WHERE client_id = ? AND lead_id = ? AND channel = 'quo' AND status = 'sent' AND ev != 'test' AND id != ? LIMIT 1`).bind(client.id, r.id, j.key).first();
+  if (!earlier && !/\bSTOP\b/i.test(text)) text += ' Reply STOP to opt out.';
+  try {
+    const out = await quoSend(quo.key, quo.from, to, text, quoFetch(env));
+    await env.DB.prepare(`UPDATE ghl_events SET ext_id = ?, target = ?, body = ?, channel = 'quo' WHERE id = ?`).bind(out.id || null, maskPhone(to), text.slice(0, 1600), j.key).run();
+    await quoNote(env, client.id, true);
+    return { status: 'sent' };
+  } catch (e) {
+    if (e.code === '0201400') {
+      await env.DB.prepare('INSERT OR IGNORE INTO sms_optouts (client_id, phone, at, source) VALUES (?, ?, ?, ?)').bind(client.id, to, Date.now(), 'quo-error').run();
+      await logEvent(env, r.id, 'sms_optout', { via: 'quo' });
+      return skip('opted out of texts');
+    }
+    // Greške koje nisu do kupca (kredit, A2P, ključ, brzina) se vide i na kartici Quo.
+    if (!['0202400', '0203400'].includes(e.code)) await quoNote(env, client.id, false, e.message);
+    return { status: 'failed', error: e.message };
+  }
+}
+
 
 // Cron: termini čiji upis u GHL nije prošao (do GHL_RETRY puta, samo budući).
 async function ghlApptSweep(env) {

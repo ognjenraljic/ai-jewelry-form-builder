@@ -1,6 +1,7 @@
 import { createLeadStore } from './leads.js';
 import { initChatbot, openChatbot, chatbotView, openTranscript, confirmLeaveChatbot } from './chatbot.js';
 import { initMetals, openMetals, metalsView } from './metals.js';
+import { initWorkflows, openWorkflows, workflowsView } from './workflows.js';
 import { estimate, stoneLayout, applyMarket, isLive, MARKET_METALS, middleGround, LEVELS, PIECES, SUGGESTED_PRICING, GRILLZ_COLS, ICED_COLS, key as pkey, money, leadSpecFrom, isGold, isDental, rowsOf, coverLabel, specDiff, quoteBody, iceKey, iceFields, parseBudget, CHAIN_CATALOG, chainLine, chainWeight, defaultChainLine } from '/pricing.js';
 import { artFor, optionArt, styleArt } from '/option-art.js';
 import { onboardingProblems } from '/onboarding-check.js';
@@ -1153,6 +1154,7 @@ async function boot() {
   }
   initChatbot({ api, esc, when, readOnly, rerender: () => render(), app, P });
   initMetals({ api, esc, readOnly, rerender: () => render(), app, P });
+  initWorkflows({ api, esc, readOnly, rerender: () => render(), app, P });
   // A new setup draft must not hide a client's existing forms or enquiries.
   P.onboardingFlow = hasDraftOnboarding() && (onboardingRequested || (!P.me.forms.length && !P.me.stats.leads));
   P.tab = P.onboardingFlow ? 'onboarding' : 'leads';
@@ -1233,7 +1235,7 @@ const hasDraftOnboarding = () => P.me.onboarding?.status === 'draft';
 function portalTabs() {
   const unseen = P.bookings?.unseen || 0;
   const nUnseen = P.tab === 'notifications' ? 0 : P.notif?.unseen || 0;
-  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ['pricing', 'Pricing'], ['bookings', `Bookings${unseen ? ` <span class="tab-badge" aria-label="${unseen} new">${unseen}</span>` : ''}`], ['stats', 'Stats'], ['metals', 'Metal movement'], ['notifications', `Notifications${nUnseen ? ` <span class="tab-badge nbadge" aria-label="${nUnseen} new">${nUnseen > 99 ? '99+' : nUnseen}</span>` : ''}`], ...(P.me.pageAssistant ? [['chatbot', 'AI chatbot']] : []), ...(P.onboardingFlow && hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
+  const tabs = [['leads', 'Leads'], ['forms', 'Forms'], ['pricing', 'Pricing'], ['bookings', `Bookings${unseen ? ` <span class="tab-badge" aria-label="${unseen} new">${unseen}</span>` : ''}`], ['stats', 'Stats'], ['metals', 'Metal movement'], ['notifications', `Notifications${nUnseen ? ` <span class="tab-badge nbadge" aria-label="${nUnseen} new">${nUnseen > 99 ? '99+' : nUnseen}</span>` : ''}`], ['workflows', 'Workflows'], ...(P.me.pageAssistant ? [['chatbot', 'AI chatbot']] : []), ...(P.onboardingFlow && hasDraftOnboarding() ? [['onboarding', 'Store setup']] : [])];
   return `<nav class="tabs" aria-label="Client portal">${tabs.map(([key, label]) => `<button class="tab ${P.tab === key ? 'on' : ''}" data-tab="${key}" ${P.tab === key ? 'aria-current="page"' : ''}>${label}</button>`).join('')}</nav>`;
 }
 
@@ -1258,10 +1260,10 @@ function render() {
       <span class="powered">Powered by <a href="https://jewelrylead.com/" target="_blank" rel="noopener">JewelryLead</a></span>
       ${session.kind === 'client' ? '<button class="btn" data-act="signout" title="Remove the portal from this device">Sign out</button>' : ''}
     </div></header>
-    <main class="wrap ${P.tab === 'leads' || P.tab === 'chatbot' ? 'wide' : ''}">
+    <main class="wrap ${P.tab === 'leads' || P.tab === 'chatbot' ? 'wide' : P.tab === 'workflows' ? 'midwide' : ''}">
       ${portalTabs()}
       ${bookingAlert()}
-      ${P.tab === 'stats' || P.tab === 'notifications' || P.tab === 'chatbot' || P.tab === 'metals' ? '' : `<div class="stats">
+      ${P.tab === 'stats' || P.tab === 'notifications' || P.tab === 'chatbot' || P.tab === 'metals' || P.tab === 'workflows' ? '' : `<div class="stats">
         <div class="stat">Leads<b>${stats.leads}</b></div>
         <div class="stat">Last 30 days<b>${stats.recent}</b></div>
         <div class="stat">AI renders<b>${stats.renders}</b></div>
@@ -1272,7 +1274,7 @@ function render() {
       </div>
       ${P.tab === 'leads' ? '' : usageView()}`}
       ${P.me.onboarding?.status === 'submitted' || P.me.onboarding?.status === 'building' ? `<div class="ob-sent"><b>Thank you, we have your answers.</b> We are building your form now and it will appear under Forms. Your leads will show up here as soon as customers use it.</div>` : ''}
-      ${P.tab === 'leads' ? leadsView() : P.tab === 'pricing' ? pricingView() : P.tab === 'bookings' ? bookingsView() : P.tab === 'stats' ? statsView() : P.tab === 'notifications' ? notifView() : P.tab === 'chatbot' ? chatbotView() : P.tab === 'metals' ? metalsView() : formsView()}
+      ${P.tab === 'leads' ? leadsView() : P.tab === 'pricing' ? pricingView() : P.tab === 'bookings' ? bookingsView() : P.tab === 'stats' ? statsView() : P.tab === 'notifications' ? notifView() : P.tab === 'chatbot' ? chatbotView() : P.tab === 'metals' ? metalsView() : P.tab === 'workflows' ? workflowsView() : formsView()}
       <p class="note">Want to change a form, add styles or questions? Contact your JewelryLead team.</p>
     </main>`;
 }
@@ -1588,6 +1590,7 @@ function ghlAutoView(g) {
   const badge = (st) => `<span class="ev-st ev-${esc(st)}">${esc({ sent: 'Sent', failed: 'Failed', holdout: 'Control group', sending: 'Sending' }[st] || st)}</span>`;
   return `<div class="ghl-prod ghl-auto" data-ghl-auto>
     <h3 class="ghl-sub">Automations for your GoHighLevel workflows</h3>
+    <p class="ghl-how"><button type="button" class="btn small" data-tab="workflows">Open the Workflows tab</button> <span class="faint">Manage everything about automations there: what is live, texts through Quo, and the history.</span></p>
     <p class="faint ghl-how">JewelryLead knows when a quote is about to expire, when an appointment is coming up and when a piece is picked up. At the right moment it fills the customer's JL fields on the contact and adds a tag (for example <code>jl offer 24h left</code>). Each GoHighLevel workflow starts on its tag, sends the text or email, and removes the tag. Nothing is sent until you build and publish those workflows.</p>
     <div class="ghl-acts"><button type="button" class="btn small" data-act="ghl-fields">${nFields ? 'Check the JL fields again' : 'Create the JL fields in GoHighLevel'}</button><span class="faint">${nFields ? `${nFields} of ${total} fields ready` : 'Needs the "View Custom Fields" and "Edit Custom Fields" scopes on the token.'}</span></div>
     ${nFields ? `<details class="ghl-ref"><summary>Fields to use in your messages</summary><ul>${(g.fieldDefs || []).map(([k, name]) => `<li><code>{{${esc(fields[k] || `contact.${k}`)}}}</code> <span class="faint">${esc(name.replace(/^JL /, ''))}</span>${copyBtn(`{{${fields[k] || `contact.${k}`}}}`, name)}</li>`).join('')}</ul></details>` : ''}
@@ -1831,7 +1834,7 @@ app.addEventListener('click', async (e) => {
   if (['ghl-load', 'ghl-save', 'ghl-disconnect', 'ghl-users', 'ghl-calendars', 'ghl-hook', 'ghl-fields'].includes(t.dataset.act)) { ghlAction(t.dataset.act.slice(4)); return; }
   if (t.dataset.ntGroup) { P.notifGroup = t.dataset.ntGroup; render(); return; }
   if (t.dataset.act === 'alert-settings') { P.tab = 'pricing'; render(); app.querySelector('.palerts')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
-  if (t.dataset.tab) { if (P.tab === 'chatbot' && t.dataset.tab !== 'chatbot' && !(await confirmLeaveChatbot())) return; P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); if (P.tab === 'chatbot') openChatbot(); if (P.tab === 'metals') openMetals(); }
+  if (t.dataset.tab) { if (P.tab === 'chatbot' && t.dataset.tab !== 'chatbot' && !(await confirmLeaveChatbot())) return; P.tab = t.dataset.tab; render(); if (P.tab === 'forms') api('/api/portal/ghl').then((g) => { P.me.ghl = g; if (P.tab === 'forms' && !P.ghlDraft) render(); }).catch(() => {}); if (P.tab === 'bookings') openBookings(); if (P.tab === 'stats') loadStats(); if (P.tab === 'notifications') openNotif(); if (P.tab === 'chatbot') openChatbot(); if (P.tab === 'metals') openMetals(); if (P.tab === 'workflows') openWorkflows(); }
   if (t.dataset.act === 'see-bookings') { P.tab = 'bookings'; render(); openBookings(); return; }
   if (t.dataset.act === 'bk-save') { saveBooking(); return; }
   if (t.dataset.leadChat) { openTranscript(t.dataset.leadChat, t.dataset.leadName || ''); return; }
