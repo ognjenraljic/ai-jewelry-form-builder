@@ -181,10 +181,6 @@ function channelCard(d) {
       </ul>
       ${q.webhookError ? `<p class="wf-warn">${C.esc(q.webhookError)} Texts still go out, but STOP replies, customer answers and delivery receipts will not reach us until this is fixed.</p>` : ''}
       ${q.lastError ? `<p class="wf-warn">${C.esc(q.lastError.msg || 'The last text failed.')} <small>${C.esc(fmt(q.lastError.at))}</small></p>` : ''}
-      <div class="wf-grid2">
-        <label><span>Your name in texts</span><input class="in" maxlength="40" placeholder="${C.esc(d.meta.store)}" data-wf-sender value="${C.esc(d.automation.sender)}" ${dis()} /></label>
-        <label><span>Google review link</span><input class="in" placeholder="https://g.page/r/..." data-wf-review value="${C.esc(d.automation.reviewLink)}" ${dis()} /></label>
-      </div>
       <div class="wf-row"><input class="in" type="tel" placeholder="Send a test to your phone: 303 555 0142" data-wf-test value="${C.esc(W.testDraft)}" ${dis()} /><button type="button" class="btn" data-wf="quo-test" ${!q.ready || W.busy || ro() ? 'disabled' : ''}>${W.busy === 'test' ? 'Sending…' : 'Send test'}</button></div>
       <details class="wf-more"><summary>Set up the webhook by hand</summary>
         <p class="wf-help">Only needed if the automatic setup keeps failing. In Quo, add a webhook to this address for messages and delivery events, then paste its signing secret.</p>
@@ -200,6 +196,14 @@ function channelCard(d) {
     <div class="wf-chan-grid">
       <div class="wf-chbox ${quoSel ? '' : 'is-sel'}"><h4><i class="wf-mono">HL</i>GoHighLevel</h4><ul class="wf-kv">${ghlRows}</ul><p class="wf-help">${C.esc(ghlNote)}</p></div>
       <div class="wf-chbox ${quoSel ? 'is-sel' : ''}" id="wf-quo"><h4><i class="wf-mono">Q</i>Quo</h4>${quoBody}</div>
+    </div>
+    <div class="wf-details">
+      <h4>Details used in your messages</h4>
+      <div class="wf-grid2">
+        <label><span>Your name in texts</span><input class="in" maxlength="40" placeholder="${C.esc(d.meta.store)}" data-wf-sender value="${C.esc(d.automation.sender)}" ${dis()} /></label>
+        <label><span>Google review link</span><input class="in" placeholder="https://search.google.com/local/writereview?placeid=..." data-wf-review value="${C.esc(d.automation.reviewLink)}" ${dis()} /></label>
+      </div>
+      <p class="wf-help">Used for texts sent through Quo and in the copy buttons for your GoHighLevel workflows.</p>
     </div>
   </div>`;
 }
@@ -269,7 +273,7 @@ function panel(d) {
           <div class="wf-chips" aria-label="Insert a detail">${d.meta.templateVars.map((v) => `<button type="button" data-wf="chip" data-v="${C.esc(v)}" ${dis()}>${C.esc(v.replace(/_/g, ' '))}</button>`).join('')}</div>`
         : `<div class="wf-cp"><pre class="wf-pre">${C.esc(forGhl(s.template, d))}</pre>${copyBtn(forGhl(s.template, d), 'text for GoHighLevel')}</div><p class="wf-help">Ready to paste into the Send SMS step, with the GoHighLevel contact fields. Switch to Quo above to send this text from our side.</p>`}
         <div class="wf-prev"><small>Preview with example details</small><p data-wf-prev>${C.esc(preview)}</p><small data-wf-count>${preview.length} characters, ${plural(segments(preview.length), 'segment')}${s.ev !== 'review_request' && quoText ? '. The first text a customer ever gets also ends with "Reply STOP to opt out."' : ''}</small></div>
-        ${quoText ? `<div class="wf-row"><button type="button" class="btn primary" data-wf="tpl-save" data-ev="${C.esc(s.ev)}" ${ro() || W.busy ? 'disabled' : ''}>Save message</button>${s.ev === 'review_request' && !a.reviewLink ? '<span class="wf-warn-s">Add your Google review link in the Quo card first.</span>' : ''}</div>` : ''}
+        ${quoText ? `<div class="wf-row"><button type="button" class="btn primary" data-wf="tpl-save" data-ev="${C.esc(s.ev)}" ${ro() || W.busy ? 'disabled' : ''}>Save message</button>${s.ev === 'review_request' && !a.reviewLink ? '<span class="wf-warn-s">Add your Google review link under \u201cDetails used in your messages\u201d first.</span>' : ''}</div>` : ''}
       </div>` : ''}
       ${s.email ? `<div class="wf-msg wf-emailbox">
         <div class="wf-msg-top"><h4>${ICON.mail} Email <small>for customers without text consent</small></h4></div>

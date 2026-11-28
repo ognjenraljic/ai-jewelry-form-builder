@@ -1761,3 +1761,6 @@ button.dbar.future { opacity: .35; cursor: default; }
 .wf-cp .wf-pre { word-break: normal; overflow-wrap: break-word; }
 .wf-conn-grid li[data-k="quo"] { grid-column: 1 / -1; }
 .wf-st.is-pub { color: var(--wf-pub); }
+.wf-details { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.wf-details h4 { margin: 0 0 10px; font-size: 13.5px; }
+.wf-details .wf-help { margin: 8px 0 0; }
