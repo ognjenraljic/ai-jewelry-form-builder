@@ -13,10 +13,11 @@ const M = 60_000;
 const H = 60 * M;
 const D = 24 * H;
 
-export const AUTO_DEFAULTS = { on: false, offer: true, appts: true, reviews: true, holdout: 10, reviewDays: 1, grillzReviewDays: 3, texts: 'ghl' };
+export const AUTO_DEFAULTS = { on: false, offer: true, appts: true, reviews: true, holdout: 10, reviewDays: 1, grillzReviewDays: 3, texts: 'ghl', quoteMode: 'approve' };
 
 // Događaj -> [tag u GHL-u, grupa, kada (za portal i uputstvo)]. Imena tagova se ne mijenjaju: na njih su vezani workflowi.
 export const EVENTS = {
+  quote_ready: ['jl quote ready', 'offer', 'The quote was sent to the customer (after you approve it, or right away)'],
   deposit_click: ['jl deposit click', 'offer', 'Clicked "Reserve with a deposit" and did not pay within 20 minutes'],
   offer_saved: ['jl offer saved', 'offer', '4 hours after the quote: opened their page, no deposit or booking'],
   offer_unopened: ['jl offer not opened', 'offer', '4 hours after the quote: has not opened their page yet'],
@@ -54,7 +55,7 @@ export const FIELDS = [
   ['jl_price', 'JL Price'], ['jl_option_2_price', 'JL Option 2 Price'], ['jl_offer_expires', 'JL Offer Expires'],
   ['jl_appt_type', 'JL Appt Type'], ['jl_appt_time', 'JL Appt Time'], ['jl_appt_location', 'JL Appt Location'],
   ['jl_meet_link', 'JL Meet Link'], ['jl_reschedule_url', 'JL Reschedule URL'], ['jl_order_no', 'JL Order No'], ['jl_order_status', 'JL Order Status'],
-  ['jl_occasion_date', 'JL Occasion Date'],
+  ['jl_occasion_date', 'JL Occasion Date'], ['jl_quote_message', 'JL Quote Message', 'LARGE_TEXT'],
 ];
 
 // Postavke (clients.data.automation; stari zapis ghl.auto se čita dok novi ne postoji). Sve što dođe spolja se čisti ovdje.
@@ -69,7 +70,7 @@ export function autoSettings(raw) {
     on: a.on === true, since: Number(a.since) || 0, offer: a.offer !== false, appts: a.appts !== false, reviews: a.reviews !== false,
     holdout: [0, 10, 20].includes(Number(a.holdout)) ? Number(a.holdout) : AUTO_DEFAULTS.holdout,
     reviewDays: int(a.reviewDays, 0, 14, AUTO_DEFAULTS.reviewDays), grillzReviewDays: int(a.grillzReviewDays, 0, 14, AUTO_DEFAULTS.grillzReviewDays),
-    texts: a.texts === 'quo' ? 'quo' : 'ghl', reviewLink: cleanReviewLink(a.reviewLink) || '', sender: /^[^<>]{1,40}$/.test(String(a.sender || '').trim()) ? String(a.sender).trim() : '',
+    texts: a.texts === 'quo' ? 'quo' : 'ghl', quoteMode: a.quoteMode === 'auto' ? 'auto' : 'approve', reviewLink: cleanReviewLink(a.reviewLink) || '', sender: /^[^<>]{1,40}$/.test(String(a.sender || '').trim()) ? String(a.sender).trim() : '',
     templates, disabled,
   };
 }
@@ -185,6 +186,7 @@ export function dueNow(list, { now = Date.now(), since = 0, tz = 'UTC', done = (
 // ---------- Prikaz toka u portalu i tekstovi poruka (28.11.2026, tab Workflows) ----------
 // Kratki nazivi koraka i kada se šalju (za dijagram). needsMkt = prodajna poruka: traži pristanak na marketinške poruke.
 export const STEP_INFO = {
+  quote_ready: { name: 'Quote sent', when: 'When you approve it', mkt: false },
   deposit_click: { name: 'Deposit click', when: '20 min after the click', mkt: true },
   offer_unopened: { name: 'Not opened', when: '4 h after quote', mkt: false },
   offer_saved: { name: 'Opened, no deposit', when: '4 h after quote', mkt: true },
@@ -209,7 +211,7 @@ export const STEP_INFO = {
 };
 export const FLOWS = [
   { key: 'offer', title: 'Quote follow-ups', lanes: [
-    { label: 'After the quote', evs: ['offer_unopened', 'offer_saved', 'offer_24h', 'offer_final', 'offer_expired', 'offer_closeout'] },
+    { label: 'After the quote', evs: ['quote_ready', 'offer_unopened', 'offer_saved', 'offer_24h', 'offer_final', 'offer_expired', 'offer_closeout'] },
     { label: 'Along the way', evs: ['deposit_click', 'refresh_ready', 'refresh_moved'] },
   ] },
   { key: 'appts', title: 'Appointments', lanes: [
@@ -223,6 +225,7 @@ export const FLOWS = [
 ];
 // Tekstovi za SMS preko Quo-a (iz docs/ghl-workflows-en.md, sekcija 6). null = nema SMS teksta (interni / zahvala u GHL-u).
 export const DEFAULT_TEMPLATES = {
+  quote_ready: "Hey {first_name}, this is {sender} from {store}. Your custom {piece} design and price are ready: {page_url} Reply STOP to opt out.",
   deposit_click: "Hi {first_name}, this is {sender} from {store}. I saw you opened the deposit for your {piece}. Anything I can help with? I can hold it with a smaller deposit or set up a quick call.",
   offer_unopened: "Hey {first_name}, this is {sender} from {store}. Did you get a chance to see your {piece} design? It's here: {page_url} Reply STOP to opt out.",
   offer_saved: 'Hey {first_name}, your {piece} design is saved here: {page_url} Price held until {offer_expires}. Questions? Just reply. Reply STOP to opt out.',
@@ -249,6 +252,7 @@ export const DEFAULT_TEMPLATES = {
 // GHL workflow (kupac bez SMS pristanka dobija mejl; GHL sam dodaje link za odjavu). task = zadatak / obavještenje za radnju.
 const sig = '\n\n{sender}, {store}';
 export const STEP_CONTENT = {
+  quote_ready: { email: ['Your custom {piece} design from {store}', '{quote_message}'] },
   deposit_click: { email: ['Your {piece} deposit', "Hi {first_name},\n\nI saw you started the deposit for your {piece}. If anything held you up, just reply here. I can hold it with a smaller deposit or set up a quick call.\n\nYour design: {page_url}" + sig], task: 'Call or text {first_name}: opened the deposit for the {piece} and did not pay. Their page: {page_url}' },
   offer_unopened: { email: ['Your {piece} design is ready', 'Hi {first_name},\n\nYour {piece} design and price are ready: {page_url}\n\nTake a look when you have a minute. Questions? Just reply.' + sig] },
   offer_saved: { email: ['Your {piece} design is saved', 'Hi {first_name},\n\nYour {piece} design is saved here: {page_url}\n\nYour price is held until {offer_expires}. Questions? Just reply.' + sig] },
@@ -276,7 +280,7 @@ export function sendWindow(ev) {
   const w = WINDOW[ev];
   return w === 'day' ? "10 am to 7 pm, customer's time" : w === 'wide' ? "9 am to 9 pm, customer's time" : ev === 'refresh_moved' ? 'Right away' : 'Exactly on time';
 }
-export const TEMPLATE_VARS = ['first_name', 'piece', 'page_url', 'price', 'offer_expires', 'appt_type', 'appt_time', 'appt_location', 'meet_link', 'reschedule_url', 'order_no', 'store', 'review_link', 'sender'];
+export const TEMPLATE_VARS = ['first_name', 'piece', 'page_url', 'price', 'offer_expires', 'appt_type', 'appt_time', 'appt_location', 'meet_link', 'reschedule_url', 'order_no', 'store', 'review_link', 'sender', 'quote_message'];
 // Zamjena {var}; nepoznata promjenljiva ostaje, prazna vrijednost nestaje a razmaci se sređuju.
 export function renderTemplate(tpl, vars) {
   let t = String(tpl || '').replace(/\{([a-z_]+)\}/g, (m, k) => (k in vars ? String(vars[k] ?? '') : m));
@@ -291,4 +295,5 @@ export const exampleVars = (store = 'Your Store') => ({
   first_name: 'Ava', piece: 'grillz', page_url: 'https://jewelrylead.com/p/abc123', price: '$1,850', offer_expires: 'Mon, Dec 1, 5:00 PM', appt_type: 'Studio visit',
   appt_time: 'Tue, Dec 2, 11:00 AM', appt_location: '1550 Larimer St, Denver', meet_link: '', reschedule_url: 'https://jewelrylead.com/p/abc123#appts', order_no: 'DJ-7K4Q9',
   store, review_link: 'https://g.page/r/your-review-link', sender: store,
+  quote_message: `Hey Ava, your custom grillz design and price are ready.\n\nSee your design and quote: https://jewelrylead.com/p/abc123\n\n${store}`,
 });

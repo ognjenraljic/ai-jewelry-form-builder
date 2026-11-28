@@ -235,7 +235,62 @@ function quoteMessageView(l, q, key) {
     <textarea class="in qtext" data-qmsg="${esc(key)}" rows="7" ${q.reveal ? 'hidden' : ''} aria-label="Quote message for ${esc(l.name)}">${esc(q.msg)}</textarea>
     ${stale ? '<p class="qstale">Specs changed after this message. Generate again to update it.</p>' : ''}
     <div class="qacts"><button type="button" class="btn small" data-act="quote-copy" data-qk="${esc(key)}">Copy</button><span class="qcopied" role="status"></span><span class="qsaved" data-qsaved="${esc(key)}" aria-live="polite">${esc(savedLabel(q))}</span></div>
+    ${key.endsWith('|p') ? quoteSendBlock(l, key) : ''}
   </div>`;
+}
+
+// Approve & send (28.11.2026): prva ponuda ide kupcu tek kad zlatar odobri; prije slanja uvijek popup sa tačnim sadržajem.
+const VIA = { quo: 'Quo', ghl: 'GoHighLevel' };
+function quoteSendBlock(l, key) {
+  const s = l.quoteSend;
+  if (!s) return '';
+  const via = [...new Set([s.via?.text, s.via?.email].filter(Boolean).map((v) => VIA[v]))].join(' / ');
+  const when = (t) => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const off = readOnly() || !s.can;
+  if (s.sent) {
+    const how = [s.sent.text ? `text via ${VIA[s.sent.text]}` : '', s.sent.email ? `email via ${VIA[s.sent.email]}` : ''].filter(Boolean).join(', ');
+    return `<div class="qsend is-sent" data-qsend="${esc(l.id)}"><p class="qsend-line"><b>Sent ${esc(when(s.sent.at))}</b>${s.sent.by === 'auto' ? ' (automatically)' : ''}${how ? ` · ${esc(how)}` : ''}${s.sent.count > 1 ? ` · sent ${s.sent.count} times` : ''}</p>${s.sent.note ? `<p class="qsend-why">${esc(s.sent.note)}</p>` : ''}
+      <button type="button" class="btn small" data-act="quote-send" data-qk="${esc(key)}" ${off ? 'disabled' : ''}>Send again</button>${!s.can ? `<p class="qsend-why">${esc(s.reason)}</p>` : ''}</div>`;
+  }
+  return `<div class="qsend" data-qsend="${esc(l.id)}"><button type="button" class="btn primary" data-act="quote-send" data-qk="${esc(key)}" ${off ? 'disabled' : ''}>Approve &amp; send</button>
+    <p class="qsend-hint">${s.can ? `Sends a text with the link to their design page and an email with this message${via ? `, through ${esc(via)}` : ''}.` : esc(s.reason)}</p></div>`;
+}
+function quoteSendDialog(pv, again) {
+  return new Promise((resolve) => {
+    const el = document.createElement('dialog');
+    el.className = 'jl-dialog qsd';
+    const to = [pv.to.name, pv.to.phone, pv.to.email].filter(Boolean).map(esc).join(' · ');
+    el.innerHTML = `<form method="dialog"><h2>${again ? 'Send this quote again?' : 'Send this quote?'}</h2>
+      <p class="qsd-to"><b>To</b> ${to}</p>
+      <div class="qsd-box"><small>Text message${pv.sms.willSend ? '' : ` (will not go out: ${esc(pv.sms.why)})`}</small><pre>${esc(pv.sms.text)}</pre></div>
+      <div class="qsd-box"><small>Email · ${esc(pv.email.subject)}</small><pre>${esc(pv.email.body)}</pre></div>
+      <p class="qsd-from">${esc(pv.from)}</p>
+      <div class="jl-actions"><button type="submit" value="cancel" class="btn">Cancel</button><button type="submit" value="ok" class="btn primary">Send</button></div></form>`;
+    let result = false;
+    el.querySelector('form').addEventListener('submit', (e) => { if (e.submitter?.value === 'ok') result = true; });
+    el.addEventListener('close', () => { el.remove(); resolve(result); }, { once: true });
+    document.body.appendChild(el);
+    el.showModal();
+  });
+}
+async function quoteSend(key) {
+  const id = qkLead(key);
+  const l = P.leads.find((x) => x.id === id);
+  if (!l || readOnly()) return;
+  await saveQuoteNow(key);
+  let pv;
+  try { pv = await api(`/api/portal/leads/${encodeURIComponent(id)}/send-quote/preview`); } catch (err) { JLUI.alert(err.message); return; }
+  if (!pv.can) { JLUI.alert(pv.reason); return; }
+  if (!(await quoteSendDialog(pv, pv.resend))) return;
+  const btn = app.querySelector(`.qsend[data-qsend="${CSS.escape(id)}"] button`);
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const r = await api(`/api/portal/leads/${encodeURIComponent(id)}/send-quote`, { method: 'POST', body: '{}', json: true });
+    l.quoteSend = r.quoteSend;
+    if (!l.firstReplyAt) l.firstReplyAt = Date.now();
+  } catch (err) { JLUI.alert(err.message); }
+  renderCalc(id);
+  render();
 }
 
 // Jedna ponuda (kartica): broj, budžet, konačna cijena, izmjene, izbori, razrada, poruka.
@@ -1357,7 +1412,7 @@ function leadsView(resultsOnly = false) {
       <article class="lead has-calc${P.busy ? ' busy' : ''}" data-find="${esc([l.name, l.email, l.phone, l.ref, l.ref?.replace(/^L-0*/, ''), l.order?.no].filter(Boolean).join(' ').toLowerCase())}">
         <div class="shot-col"><div class="shot ${last ? '' : 'none'}">${last ? `<img src="${esc(last.url)}" alt="AI render for ${esc(l.name)}" width="220" height="220" loading="lazy" data-zoom tabindex="0" />` : 'No render yet'}</div>${last ? genTime(last.ms, 'Picture made in') : ''}${pageBox(l)}</div>
         <div>
-          <div class="lead-top"><h2>${esc(l.name)}</h2>${l.ref ? `<span class="lead-ref" title="Lead ID: search it here or in GoHighLevel">${esc(l.ref)}${copyBtn(l.ref, 'lead ID')}</span>` : ''}<span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
+          <div class="lead-top"><h2>${esc(l.name)}</h2>${l.ref ? `<span class="lead-ref" title="Lead ID: search it here or in GoHighLevel">${esc(l.ref)}${copyBtn(l.ref, 'lead ID')}</span>` : ''}${l.quoteSend?.toApprove ? '<span class="pill to-approve" title="Open the quote below and tap Approve &amp; send">To approve</span>' : ''}<span class="when">${esc(new Date(l.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }))} · <span class="pill">${esc(l.form)}</span></span>${sel}</div>
           <div class="contact"><span class="cpair"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a>${copyBtn(l.email, 'email', l.id, 'email')}</span><span class="cpair"><a href="tel:${esc(l.phone.replace(/[^\d+]/g, ''))}">${esc(l.phone)}</a>${copyBtn(l.phone, 'phone number', l.id, 'phone')}</span>${areaHint(l.phone)}${smsHint(l.sms)}</div>
           ${replyLine(l)}
           ${bookingLine(l)}
@@ -1803,6 +1858,7 @@ app.addEventListener('click', async (e) => {
   if (t.dataset?.pexStone) { PEX.stone = t.dataset.pexStone; renderStoneExample(); return; }
   if (t.dataset?.act === 'price-reset') { const key = t.closest('.qprice')?.dataset.qk; const q = Q[key]; if (q) { const e = estimate(PR(), q.spec); if (e.total != null) priceLive(key, Math.round(e.total)); priceCommit(key); } return; }
   if (t.dataset?.act === 'quote-gen') { quoteGenerate(t.dataset.qk); return; }
+  if (t.dataset?.act === 'quote-send') { quoteSend(t.dataset.qk); return; }
   if (t.dataset?.act === 'quote-copy') {
     const id = t.dataset.qk;
     const l = P.leads.find((x) => x.id === qkLead(id));
@@ -2171,6 +2227,8 @@ const NT = {
   metal_move: ['hot', (x) => `<b>${esc(({ gold: 'Gold', silver: 'Silver', platinum: 'Platinum' })[x.meta.metal] || x.meta.metal)}</b> moved <b style="color:${x.meta.pct >= 0 ? '#3ccf91' : '#ef6a6a'}">${x.meta.pct > 0 ? '+' : ''}${x.meta.pct}%</b> · $${Number(x.meta.from).toLocaleString('en-US', { maximumFractionDigits: 2 })} to $${Number(x.meta.to).toLocaleString('en-US', { maximumFractionDigits: 2 })} per oz`],
   chat_question: ['hot', (x) => `<b>${esc(x.name)}</b> asked the page assistant something only you can answer${x.meta?.q ? `: "${esc(x.meta.q)}"` : ''}`],
   page_action: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.action === 'appointment' ? 'asked for an appointment' : 'wants to reserve with a deposit'}${x.meta.option === 'fit' ? ' · Option 2' : x.meta.option === 'picked' ? ' · Option 1' : ''}`],
+  quote_awaiting: ['hot', (x) => `<b>${esc(x.name)}</b>'s quote is ready and waits for your OK. Open the lead and tap Approve &amp; send.`],
+  quote_reminder: ['warn', (x) => `<b>${esc(x.name)}</b> has been waiting 2 hours for their quote. Approve &amp; send it.`],
   auto_sent: ['mail', (x) => `First message emailed to <b>${esc(x.name)}</b> automatically`],
   appointment_booked: ['hot', (x) => `<b>${esc(x.name)}</b> ${x.meta.moved ? 'moved their' : 'booked an'} ${x.meta.kind === 'online' ? 'online consultation' : 'studio visit'}${x.meta.start ? ` for ${esc(apptWhen(x.meta.start))}` : ''}`],
   appointment_cancelled: ['warn', (x) => `${x.meta.by === 'store' ? 'You cancelled the appointment with' : 'Appointment cancelled by'} <b>${esc(x.name)}</b>`],
@@ -2190,7 +2248,7 @@ const NT = {
 // Kategorije obavještenja (District 27.11.2026): Leads, Metal movement, termini u radnji, online termini, depoziti,
 // svaka svojom bojom (narandžasto metal, plavo leadovi...), i ostala aktivnost (posjete, chatbot, mejlovi).
 const NT_GROUPS = [
-  ['leads', 'Leads', ['created', 'refresh_requested', 'chat_question'], '#5aa9ff'],
+  ['leads', 'Leads', ['created', 'refresh_requested', 'chat_question', 'quote_awaiting', 'quote_reminder'], '#5aa9ff'],
   ['metals', 'Metal movement', ['metal_move'], '#f0a23b'],
   ['visit', 'Store appointments', ['appointment_booked', 'appointment_cancelled', 'appointment_unmarked', 'appointment_status'], '#b38cff'],
   ['online', 'Online appointments', [], '#35d0c4'],

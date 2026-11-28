@@ -1782,3 +1782,17 @@ button.dbar.future { opacity: .35; cursor: default; }
 .wf-tip-body { white-space: pre-wrap; color: var(--ink-soft); display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 .wf-tip-foot { color: var(--ink-faint); font-size: 11.5px; }
 @media (prefers-reduced-motion: reduce) { .wf-tip { transition: none; } }
+
+/* Approve & send (28.11.2026) */
+.qsend { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line, rgba(255,255,255,.12)); }
+.qsend-hint, .qsend-why, .qsend-line { margin: 8px 0 0; font-size: 12.5px; color: var(--ink-soft); }
+.qsend-line { margin: 0 0 8px; color: var(--ink); }
+.qsend-why { color: var(--warn, #f0a23b); }
+.pill.to-approve { background: rgba(240, 162, 59, .16); color: #f0a23b; border-color: rgba(240, 162, 59, .5); font-weight: 700; }
+.qsd { width: min(560px, calc(100vw - 32px)); }
+.qsd-to { white-space: normal; margin: 0 0 12px; }
+.qsd-box { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line-strong, rgba(255,255,255,.2)); border-radius: 10px; }
+.qsd-box small { display: block; margin-bottom: 6px; opacity: .75; }
+.qsd-box pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: inherit; max-height: 200px; overflow: auto; }
+.qsd-from { margin: 0 0 16px; font-weight: 600; }
+.qsd .jl-actions { display: flex; gap: 10px; justify-content: flex-end; }

@@ -304,10 +304,12 @@ function panel(d) {
       <div class="wf-pstate is-${s.state}"><b>${STATE_LABEL[s.state]}</b><span>${C.esc(stateText || '')}</span></div>
       <dl class="wf-dl"><dt>When it is sent</dt><dd>${C.esc(s.desc)}<small class="wf-win">${C.esc(s.window)}</small></dd><dt>Channels</dt><dd>${badges(s)}</dd><dt>Consent</dt><dd>${C.esc(consent)}</dd></dl>
       <label class="wf-step-on"><span><b>This step is on</b><small>Turn it off to stop this message for everyone.</small></span>${sw(!s.disabled, `data-wf="step" data-ev="${C.esc(s.ev)}"`, `Turn ${s.name} on or off`)}</label>
+      ${s.ev === 'quote_ready' ? `<div class="wf-qmode"><b>How it is sent</b><div class="wf-seg" role="group" aria-label="How the quote is sent">${[['approve', 'Send after I approve'], ['auto', 'Send automatically']].map(([k, t]) => `<button type="button" class="wf-chip ${s.quoteMode === k ? 'on' : ''}" data-wf="qmode" data-v="${k}" aria-pressed="${s.quoteMode === k}" ${dis()}>${t}</button>`).join('')}</div>
+        <p class="wf-help">After I approve: every new quote waits for your OK on the lead card. Automatically: it goes out as soon as the quote is ready.${s.awaiting ? ` ${plural(s.awaiting, 'quote')} waiting for your OK now.` : ''}</p></div>` : ''}
       ${s.hasText ? `<div class="wf-msg">
         <div class="wf-msg-top"><h4>${quoText ? 'Text message' : 'Suggested text for your GoHighLevel workflow'}</h4>${quoText ? `<button type="button" class="wf-link-btn" data-wf="tpl-reset" data-ev="${C.esc(s.ev)}" ${(s.isDefaultTemplate && W.drafts[s.ev] == null) || ro() ? 'disabled' : ''}>Reset to default</button>` : ''}</div>
         ${quoText ? `<textarea class="in" rows="5" maxlength="600" data-wf-tpl="${C.esc(s.ev)}" ${dis()}>${C.esc(draft)}</textarea>
-          <div class="wf-chips" aria-label="Insert a detail">${d.meta.templateVars.map((v) => `<button type="button" data-wf="chip" data-v="${C.esc(v)}" ${dis()}>${C.esc(v.replace(/_/g, ' '))}</button>`).join('')}</div>`
+          <div class="wf-chips" aria-label="Insert a detail">${d.meta.templateVars.filter((v) => v !== 'quote_message' || s.ev === 'quote_ready').map((v) => `<button type="button" data-wf="chip" data-v="${C.esc(v)}" ${dis()}>${C.esc(v.replace(/_/g, ' '))}</button>`).join('')}</div>`
         : `<div class="wf-cp"><pre class="wf-pre">${C.esc(forGhl(s.template, d))}</pre>${copyBtn(forGhl(s.template, d), 'text for GoHighLevel')}</div><p class="wf-help">Ready to paste into the Send SMS step, with the GoHighLevel contact fields. Switch to Quo above to send this text from our side.</p>`}
         <div class="wf-prev"><small>Preview with example details</small><p data-wf-prev>${C.esc(preview)}</p><small data-wf-count>${preview.length} characters, ${plural(segments(preview.length), 'segment')}${s.ev !== 'review_request' && quoText ? '. The first text a customer ever gets also ends with "Reply STOP to opt out."' : ''}</small></div>
         ${quoText ? `<div class="wf-row"><button type="button" class="btn primary" data-wf="tpl-save" data-ev="${C.esc(s.ev)}" ${ro() || W.busy ? 'disabled' : ''}>Save message</button>${s.ev === 'review_request' && !a.reviewLink ? '<span class="wf-warn-s">Add your Google review link under \u201cDetails used in your messages\u201d first.</span>' : ''}</div>` : ''}
@@ -317,7 +319,7 @@ function panel(d) {
         <div class="wf-mailcard"><div class="wf-mailhead"><small>Subject</small><b>${C.esc(render(s.email.subject, vars(d)))}</b></div><p>${C.esc(render(s.email.body, vars(d)))}</p></div>
         <p class="wf-help wf-copyhint">Copy into the Send Email step in GoHighLevel:</p><div class="wf-row wf-copyrow">
           <button type="button" class="btn small" data-wf="copy" data-v="${C.esc(forGhl(s.email.subject, d))}">${ICON.copy} Subject</button>
-          <button type="button" class="btn small" data-wf="copy" data-v="${C.esc(forGhl(s.email.body, d))}">${ICON.copy} Body</button></div>
+          <button type="button" class="btn small" data-wf="copy" data-v="${C.esc(forGhl(s.email.body, d).replace('{quote_message}', '{{contact.jl_quote_message}}'))}">${ICON.copy} Body</button></div>
         <p class="wf-help">Emails always go out from your GoHighLevel workflow. GoHighLevel adds the unsubscribe link.</p>
       </div>` : ''}
       ${s.task ? `<div class="wf-msg"><div class="wf-msg-top"><h4>${ICON.task} Task for your team</h4></div>
@@ -386,6 +388,7 @@ function onClick(e) {
     if (t.dataset.v === d.channel) return;
     return void act('chan', () => put({ texts: t.dataset.v }));
   }
+  if (a === 'qmode') { if (t.dataset.v === d.automation.quoteMode) return; return void act('qmode', () => put({ quoteMode: t.dataset.v })); }
   if (a === 'step') { const cur = findStep(d, t.dataset.ev); return void act('step', () => put({ disabled: { [t.dataset.ev]: !cur.disabled } })); }
   if (a === 'tpl-save') { const ev = t.dataset.ev; const v = (W.drafts[ev] ?? findStep(d, ev).template ?? '').trim(); return void act('tpl', async () => { const r = await put({ templates: { [ev]: v === findStep(d, ev).defaultTemplate ? '' : v } }); delete W.drafts[ev]; W.flash = { kind: 'good', text: 'Message saved.' }; return r; }); }
   if (a === 'tpl-reset') { const ev = t.dataset.ev; return void act('tpl', async () => { const r = await put({ templates: { [ev]: '' } }); delete W.drafts[ev]; return r; }); }

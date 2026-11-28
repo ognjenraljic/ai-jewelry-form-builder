@@ -402,14 +402,14 @@ export async function ghlListFields(token, locationId, fetchFn = fetch) {
   const d = await ghlCall(token, 'GET', `/locations/${encodeURIComponent(locationId)}/customFields?model=contact`, null, fetchFn);
   return (d.customFields || []).map((f) => ({ id: f.id, name: f.name || '', fieldKey: f.fieldKey || '' }));
 }
-// Pravi polja koja fale (TEXT); postojeća (isti ključ ili isto ime) se koriste kakva jesu. Vraća { ključ: { id, fieldKey } }.
+// Pravi polja koja fale (TEXT; treći član u definiciji može biti LARGE_TEXT); postojeća (isti ključ ili isto ime) se koriste kakva jesu. Vraća { ključ: { id, fieldKey } }.
 export async function ghlEnsureFields(token, locationId, defs, fetchFn = fetch) {
   const have = await ghlListFields(token, locationId, fetchFn);
   const out = {};
-  for (const [key, name] of defs) {
+  for (const [key, name, dataType = 'TEXT'] of defs) {
     let f = have.find((x) => x.fieldKey === `contact.${key}` || x.name.toLowerCase() === name.toLowerCase());
     if (!f) {
-      const d = await ghlCall(token, 'POST', `/locations/${encodeURIComponent(locationId)}/customFields`, { name, dataType: 'TEXT', model: 'contact' }, fetchFn);
+      const d = await ghlCall(token, 'POST', `/locations/${encodeURIComponent(locationId)}/customFields`, { name, dataType, model: 'contact' }, fetchFn);
       const c = d.customField || d;
       f = { id: c.id, fieldKey: c.fieldKey || `contact.${key}` };
     }
@@ -419,7 +419,7 @@ export async function ghlEnsureFields(token, locationId, defs, fetchFn = fetch) 
 }
 // Polja (samo ona koja postoje u GHL-u) i vremenska zona kupca na kontakt, jednim pozivom.
 export async function ghlSetFields(token, contactId, fields, values, extra = {}, fetchFn = fetch) {
-  const customFields = Object.entries(values).filter(([k]) => fields?.[k]?.id).map(([k, v]) => ({ id: fields[k].id, field_value: v == null ? '' : String(v).slice(0, 500) }));
+  const customFields = Object.entries(values).filter(([k]) => fields?.[k]?.id).map(([k, v]) => ({ id: fields[k].id, field_value: v == null ? '' : String(v).slice(0, k === 'jl_quote_message' ? 4000 : 500) }));
   const body = { ...(customFields.length ? { customFields } : {}), ...extra };
   if (!Object.keys(body).length) return false;
   await ghlCall(token, 'PUT', `/contacts/${encodeURIComponent(contactId)}`, body, fetchFn);
